@@ -546,3 +546,7 @@ select.scan-type{ background:var(--bg2); color:var(--tx0); border:1px solid var(
 .lst-i{ display:flex; color:var(--tx1); flex:0 0 auto; }
 .lst-i svg{ width:15px; height:15px; }
 .lst-l{ flex:1; }
+
+/* ---- real decompiler output: preserve indentation + wrap long lines ---- */
+.code .cl .cc{ white-space:pre-wrap; word-break:break-word; flex:1; min-width:0; }
+.code .cl{ align-items:flex-start; }

@@ -1144,8 +1144,25 @@ function paintStack(el) {
     STACK.map(s => `<div class="stk-r"><span class="stk-o mono">${escH(s.off)}</span><span class="ty mono">${escH(s.t)}</span><span class="fnc mono">${escH(s.n)}</span></div>`).join('');
 }
 
+// Render engine pseudocode readably: PRESERVE indentation (HTML would eat the
+// leading spaces — that's the 'everything on one plane' bug), colourize, and
+// turn unsigned wrap offsets (field_0xffff…f0) back into signed (-0x10).
+function highlightPseudo(raw) {
+  let s = raw.replace(/0x(f{4,}[0-9a-fA-F]{0,4})\b/g, m => {
+    try { const hex = m.slice(2), bits = hex.length * 4, v = BigInt('0x' + hex) - (1n << BigInt(bits)); if (v < 0n && v > -0x100000000n) return '-0x' + (-v).toString(16); } catch {}
+    return m;
+  });
+  let comment = ''; const ci = s.indexOf('//');
+  if (ci >= 0) { comment = s.slice(ci); s = s.slice(0, ci); }
+  s = escH(s)
+    .replace(/\b(if|else|while|for|do|switch|case|default|return|goto|break|continue)\b/g, '<span class="k">$1</span>')
+    .replace(/\b(uint(?:8|16|32|64)_t|int(?:8|16|32|64)_t|void|unsigned|signed|char|bool|float|double|long|short|int|struct|DWORD|QWORD|WORD|BYTE)\b/g, '<span class="ty">$1</span>')
+    .replace(/(-?0x[0-9a-fA-F]+|\b\d+\b)/g, '<span class="nu">$1</span>');
+  return s + (comment ? `<span class="cm">${escH(comment)}</span>` : '');
+}
 function paintDecomp(lines) {
-  $$('.code').forEach(code => { if (!code.querySelector('.gut')) return; code.innerHTML = lines.map((l, i) => `<div class="cl"><span class="gut">${i + 1}</span><span class="mono">${escH(l)}</span></div>`).join(''); });
+  const html = lines.map((l, i) => `<div class="cl"><span class="gut">${i + 1}</span><span class="cc mono">${highlightPseudo(l)}</span></div>`).join('');
+  $$('.code').forEach(code => { code.innerHTML = html; });
 }
 let decompStyle = 'structured', selSeq = 0;
 function paintDecompMsg(msg) { $$('.code').forEach(code => { code.innerHTML = `<div class="cl"><span class="gut"></span><span class="mono" style="color:var(--tx2)">${escH(msg)}</span></div>`; }); }
