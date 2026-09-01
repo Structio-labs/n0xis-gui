@@ -27,8 +27,15 @@ over the existing `n0xis` engine.
 ## Features
 
 - Frameless custom window (own title bar, drag regions, min/max/close wired to the OS window).
-- Workspaces: **Decompile · Static · Graph · Dynamic** + a Beginner/Pro switch.
-- **Blender-style dock**: floating, draggable, resizable widgets; edge-snap; an *Add widget* palette.
+- Workspaces: **Decompile · Static · Graph · Dynamic**.
+- **Blender/AreaKit tiling dock** ([`ui/dock.js`](ui/dock.js)) — a BSP tree of areas:
+  - drag an area header (or a palette widget) onto another area — near an **edge** it splits,
+    over the **centre** it takes over; hold **Ctrl** to drop it as a **tab** instead;
+  - tab-strips scroll and can sit on any side (a vertical strip shows icons); right-click a
+    tab for tab / tab-strip options;
+  - drag the line between areas to **resize** (proportions preserved); **undo/redo**
+    (`Ctrl+Shift+Z` / `Ctrl+Shift+X`); every change **auto-saved** to `localStorage`.
+  - the *Add widget* palette (10 pane types); the type marker (top-left of an area) re-points it.
 - **Control-flow graph** with aligned edges, true/false/loop colouring, pan + zoom.
 - **Right-click context menus** everywhere (functions, code, disassembly, watchpoints, scan hits, graph blocks).
 - Command palette (`Ctrl+P`), 6 live-switchable colour themes, out-of-the-box zoom (`Ctrl +/−/0`).

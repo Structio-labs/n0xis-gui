@@ -1,5 +1,6 @@
 // N0xis GUI — interactive shell (framework-free; drops into Tauri's webview as-is)
 import { isNative, engineInfo, engine, pickFile } from './bridge.js';
+import { initDock } from './dock.js';
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
@@ -63,7 +64,7 @@ function setWorkspace(ws) {
   $$('.wsview').forEach(v => v.classList.toggle('on', v.id === 'view-' + ws));
   $$('#wsbar .ws').forEach(t => t.classList.toggle('on', t.dataset.ws === ws));
   document.documentElement.dataset.ws = ws;
-  showDockFor(ws);
+  dock.setWorkspace(ws);
   if (ws === 'graph') requestAnimationFrame(() => { renderGraph(); fitGraph(); });
 }
 $$('#wsbar .ws[data-ws]').forEach(t => t.addEventListener('click', () => setWorkspace(t.dataset.ws)));
@@ -87,14 +88,6 @@ $('#flist').addEventListener('click', e => {
   const row = e.target.closest('.frow'); if (!row) return;
   $$('#flist .frow').forEach(r => r.classList.remove('on'));
   row.classList.add('on');
-});
-
-// ---------- beginner / pro ----------
-let pro = true;
-$('#mode-toggle').addEventListener('click', () => {
-  pro = !pro;
-  $('#mode-label').innerHTML = pro ? 'Beginner / <b>Pro</b>' : '<b>Beginner</b> / Pro';
-  toast(pro ? 'Pro mode — full docking &amp; every panel' : 'Beginner mode — guided, simplified layout');
 });
 
 // ---------- zoom ----------
@@ -407,9 +400,8 @@ window.addEventListener('blur', closeCtx);
 window.addEventListener('scroll', closeCtx, true);
 
 /* =====================================================================
-   BLENDER-STYLE DOCK — floating widgets + add-widget palette
+   WIDGET CATALOG + TILING DOCK (Blender/AreaKit-style)
    ===================================================================== */
-const dockspace = $('#dockspace'), snaphint = $('#snaphint'), wpal = $('#wpal');
 const WIDGETS = {
   decomp:   { title: 'Decompiler',      icon: 'decomp',  w: 460, h: 300, body: () => `<div class="code selectable" style="padding:10px 0"><div class="cl"><span class="gut">1</span><span><span class="ty">uint64_t</span> <span class="fnc">crc32_z</span>(<span class="ty">uint64_t</span>, <span class="ty">void</span> *, <span class="ty">uint64_t</span>) {</span></div><div class="cl"><span class="gut">2</span><span>&nbsp;&nbsp;<span class="k">return</span> ~v14;</span></div><div class="cl"><span class="gut">3</span><span>}</span></div></div>` },
   disasm:   { title: 'Disassembly',     icon: 'disasm',  w: 380, h: 220, body: () => `<div class="disasm" style="height:100%">${['48 89 d8|mov|rax, rbx','83 e0 07|and|eax, 0x7','74 2a|je|0x15fa','0f b6 03|movzx|eax, [rbx]'].map(r=>{const[b,m,o]=r.split('|');return `<div class="drow" data-ctx="drow"><span class="daddr">0x1000015c8</span><span class="dbytes">${b}</span><span class="dmn">${m}</span><span>${o}</span></div>`;}).join('')}</div>` },
@@ -422,116 +414,40 @@ const WIDGETS = {
   notes:    { title: 'Notes',           icon: 'note',    w: 300, h: 180, body: () => `<textarea class="selectable" style="width:100%;height:100%;background:transparent;border:none;color:var(--tx0);padding:11px;font:inherit;resize:none;outline:none;box-sizing:border-box" placeholder="Session notes…"></textarea>` },
   output:   { title: 'Output console',  icon: 'disasm',  w: 400, h: 160, body: () => `<div style="padding:8px 0;height:100%;overflow:auto"><div class="oline"><span class="p">›</span> decomp pseudo --addr 0x1510</div><div class="oline" style="color:var(--ok)">ok · 19 lines · 7 ms</div></div>` },
 };
-let widgetZ = 42, widgetSeq = 0;
-function spawnWidget(key, opt = {}) {
-  const def = WIDGETS[key]; if (!def) return;
-  $('#launcher').classList.add('hidden');
-  const el = document.createElement('div');
-  el.className = 'widget'; el.dataset.ws = document.documentElement.dataset.ws || 'decompile';
-  const dr = dockspace.getBoundingClientRect();
-  const w = opt.w || def.w, h = opt.h || def.h;
-  el.style.width = w + 'px'; el.style.height = h + 'px';
-  el.style.left = (opt.x ?? (40 + (widgetSeq % 5) * 34)) + 'px';
-  el.style.top = (opt.y ?? (40 + (widgetSeq % 5) * 30)) + 'px';
-  el.style.zIndex = ++widgetZ; widgetSeq++;
-  el.innerHTML =
-    `<div class="whead"><span class="wtitle"><span class="wico">${svg(ICON[def.icon] || ICON.decomp,'')}</span>${def.title}</span>` +
-    `<span class="grow" style="flex:1"></span>` +
-    `<button class="wbtn wclose" title="Close">${svg('M4 4l8 8M12 4l-8 8','')}</button></div>` +
-    `<div class="wbody">${def.body()}</div><div class="wgrip"></div>`;
-  dockspace.appendChild(el);
-  focusWidget(el);
-  makeDraggable(el);
-  el.querySelector('.wclose').addEventListener('click', () => { el.remove(); refreshDockEmpty(); });
-  refreshDockEmpty();
-  return el;
-}
-function focusWidget(el) {
-  $$('.widget', dockspace).forEach(w => w.classList.remove('focus'));
-  el.classList.add('focus'); el.style.zIndex = ++widgetZ;
-}
-function makeDraggable(el) {
-  const head = el.querySelector('.whead'), grip = el.querySelector('.wgrip');
-  el.addEventListener('pointerdown', () => focusWidget(el), true);
-  // drag
-  head.addEventListener('pointerdown', e => {
-    if (e.target.closest('.wbtn')) return;
-    e.preventDefault();
-    const dr = dockspace.getBoundingClientRect();
-    const sx = e.clientX, sy = e.clientY, ox = el.offsetLeft, oy = el.offsetTop;
-    head.setPointerCapture(e.pointerId);
-    let snap = null;
-    const move = ev => {
-      let nx = clamp(ox + ev.clientX - sx, 0, dr.width - el.offsetWidth);
-      let ny = clamp(oy + ev.clientY - sy, 0, dr.height - el.offsetHeight);
-      el.style.left = nx + 'px'; el.style.top = ny + 'px';
-      snap = edgeSnap(ev.clientX - dr.left, ev.clientY - dr.top, dr);
-    };
-    const up = ev => {
-      head.releasePointerCapture(e.pointerId);
-      window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up);
-      snaphint.classList.remove('on');
-      if (snap) { el.style.left = snap.x + 'px'; el.style.top = snap.y + 'px'; el.style.width = snap.w + 'px'; el.style.height = snap.h + 'px'; }
-    };
-    window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
-  });
-  // resize
-  grip.addEventListener('pointerdown', e => {
-    e.preventDefault(); e.stopPropagation();
-    const sx = e.clientX, sy = e.clientY, ow = el.offsetWidth, oh = el.offsetHeight;
-    grip.setPointerCapture(e.pointerId);
-    const move = ev => {
-      el.style.width = clamp(ow + ev.clientX - sx, 180, 1400) + 'px';
-      el.style.height = clamp(oh + ev.clientY - sy, 110, 1000) + 'px';
-    };
-    const up = () => { grip.releasePointerCapture(e.pointerId); window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
-    window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
-  });
-}
-function edgeSnap(mx, my, dr) {
-  const T = 46, W = dr.width, H = dr.height;
-  let s = null;
-  if (my < T) s = { x: 0, y: 0, w: W, h: H / 2 };          // top → top half
-  else if (my > H - T) s = { x: 0, y: H / 2, w: W, h: H / 2 }; // bottom half
-  else if (mx < T) s = { x: 0, y: 0, w: W / 2, h: H };      // left half
-  else if (mx > W - T) s = { x: W / 2, y: 0, w: W / 2, h: H }; // right half
-  if (s) {
-    const b = dockspace.getBoundingClientRect();
-    snaphint.style.left = (b.left + s.x) + 'px'; snaphint.style.top = (b.top + s.y) + 'px';
-    snaphint.style.width = s.w + 'px'; snaphint.style.height = s.h + 'px';
-    snaphint.classList.add('on');
-  } else snaphint.classList.remove('on');
-  return s;
-}
-function showDockFor(ws) {
-  $$('.widget', dockspace).forEach(w => { w.style.display = w.dataset.ws === ws ? '' : 'none'; });
-  refreshDockEmpty();
-}
-function refreshDockEmpty() {
-  const anyVisible = $$('.widget', dockspace).some(w => w.style.display !== 'none' && w.dataset.ws === (document.documentElement.dataset.ws || 'decompile'));
-  dockspace.classList.toggle('empty', false); // empty hint only when explicitly in dock mode; keep off to avoid covering workspaces
-  dockspace.style.pointerEvents = anyVisible ? 'none' : 'none'; // container passthrough; widgets capture their own events
-}
-function resetDock() {
-  $$('.widget', dockspace).forEach(w => w.remove());
-  toast('Layout reset');
-}
-// widget palette
+// tiling dock instance (Blender/AreaKit-style: split · tabs · resize · undo)
+const dockspace = $('#dockspace'), wpal = $('#wpal');
+const dock = initDock({ container: dockspace, widgets: WIDGETS, ICON, svg, toast, showMenu: openCtx });
+dock.onChangeHook(updateUndoButtons);
+function updateUndoButtons() { /* buttons reflect availability lazily; kept simple */ }
+
+// widget palette — click adds to the largest area; drag to place precisely
 function openWpal(anchor) {
   const list = $('#wpal-list');
   list.innerHTML = Object.entries(WIDGETS).map(([k, d]) =>
-    `<div class="wpi" data-k="${k}"><span class="wpc">${svg(ICON[d.icon] || ICON.decomp,'')}</span><div><div class="wpt">${d.title}</div><div class="wpd">Floating · dockable</div></div></div>`
+    `<div class="wpi" data-k="${k}"><span class="wpc">${svg(ICON[d.icon] || ICON.decomp,'')}</span><div><div class="wpt">${d.title}</div><div class="wpd">click to add · drag to place</div></div></div>`
   ).join('');
   wpal.classList.add('on');
   const r = (anchor || $('#btn-addw')).getBoundingClientRect();
   const pr = wpal.getBoundingClientRect();
   wpal.style.left = clamp(r.left, 8, innerWidth - pr.width - 8) + 'px';
   wpal.style.top = (r.bottom + 6) + 'px';
-  list.onclick = e => { const el = e.target.closest('.wpi'); if (!el) return; spawnWidget(el.dataset.k); closeWpal(); };
+  // pointerdown arms a drag; a release without movement is treated as a click-add by the dock
+  list.onpointerdown = e => { const el = e.target.closest('.wpi'); if (!el) return; $('#launcher').classList.add('hidden'); closeWpal(); dock.startPaletteDrag(e, el.dataset.k); };
 }
 function closeWpal() { wpal.classList.remove('on'); }
+function resetDock() { dock.reset(); }
 $('#btn-addw').addEventListener('click', e => { e.stopPropagation(); wpal.classList.contains('on') ? closeWpal() : openWpal($('#btn-addw')); });
 window.addEventListener('pointerdown', e => { if (!e.target.closest('#wpal,#btn-addw')) closeWpal(); }, true);
+
+// undo / redo — buttons + Ctrl+Shift+Z / Ctrl+Shift+X
+$('#btn-undo')?.addEventListener('click', () => dock.undo());
+$('#btn-redo')?.addEventListener('click', () => dock.redo());
+window.addEventListener('keydown', e => {
+  if (!(e.ctrlKey || e.metaKey) || !e.shiftKey) return;
+  const k = e.key.toLowerCase();
+  if (k === 'z') { e.preventDefault(); dock.undo(); }
+  else if (k === 'x') { e.preventDefault(); dock.redo(); }
+});
 
 /* =====================================================================
    DEEP LINK (?ws=graph / #dynamic) — also handy for screenshots
@@ -543,7 +459,7 @@ function deepLink() {
   if (valid.includes(ws)) { openTarget(ws === 'dynamic' ? 'dynamic' : 'static'); setWorkspace(ws); }
   if (p.get('settings') === '1') settings.classList.add('on');
   if (p.get('palette') === '1') openPal();
-  if (p.get('widgets') === '1') { openTarget('static'); setWorkspace('decompile'); spawnWidget('regs', { x: 60, y: 60 }); spawnWidget('copilot', { x: 360, y: 120 }); spawnWidget('notes', { x: 720, y: 80 }); }
+  if (p.get('widgets') === '1') { openTarget('static'); setWorkspace('decompile'); ['decomp', 'regs', 'copilot', 'notes'].forEach(k => dock.addWidget(k)); }
 }
 
 /* =====================================================================
@@ -599,5 +515,6 @@ function renderRealFunctions(res) {
 
 renderGraph();
 deepLink();
+dock.setWorkspace(document.documentElement.dataset.ws || 'decompile'); // restore any saved layout
 hydrateFromEngine();
 console.log('N0xis GUI ready · graph, context menus, dock widgets, palette (Ctrl+P), themes, zoom');
