@@ -768,6 +768,11 @@ async function pickProcess() {
 }
 function attachProcess(pid, name) {
   curPid = pid; curPidName = name;
+  // a live process is a SEPARATE target from any static file — clear the static
+  // context so the function list can't show a different binary's functions.
+  curPath = ''; FUNCLIST = null; FUNCMETA = null; funcQuery = ''; selAddr = ''; selName = '';
+  $$('#dockspace .flist').forEach(fl => { fl.innerHTML = `<div class="fl-empty">Live process · pid ${pid}. Static analysis needs the on-disk binary — open it with <span class="mono">File ▸ Open</span>.</div>`; });
+  $$('#dockspace .pfoot').forEach(pf => { pf.innerHTML = `<span class="fcount">live process</span>`; });
   $('#launcher').classList.add('hidden');
   $('#target-name').textContent = name;
   const st = $('#target-state'); if (st) { st.textContent = 'live'; st.style.color = 'var(--live)'; }
@@ -958,7 +963,8 @@ function renderFlist(fl) {                  // virtualized: no cap, only visible
 function funcFootHTML() {
   const total = FUNCMETA ? FUNCMETA.total : funcRows().length;
   const named = FUNCMETA ? FUNCMETA.named : 86;
-  const extra = funcQuery ? ` · ${funcView().length.toLocaleString()} shown` : '';
+  const loading = FUNCMETA && FUNCMETA.shown < FUNCMETA.total;
+  const extra = loading ? ` · loading ${FUNCMETA.shown.toLocaleString()}…` : (funcQuery ? ` · ${funcView().length.toLocaleString()} shown` : '');
   return `<span class="fcount">${total.toLocaleString()} functions${extra}</span><span class="grow"></span><span class="fnamed" style="color:var(--ok)">${named}% named</span>`;
 }
 function paintFunctions() {
@@ -1425,28 +1431,35 @@ async function openBinary(path) {
   setWorkspace('static');
   toast('Analyzing <span class="mono">' + escH(name) + '</span>…');
   setTarget(path);                             // → Triage via profile
-  const res = await engine.functions(path);
-  if (path !== curPath) return;                // a newer open superseded this one
-  renderRealFunctions(res);
+  loadFunctions(path);
 }
-function renderRealFunctions(res) {
-  const list = res?.data?.functions || res?.data?.symbols || res?.data?.items;
-  if (!Array.isArray(list) || !list.length) {
-    FUNCLIST = []; FUNCMETA = { total: 0, shown: 0, named: 0 }; paintFunctions();
-    const msg = res && res.ok === false ? (res.error?.message || 'analysis failed') : 'no functions found';
-    $$('#dockspace .flist').forEach(fl => { fl.innerHTML = `<div class="fl-empty">${escH(msg)}</div>`; });
-    toast('Engine: ' + msg); return;
+
+// Stream the function list in chunks so a huge binary (AyuGram = 371k functions)
+// never lands as one 16 MB blob that crashes the webview. --pdata gives exact
+// starts, a real total, and O(1) paging; falls back to prologue scan.
+const FUNC_CHUNK = 20000, FUNC_CAP = 400000;   // cap only guards against pathological OOM
+async function loadFunctions(path) {
+  FUNCLIST = []; FUNCMETA = { total: 0, shown: 0, named: 0 };
+  const mapf = f => { const addr = f.addr || f.address || f.va || ''; return { addr, name: f.name || f.symbol || f.label || 'sub_' + String(addr).replace(/^0x/, ''), tag: '' }; };
+  let offset = 0, first = true, pdata = true, total = null;
+  while (offset < FUNC_CAP) {
+    let res = await engine.functions(path, FUNC_CHUNK, offset, pdata);
+    if (path !== curPath) return;              // a newer open superseded this one
+    // if --pdata isn't applicable (non-x64-PE), retry this offset with prologue scan
+    if (pdata && (!res?.ok || !(res.data?.functions?.length))) { pdata = false; res = await engine.functions(path, FUNC_CHUNK, offset, false); if (path !== curPath) return; }
+    const list = res?.data?.functions;
+    if (!res?.ok) { if (first) { $$('#dockspace .flist').forEach(fl => { fl.innerHTML = `<div class="fl-empty">${escH(res?.error?.message || 'analysis failed')}</div>`; }); toast('Engine: ' + (res?.error?.message || 'failed')); } break; }
+    if (total == null) total = res?.meta?.total ?? null;
+    if (!Array.isArray(list) || !list.length) break;
+    list.forEach(f => FUNCLIST.push(mapf(f)));
+    FUNCMETA = { total: total ?? FUNCLIST.length, shown: FUNCLIST.length, named: Math.round(FUNCLIST.filter(f => !/^sub_/i.test(f.name)).length / FUNCLIST.length * 100) };
+    paintFunctions();
+    if (first) { first = false; $('#dockspace .flist .frow')?.click(); }  // decompile the first ASAP
+    if (list.length < FUNC_CHUNK) break;       // last page
+    offset += FUNC_CHUNK;
+    await new Promise(r => setTimeout(r, 0));   // yield so the UI stays responsive
   }
-  FUNCLIST = list.map(f => {                    // ALL functions — no cap (the list is virtualized)
-    const addr = f.addr || f.address || f.va || '';
-    return { addr, name: f.name || f.symbol || f.label || 'sub_' + String(addr).replace(/^0x/, ''), tag: '' };
-  });
-  const total = res?.meta?.total ?? FUNCLIST.length;
-  const named = Math.round(FUNCLIST.filter(f => !/^sub_/i.test(f.name)).length / FUNCLIST.length * 100);
-  FUNCMETA = { total, shown: FUNCLIST.length, named };
-  paintFunctions();
-  toast('Loaded ' + total.toLocaleString() + ' functions');
-  $('#dockspace .flist .frow')?.click();       // select the first → hydrate decompiler/xrefs/disasm
+  if (FUNCLIST.length) { FUNCMETA.total = total ?? FUNCLIST.length; paintFunctions(); toast('Loaded ' + FUNCLIST.length.toLocaleString() + ' functions'); }
 }
 
 deepLink();

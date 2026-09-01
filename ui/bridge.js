@@ -55,10 +55,11 @@ export const engine = {
   guide: (topic) => n0x(topic ? ['guide', topic, '--brief'] : ['guide', '--brief']),
   // profile takes --file (not a positional); --exports pulls the export table too.
   profile: (path) => n0x(['profile', '--file', path, '--exports']),
-  // the real verb is `function discover`; --limit 0 = every function (BN/Ghidra
-  // show them all; the UI virtualizes the list so huge counts stay smooth).
-  functions: (path, limit = 0) =>
-    n0x(['function', 'discover', '--file', path, '--limit', String(limit)]),
+  // `function discover`, paginated. --pdata uses the PE exception table: exact
+  // starts + a real meta.total, and O(1) paging — so a 371k-function binary
+  // streams in chunks instead of one giant blob (which crashed the webview).
+  functions: (path, limit = 20000, offset = 0, pdata = true) =>
+    n0x(['function', 'discover', '--file', path, ...(pdata ? ['--pdata'] : []), '--limit', String(limit), '--offset', String(offset)]),
   decompile: (path, addr, style = 'structured') =>
     n0x(['decomp', 'pseudo', '--file', path, '--addr', addr, '--style', style]),
   disasm: (path, addr, count = 40) =>
