@@ -31,6 +31,7 @@ const ICON = {
   strings: "<path d='M12 4v16' /> <path d='M4 7V5a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v2' /> <path d='M9 20h6' />",
   fold: "<path d='m6 9 6 6 6-6' />",
   x: "<path d='M18 6 6 18' /> <path d='m6 6 12 12' />",
+  follow: "<path d='M4 16v-2.38C4 11.5 2.97 10.5 3 8c.03-2.72 1.49-6 4.5-6C9.37 2 10 3.8 10 5.5c0 3.11-2 5.66-2 8.68V16a2 2 0 1 1-4 0Z' /> <path d='M20 20v-2.38c0-2.12 1.03-3.12 1-5.62-.03-2.72-1.49-6-4.5-6C14.63 6 14 7.8 14 9.5c0 3.11 2 5.66 2 8.68V20a2 2 0 1 0 4 0Z' /> <path d='M16 17h4' /> <path d='M4 13h4' />",
 };
 const svg = (d, cls = 'cxi') =>
   `<span class="${cls}"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${
@@ -226,6 +227,35 @@ function initGraphWidget(root) {
   const cam = { x: 40, y: 20, s: 1 };
   const blocks = GRAPH.blocks.map(b => ({ ...b })); // local, independently draggable positions
   const rectOf = {};
+  const rankOf = {};
+
+  // layered auto-layout (Sugiyama-lite): rank by longest path from entry, order each
+  // rank by the barycentre of its parents, place rows centred with a fixed pitch → no overlaps.
+  function layout() {
+    const byId = {}; blocks.forEach(b => byId[b.id] = b);
+    const fwd = GRAPH.edges.filter(e => e.type !== 'loop');
+    for (const k in rankOf) delete rankOf[k];
+    rankOf[blocks[0].id] = 0;
+    for (let it = 0; it < 80; it++) {
+      let ch = false;
+      fwd.forEach(e => { if (rankOf[e.f] == null) return; const nr = rankOf[e.f] + 1; if (rankOf[e.t] == null || rankOf[e.t] < nr) { rankOf[e.t] = nr; ch = true; } });
+      if (!ch) break;
+    }
+    blocks.forEach(b => { if (rankOf[b.id] == null) rankOf[b.id] = 0; });
+    const rows = {}; blocks.forEach(b => (rows[rankOf[b.id]] ||= []).push(b));
+    const CX = 470, GAPX = 64, PITCH = 158;
+    Object.keys(rows).map(Number).sort((a, c) => a - c).forEach(r => {
+      const row = rows[r];
+      if (r > 0) {
+        row.forEach(b => { const ps = fwd.filter(e => e.t === b.id && rankOf[e.f] < r).map(e => byId[e.f].x + byId[e.f].w / 2).filter(v => !isNaN(v)); b._bc = ps.length ? ps.reduce((a, c) => a + c, 0) / ps.length : CX; });
+        row.sort((a, b) => (a._bc - b._bc) || 0);
+      }
+      const tot = row.reduce((s, b) => s + b.w, 0) + GAPX * (row.length - 1);
+      let x = CX - tot / 2;
+      row.forEach(b => { b.x = Math.round(x); b.y = 24 + r * PITCH; x += b.w + GAPX; });
+    });
+  }
+  layout();
 
   function buildNodes() {
     gc.querySelectorAll('.gnode').forEach(n => n.remove());
@@ -267,6 +297,11 @@ function initGraphWidget(root) {
         return `<path class="${cls}" marker-end="url(#${arw})" d="M${sx} ${sy} C${bx} ${sy},${bx} ${ty2},${tx2} ${ty2}"/>`;
       }
       const sx = a.x + a.w / 2, sy = a.y + a.h, tx = b.x + b.w / 2, ty = b.y, my = (sy + ty) / 2;
+      const gap = (rankOf[e.t] ?? 0) - (rankOf[e.f] ?? 0);
+      if (gap > 1) { // long edge — bow out to the side so it skips the ranks in between
+        const off = sx <= 470 ? Math.min(sx, tx) - 150 : Math.max(sx, tx) + 150;
+        return `<path class="${cls}" marker-end="url(#${arw})" d="M${sx} ${sy} C${off} ${sy + 40},${off} ${ty - 40},${tx} ${ty - 2}"/>`;
+      }
       return `<path class="${cls}" marker-end="url(#${arw})" d="M${sx} ${sy} C${sx} ${my},${tx} ${my},${tx} ${ty - 2}"/>`;
     }).join('');
     gs.innerHTML = defs + paths;
@@ -507,7 +542,7 @@ const WIDGETS = {
       ['health','87','on'],['max_health','100','on'],['ammo','42',''],['gold','10000','']
     ].map(([n,v,f])=>`<div class="wlrow" data-ctx="wlrow"><span class="frz ${f}"></span><span class="wname">${n}</span><span class="wval">${v}</span></div>`).join('')}</div>` },
 
-  copilotFollow: { title: 'Copilot · following', icon: 'chat', body: () => `<div class="wfill">
+  copilotFollow: { title: 'Copilot · trace', icon: 'follow', body: () => `<div class="wfill">
     <div style="padding:11px;font-size:.82rem;line-height:1.5;flex:1;overflow:auto">Found it. <span class="mono" style="color:var(--live)">7FF6C21A40</span> is <b>health</b> — I set a write-watchpoint and traced the writer to <span class="mono" style="color:var(--acc)">HealthComponent::TakeDamage</span>.
     <div style="margin-top:8px;color:var(--vio);font-size:.72rem"><div>→ scan 87 (4-byte)</div><div>→ watch write 7FF6C21A40</div><div>→ provenance → decompile</div></div></div>
     <div class="ask" style="margin:0 10px 10px"><span class="provsel">Local · Ollama</span>Ask…<span class="grow"></span><span style="color:var(--vio)">↵</span></div></div>` },

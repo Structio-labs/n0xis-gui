@@ -331,7 +331,7 @@ a{ color:var(--acc); }
 .dk-marker:hover{ background:var(--bg3); }
 /* icons sit centered inside their square chips, and never overflow them */
 .dk-marker > span, .dk-ti, .dk-tx, .wico, .wpc > span, .pv-i > span, .cico > svg{ display:flex; align-items:center; justify-content:center; }
-.dk-marker svg{ width:14px; height:14px; }
+.dk-marker svg{ width:13px; height:13px; }
 .dk-tabs.v .dk-tab .dk-ti svg{ width:15px; height:15px; }
 .dk-title{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .dk-grow{ flex:1; }
