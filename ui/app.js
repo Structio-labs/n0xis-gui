@@ -102,13 +102,20 @@ $$('#launcher .card').forEach(card => card.addEventListener('click', () => openT
 $('#btn-live').addEventListener('click', () => openTarget('dynamic'));
 
 // ---------- delegated widget interactions (widgets are created dynamically) ----------
+// the currently-selected symbol — Edit/Analyze actions operate on this address
+let selAddr = '0x100001510', selName = 'crc32_z';
 $('#dockspace').addEventListener('click', e => {
   // workspace jump buttons (e.g. the decompiler's "CFG ↗")
   const jump = e.target.closest('[data-ws]');
   if (jump) { setWorkspace(jump.dataset.ws); return; }
   // function / string list selection (single-select within the same list)
   const row = e.target.closest('.frow');
-  if (row) { row.parentElement?.querySelectorAll(':scope > .frow.on').forEach(r => r.classList.remove('on')); row.classList.add('on'); return; }
+  if (row) {
+    row.parentElement?.querySelectorAll(':scope > .frow.on').forEach(r => r.classList.remove('on')); row.classList.add('on');
+    const a = row.querySelector('.fa')?.textContent, n = row.querySelector('.nm')?.textContent;
+    if (a) { selAddr = a.trim(); selName = (n || '').trim(); }   // track the current symbol for Edit actions
+    return;
+  }
   // cosmetic single-select groups inside a widget
   for (const sel of ['.nt', '.rt', '.pill', '.dt']) {
     const g = e.target.closest(sel);
@@ -397,7 +404,7 @@ function menuFor(el, tgt) {
       item('Show disassembly', 'disasm', '', () => { tgt.click(); setWorkspace('decompile'); }),
       item('Show CFG graph', 'graph', '', () => setWorkspace('graph')),
       sep,
-      item('Rename…', 'rename', 'F2', () => toast('Rename ' + name)),
+      item('Rename…', 'rename', 'F2', () => doRename(addr || selAddr, name)),
       item('Find xrefs to', 'xref', 'Shift+F12', () => toast('Xrefs to ' + name)),
       item('Find xrefs from', 'xref', '', () => toast('Xrefs from ' + name)),
       item('Apply signature', 'type', '', () => echo('sig apply --func ' + name, 'matched 1')),
@@ -407,12 +414,12 @@ function menuFor(el, tgt) {
     ];
     case 'cl': return [
       item('Copy line', 'copy', 'Ctrl+C', () => copy(tgt.textContent.replace(/^\d+/, '').trim())),
-      item('Rename variable…', 'rename', 'F2', () => toast('Rename variable')),
-      item('Change type…', 'type', '', () => toast('Change type')),
+      item('Rename variable…', 'rename', 'F2', () => doRename(selAddr, '')),
+      item('Change type…', 'type', '', () => doRetype(selAddr)),
       sep,
       item('Toggle breakpoint', 'bp', 'F9', () => { tgt.classList.toggle('hot'); toast('Breakpoint toggled'); }),
       item('Add watchpoint', 'watch', '', () => { setWorkspace('dynamic'); toast('Watchpoint added'); }),
-      item('Comment…', 'note', 'Ctrl+/', () => toast('Comment')),
+      item('Comment…', 'note', 'Ctrl+/', () => doComment(selAddr)),
     ];
     case 'drow': return [
       item('Copy instruction', 'copy', '', () => copy(tgt.textContent.trim())),
@@ -451,13 +458,13 @@ function menuFor(el, tgt) {
     case 'gnode': return [
       lbl(tgt.dataset.id || 'block'),
       item('Decompile block', 'decomp', '', () => { setWorkspace('decompile'); toast('Decompile ' + tgt.dataset.id); }),
-      item('Rename label…', 'rename', 'F2', () => toast('Rename ' + tgt.dataset.id)),
-      item('Invert branch logic', 'reset', '', () => toast('Inverted branch of ' + tgt.dataset.id)),
+      item('Rename label…', 'rename', 'F2', () => doRename(tgt.dataset.addr || selAddr, tgt.dataset.id)),
+      item('Invert branch logic', 'reset', '', () => doPatch('Invert branch', tgt.dataset.addr || selAddr)),
       item('Set breakpoint', 'bp', 'F9', () => toast('Breakpoint @ ' + tgt.dataset.addr)),
       sep,
       item('Find xrefs to block', 'xref', 'Shift+F12', () => toast('Xrefs → ' + tgt.dataset.addr)),
       item('Open in new tab', 'add', '', () => toast('Open ' + tgt.dataset.id + ' in a new pane')),
-      item('Comment…', 'note', 'Ctrl+/', () => toast('Comment on ' + tgt.dataset.id)),
+      item('Comment…', 'note', 'Ctrl+/', () => doComment(tgt.dataset.addr || selAddr)),
       sep,
       item('Copy block address', 'copy', '', () => copy(tgt.dataset.addr || '')),
     ];
@@ -471,6 +478,60 @@ function menuFor(el, tgt) {
   }
 }
 function copy(t) { navigator.clipboard?.writeText(t).catch(() => {}); toast('Copied <span class="mono">' + t + '</span>'); }
+
+/* =====================================================================
+   REAL EDIT ACTIONS — annotate / const identify over the engine seam.
+   `window.prompt` is unreliable in the Tauri webview, so use a small modal.
+   ===================================================================== */
+function askInput(title, value = '', placeholder = '') {
+  return new Promise(resolve => {
+    const ov = document.createElement('div');
+    ov.className = 'ask-ov';
+    ov.innerHTML = `<div class="ask-box"><div class="ask-t">${escH(title)}</div>` +
+      `<input class="ask-in mono" value="${escH(value)}" placeholder="${escH(placeholder)}">` +
+      `<div class="ask-a"><button class="ask-cancel">Cancel</button><button class="ask-ok">OK</button></div></div>`;
+    document.body.appendChild(ov);
+    const inp = ov.querySelector('.ask-in');
+    const done = v => { ov.remove(); resolve(v); };
+    ov.querySelector('.ask-ok').onclick = () => done(inp.value);
+    ov.querySelector('.ask-cancel').onclick = () => done(null);
+    ov.addEventListener('mousedown', e => { if (e.target === ov) done(null); });
+    inp.addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Enter') done(inp.value); else if (e.key === 'Escape') done(null); });
+    setTimeout(() => { inp.focus(); inp.select(); }, 20);
+  });
+}
+async function runAnnotate(kind, addr, val, okverb) {
+  if (!isNative) { toast(`${okverb} <span class="mono">${escH(addr)}</span> → ${escH(val || '(cleared)')} · demo`); return; }
+  const args = ['annotate', kind, '--addr', addr]; if (val !== '') args.push('--value', val);
+  const r = await n0x(args);
+  toast(r?.ok ? `${okverb} <span class="mono">${escH(addr)}</span> → ${escH(val || 'cleared')}`
+              : `annotate failed: ${escH(r?.error?.message || '?')}`);
+}
+async function doRename(addr = selAddr, cur = selName) {
+  const v = await askInput(`Rename ${cur || addr}`, cur || '', 'new function/variable name');
+  if (v !== null) runAnnotate('name', addr, v.trim(), 'Renamed');
+}
+async function doComment(addr = selAddr) {
+  const v = await askInput(`Comment @ ${addr}`, '', 'free-text note');
+  if (v !== null) runAnnotate('comment', addr, v, 'Commented');
+}
+async function doRetype(addr = selAddr, cur = '') {
+  const v = await askInput(`Change type @ ${addr}`, cur, 'e.g.  int(char*, size_t)');
+  if (v !== null) runAnnotate('type', addr, v.trim(), 'Type set on');
+}
+async function doIdentify(addr = selAddr) {
+  if (!isNative || !curPath) { toast('Scanning for known algorithms… · demo'); return; }
+  toast('Identifying algorithms @ ' + addr + '…');
+  const r = await n0x(['const', 'identify', '--file', curPath, '--addr', addr]);
+  const d = r?.data || {};
+  const hits = d.matches || d.hits || d.identified || d.constants || [];
+  toast(r?.ok ? `Identify: ${Array.isArray(hits) ? hits.length + ' match(es)' : 'done'} — see Console for detail`
+              : `identify failed: ${escH(r?.error?.message || '?')}`);
+}
+function doPatch(kind, addr = selAddr) {          // invert branch / NOP — a live-memory write
+  if (!isLive()) { toast('Patch needs a live target — attach a process first (Debug ▸ Attach)'); return; }
+  toast(`${kind} @ ${addr} — journaled patch (live) …`);   // full pid+bytes flow lands with the Debugger tier
+}
 
 function openCtx(x, y, items) {
   ctx.innerHTML = items.map((it, i) => {
@@ -540,12 +601,12 @@ function menuItems(name) {
       item('Settings', 'settings', 'Ctrl ,', () => settings.classList.add('on')),
       item('Close target', 'x', '', closeTarget),
     ];
-    case 'Edit': return [            // edits to the analysis database
-      item('Rename…', 'rename', 'F2', () => toast('Rename')),
-      item('Comment…', 'comment', 'Ctrl+/', () => toast('Comment')),
-      item('Change type…', 'type', '', () => toast('Change type')),
-      item('Invert branch logic', 'redo', '', () => toast('Invert branch')),
-      item('Patch → NOP…', 'patch', '', () => toast('Patch')),
+    case 'Edit': return [            // edits to the analysis database (engine-backed)
+      item('Rename…', 'rename', 'F2', () => doRename()),
+      item('Comment…', 'comment', 'Ctrl+/', () => doComment()),
+      item('Change type…', 'type', '', () => doRetype()),
+      item('Invert branch logic', 'redo', '', () => doPatch('Invert branch')),
+      item('Patch → NOP…', 'patch', '', () => doPatch('NOP')),
       sep,
       item('Command palette', 'scan', 'Ctrl+Shift+P', openPal),
     ];
@@ -560,7 +621,7 @@ function menuItems(name) {
       item('Decompile', 'decomp', 'F5', () => { setWorkspace('decompile'); toast('Decompiling'); }),
       item('Apply FLIRT signatures', 'type', '', () => echo('sig apply --flirt zlib-1.3.1.npat', 'named 118 functions')),
       item('Find xrefs', 'xref', 'Shift+F12', () => toast('Xrefs')),
-      item('Identify algorithms', 'identify', '', () => toast('Scanning for known algorithms…')),
+      item('Identify algorithms', 'identify', '', () => doIdentify()),
       item('Re-run analysis', 'reset', '', () => toast('Re-analyzing…')),
     ];
     case 'Debug': return [           // control of the running target
@@ -615,13 +676,13 @@ window.addEventListener('keydown', e => {
     if (e.shiftKey) return;                                 // Ctrl+Shift+P palette & Z/X layout have own listeners
     if (k === 'o') { e.preventDefault(); openFileTarget(); }
     else if (e.key === ',') { e.preventDefault(); settings.classList.add('on'); }
-    else if (k === '/') { e.preventDefault(); if (targetOpen()) toast('Comment'); }
+    else if (k === '/') { e.preventDefault(); if (targetOpen()) doComment(); }
     return;                                                 // Ctrl+P / Ctrl+±0 handled elsewhere
   }
   if (e.altKey) return;
   if (!targetOpen()) return;                                // function keys need a target
   switch (e.key) {
-    case 'F2': e.preventDefault(); toast('Rename'); break;
+    case 'F2': e.preventDefault(); doRename(); break;
     case 'F5': e.preventDefault(); if (isLive()) toast('Continue'); else { setWorkspace('decompile'); toast('Decompiling'); } break;
     case 'F9': e.preventDefault(); toast('Toggle breakpoint'); break;
     case 'F10': if (isLive()) { e.preventDefault(); toast('Step over'); } break;

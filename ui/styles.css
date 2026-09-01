@@ -457,3 +457,16 @@ a{ color:var(--acc); }
 .nxc-inp{ display:flex; align-items:center; gap:7px; padding:7px 10px; border-top:1px solid var(--bd2); flex:0 0 auto; }
 .nxc-ps{ color:var(--acc); font-size:.78rem; }
 .nxc-in{ flex:1; background:transparent; border:none; outline:none; color:var(--tx0); font:inherit; font-size:.78rem; }
+
+/* ---- ask-input modal (Rename / Comment / Change type) ---- */
+.ask-ov{ position:fixed; inset:0; z-index:500; background:rgba(0,0,0,.45); display:flex; align-items:center; justify-content:center; }
+.ask-box{ width:min(440px,90vw); background:var(--bg1); border:1px solid var(--bd2); border-radius:12px; box-shadow:var(--shadow); padding:16px; }
+.ask-t{ font-size:.9rem; color:var(--tx0); margin-bottom:10px; }
+.ask-in{ width:100%; background:var(--bg2); border:1px solid var(--bd2); border-radius:8px; color:var(--tx0); padding:9px 11px; font-size:.85rem; outline:none; }
+.ask-in:focus{ border-color:var(--acc); }
+.ask-a{ display:flex; justify-content:flex-end; gap:8px; margin-top:12px; }
+.ask-a button{ padding:7px 15px; border-radius:8px; font-size:.82rem; }
+.ask-cancel{ color:var(--tx1); background:var(--bg3); }
+.ask-cancel:hover{ background:var(--hov); color:var(--tx0); }
+.ask-ok{ color:#04211d; background:var(--acc); font-weight:600; }
+.ask-ok:hover{ filter:brightness(1.08); }
