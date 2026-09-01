@@ -1,0 +1,15 @@
+# Rust / Tauri
+/src-tauri/target/
+/src-tauri/gen/
+**/*.rs.bk
+
+# Node (only if a JS toolchain is later added)
+node_modules/
+dist/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/

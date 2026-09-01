@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>N0xis</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="win">
+
+  <!-- TITLE BAR -->
+  <div class="tbar">
+    <div class="mark">N0</div>
+    <button class="menu">File</button><button class="menu">Edit</button><button class="menu">View</button>
+    <button class="menu">Analyze</button><button class="menu">Debug</button><button class="menu">Window</button><button class="menu">Help</button>
+    <div class="grow" data-tauri-drag-region></div>
+    <div class="chip mono" id="target-chip"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18"/></svg><span id="target-name">kenshi_x64.exe</span><span style="color:var(--tx2)">·</span><span id="target-state" style="color:var(--acc)">static</span></div>
+    <div class="grow" data-tauri-drag-region></div>
+    <button class="tool" id="btn-palette" title="Command palette (Ctrl+P)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg></button>
+    <button class="tool" id="btn-live" title="Attach / live"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9z"/></svg></button>
+    <button class="tool" id="btn-settings" title="Settings"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="20" y2="17"/><circle cx="9" cy="7" r="2.1" fill="var(--bg1)"/><circle cx="15" cy="12" r="2.1" fill="var(--bg1)"/><circle cx="8" cy="17" r="2.1" fill="var(--bg1)"/></svg></button>
+    <div style="width:8px"></div>
+    <button class="wc" data-win="min" title="Minimize"><svg width="12" height="12" viewBox="0 0 12 12" stroke="currentColor" stroke-width="1.4"><path d="M2 6h8"/></svg></button>
+    <button class="wc" data-win="max" title="Maximize"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2.5" y="2.5" width="7" height="7"/></svg></button>
+    <button class="wc cls" data-win="close" title="Close"><svg width="12" height="12" viewBox="0 0 12 12" stroke="currentColor" stroke-width="1.4"><path d="M3 3l6 6M9 3l-6 6"/></svg></button>
+  </div>
+
+  <!-- WORKSPACE TABS -->
+  <div class="wsbar" id="wsbar">
+    <button class="ws on" data-ws="decompile">Decompile</button>
+    <button class="ws" data-ws="static">Static</button>
+    <button class="ws" data-ws="graph">Graph</button>
+    <button class="ws dyn" data-ws="dynamic">Dynamic</button>
+    <button class="ws" style="color:var(--tx2)" title="New workspace">+</button>
+    <button class="addw" id="btn-addw" title="Add a widget to this workspace"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="3" width="8" height="8" rx="1.5"/><rect x="3" y="13" width="8" height="8" rx="1.5"/><path d="M17 14v6M14 17h6"/></svg>Widget</button>
+    <div class="mode" id="mode-toggle" title="Beginner / Pro"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2"/></svg><span id="mode-label">Beginner / <b>Pro</b></span></div>
+  </div>
+
+  <!-- STAGE -->
+  <div class="stage">
+
+    <!-- LAUNCHER -->
+    <div class="launcher" id="launcher">
+      <div class="brand"><div class="logo">N0</div><div class="ltitle">Open a <b>target</b></div><div class="lsub">Static image, a live process, or both — one session, joined.</div></div>
+      <div class="cards">
+        <button class="card" data-open="static">
+          <span class="tag s">Static</span>
+          <div class="cico"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--acc)" stroke-width="1.8"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg></div>
+          <div class="ct">Analyze a file</div><div class="cd">Decompile and reverse a .exe · .dll · .so · .elf. Full static analysis — no process needed.</div>
+          <div class="cbtn">Choose file…</div>
+        </button>
+        <button class="card hero" data-open="both">
+          <span class="tag b">Static + Dynamic · flagship</span>
+          <div class="cico" style="border-color:var(--accd)"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--vio)" stroke-width="1.8"><path d="M5 3l14 9-14 9z"/></svg></div>
+          <div class="ct">Launch &amp; attach</div><div class="cd">Spawn the target and attach the debugger. Decompilation and live memory share one identity — watch code as it runs.</div>
+          <div class="cbtn p">Pick executable &amp; run</div>
+        </button>
+        <button class="card" data-open="dynamic">
+          <span class="tag d">Dynamic</span>
+          <div class="cico"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--live)" stroke-width="1.8"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9z"/></svg></div>
+          <div class="ct">Attach to a process</div><div class="cd">Inspect a running game — scan memory, set watchpoints, trace what writes a value. Cheat-Engine-style.</div>
+          <div class="cbtn">Pick process…</div>
+        </button>
+      </div>
+      <div style="color:var(--tx2);font-size:.82rem">Learn: <a>Getting started</a> · <a>Glossary of terms</a> · <a>What is a decompiler?</a></div>
+    </div>
+
+    <!-- DECOMPILE WORKSPACE -->
+    <div class="wsview on" id="view-decompile">
+      <div class="panel">
+        <div class="navtabs"><button class="nt on">Functions</button><button class="nt">Imports</button><button class="nt">Strings</button><button class="nt">Types</button></div>
+        <div class="search"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>Filter functions…</div>
+        <div class="flist" id="flist">
+          <div class="frow"><span class="sym">ƒ</span><span class="nm mono">main</span><span class="fa mono">0x401060</span></div>
+          <div class="frow on"><span class="sym">ƒ</span><span class="nm mono">crc32_z</span><span class="badge">sig</span><span class="fa mono">0x1510</span></div>
+          <div class="frow"><span class="sym">ƒ</span><span class="nm mono">crc32</span><span class="fa mono">0x19d0</span></div>
+          <div class="frow"><span class="sym">ƒ</span><span class="nm mono">compress</span><span class="badge">sig</span><span class="fa mono">0x14d0</span></div>
+          <div class="frow"><span class="sym">ƒ</span><span class="nm mono">deflate</span><span class="fa mono">0x4650</span></div>
+          <div class="frow"><span class="sym">ƒ</span><span class="nm mono">inflate_table</span><span class="fa mono">0x2a10</span></div>
+          <div class="frow sub"><span class="sym">ƒ</span><span class="nm mono">sub_180002780</span><span class="fa mono">0x2780</span></div>
+          <div class="frow"><span class="sym">ƒ</span><span class="nm mono">adler32</span><span class="fa mono">0x7d70</span></div>
+          <div class="frow"><span class="sym">ƒ</span><span class="nm mono">uncompress</span><span class="fa mono">0x7850</span></div>
+          <div class="frow sub"><span class="sym">ƒ</span><span class="nm mono">sub_180003b40</span><span class="fa mono">0x3b40</span></div>
+        </div>
+        <div class="pfoot">2,318 functions<span class="grow"></span><span style="color:var(--ok)">86% named</span></div>
+      </div>
+
+      <div class="col">
+        <div class="panel" style="flex:1">
+          <div class="dockhead">
+            <button class="dt on">Decompilation</button><button class="dt">Disassembly</button><button class="dt">Hex</button><button class="dt" data-ws="graph">CFG</button>
+            <div class="grow"></div>
+            <button class="pill on">structured</button><button class="pill">ssa</button><button class="pill">goto</button>
+          </div>
+          <div class="code">
+            <div class="cl"><span class="gut">1</span><span><span class="ty">uint64_t</span> <span class="fnc">crc32_z</span>(<span class="ty">uint64_t</span> rdi, <span class="ty">void</span> *rsi, <span class="ty">uint64_t</span> rdx) {</span></div>
+            <div class="cl"><span class="gut">2</span><span>&nbsp;&nbsp;<span class="k">if</span> ((rsi == <span class="nu">0x0</span>)) <span class="k">return</span> <span class="nu">0x0</span>;</span></div>
+            <div class="cl"><span class="gut">3</span><span>&nbsp;&nbsp;v14 = ~rdi;</span></div>
+            <div class="cl"><span class="gut">4</span><span>&nbsp;&nbsp;<span class="k">if</span> ((rdx &lt;= <span class="cm">/*u*/</span> <span class="nu">0x2e</span>)) {</span></div>
+            <div class="cl"><span class="gut">5</span><span>&nbsp;&nbsp;&nbsp;&nbsp;rbx = rsi;</span></div>
+            <div class="cl"><span class="gut">6</span><span>&nbsp;&nbsp;} <span class="k">else</span> {</span></div>
+            <div class="cl"><span class="gut">7</span><span>&nbsp;&nbsp;&nbsp;&nbsp;v9 = &amp;<span class="st">crc_table</span>;</span></div>
+            <div class="cl hot"><span class="gut">8</span><span>&nbsp;&nbsp;&nbsp;&nbsp;<span class="k">while</span> (((rbx &amp; <span class="nu">0x7</span>) != <span class="nu">0x0</span>)) {</span></div>
+            <div class="cl"><span class="gut">9</span><span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;v14 = (v9[(<span class="ty">uint32_t</span>)(v14 ^ rbx-&gt;<span class="pu">field_0x0</span>)] ^ (v14 &gt;&gt; <span class="nu">0x8</span>));</span></div>
+            <div class="cl"><span class="gut">10</span><span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;rdx = (rdx - <span class="nu">0x1</span>);</span></div>
+            <div class="cl"><span class="gut">11</span><span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="k">if</span> ((rdx != <span class="nu">0x0</span>)) <span class="k">continue</span>; <span class="k">else</span> <span class="k">break</span>;</span></div>
+            <div class="cl"><span class="gut">12</span><span>&nbsp;&nbsp;&nbsp;&nbsp;}</span></div>
+            <div class="cl"><span class="gut">13</span><span>&nbsp;&nbsp;&nbsp;&nbsp;<span class="cm">// main CRC-by-8 loop</span></span></div>
+            <div class="cl"><span class="gut">14</span><span>&nbsp;&nbsp;&nbsp;&nbsp;<span class="k">for</span> (; (rdx != <span class="nu">0x0</span>); rdx = (rdx - <span class="nu">0x8</span>)) {</span></div>
+            <div class="cl"><span class="gut">15</span><span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;v12 = (v9[(<span class="ty">uint32_t</span>)(v14 ^ *rbx)] ^ (v14 &gt;&gt; <span class="nu">0x8</span>));</span></div>
+            <div class="cl"><span class="gut">16</span><span>&nbsp;&nbsp;&nbsp;&nbsp;}</span></div>
+            <div class="cl"><span class="gut">17</span><span>&nbsp;&nbsp;}</span></div>
+            <div class="cl"><span class="gut">18</span><span>&nbsp;&nbsp;<span class="k">return</span> ~v14;</span></div>
+            <div class="cl"><span class="gut">19</span><span>}</span></div>
+          </div>
+        </div>
+        <div class="panel" style="flex:0 0 auto">
+          <div class="phead">Disassembly<span class="sub">synced · x86-64</span><span class="grow"></span><span style="color:var(--live)">◆ line 8</span></div>
+          <div class="disasm">
+            <div class="drow"><span class="daddr">0x1000015c8</span><span class="dbytes">48 89 d8</span><span class="dmn">mov</span><span>rax, rbx</span></div>
+            <div class="drow"><span class="daddr">0x1000015cb</span><span class="dbytes">83 e0 07</span><span class="dmn">and</span><span>eax, 0x7</span></div>
+            <div class="drow hot"><span class="daddr">0x1000015ce</span><span class="dbytes">74 2a</span><span class="dmn" style="color:var(--live)">je</span><span>0x1000015fa</span></div>
+            <div class="drow"><span class="daddr">0x1000015d0</span><span class="dbytes">0f b6 03</span><span class="dmn">movzx</span><span>eax, byte [rbx]</span></div>
+            <div class="drow"><span class="daddr">0x1000015d3</span><span class="dbytes">31 f0</span><span class="dmn">xor</span><span>eax, esi</span></div>
+            <div class="drow"><span class="daddr">0x1000015d8</span><span class="dbytes">8b 04 87</span><span class="dmn">mov</span><span>eax, [rdi + rax*4]</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="col">
+        <div class="panel" style="flex:1">
+          <div class="rtabs"><button class="rt on">Copilot</button><button class="rt">Xrefs</button><button class="rt">Details</button></div>
+          <div class="chat">
+            <div class="msg"><div class="av me">ME</div><div class="bub mine">What does <span class="mono" style="color:var(--acc)">crc32_z</span> do?</div></div>
+            <div class="msg"><div class="av ai">AI</div><div>
+              <div class="bub">This is the <b>zlib CRC-32</b> checksum core. It folds each input byte through a 256-entry table (<span class="mono" style="color:var(--st)">crc_table</span>) — byte-by-byte until 8-aligned, then 8 bytes per pass for speed.
+              <div style="margin-top:6px;color:var(--tx1)">• <span class="mono">rsi</span> = buffer, <span class="mono">rdx</span> = length, <span class="mono">rdi</span> = seed.</div></div>
+              <div class="sug"><span class="sugb">Guide me: find callers</span><span class="sugb">Explain “SSA”</span><span class="sugb">Rename variables</span></div>
+            </div></div>
+          </div>
+          <div class="ask"><span class="provsel">Claude · cloud</span>Ask, or “guide me through…”<span class="grow"></span><span style="color:var(--acc)">↵</span></div>
+        </div>
+        <div class="panel" style="flex:0 0 auto">
+          <div class="phead">Details · Provenance</div>
+          <div class="det">
+            <div><div class="dk">Signature</div><span class="mono">uint64_t crc32_z(uint64_t, void*, uint64_t)</span></div>
+            <div><div class="dk">Callers</div>
+              <div class="xr"><span class="fnc mono">crc32</span> <span style="color:var(--tx2)">→ tail-call</span><span class="hit">live 1,204</span></div>
+              <div class="xr"><span class="fnc mono">compress2</span> <span style="color:var(--tx2)">→ 0x14e6</span><span class="hit">live 3</span></div>
+            </div>
+            <div><div class="dk">Provenance — line 8 ◆</div><div style="color:var(--tx1);font-size:.78rem;line-height:1.5">Written by <span class="mono" style="color:var(--live)">and eax, 0x7</span> @ <span class="mono">0x1000015cb</span> · watchpoint hit <span class="mono" style="color:var(--live)">1,204×</span></div></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel out">
+        <div class="phead">Output<span class="sub">n0x · console</span></div>
+        <div style="overflow:auto;padding:7px 0;flex:1">
+          <div class="oline"><span class="p">›</span> decomp pseudo --addr 0x1510 --style structured</div>
+          <div class="oline" style="color:var(--ok)">ok · 19 lines · schema n0x.decomp.pseudo.v1 · 7 ms</div>
+          <div class="oline"><span class="p">›</span> sig apply --flirt zlib-1.3.1.npat</div>
+          <div class="oline">named 118 functions · <span style="color:var(--live)">crc32_z, compress, adler32 …</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- DYNAMIC WORKSPACE -->
+    <div class="wsview" id="view-dynamic">
+      <div class="col">
+        <div class="panel" style="flex:0 0 auto">
+          <div class="phead">Registers · thread 0</div>
+          <div class="regs">
+            <div class="reg"><span class="rn">rax</span><span class="rv">00000064</span></div><div class="reg"><span class="rn">rbx</span><span class="rv ch">7ff6c21a40</span></div>
+            <div class="reg"><span class="rn">rcx</span><span class="rv">00000000</span></div><div class="reg"><span class="rn">rdx</span><span class="rv">00000057</span></div>
+            <div class="reg"><span class="rn">rsi</span><span class="rv">7ff6c218e0</span></div><div class="reg"><span class="rn">rdi</span><span class="rv">0000002a</span></div>
+            <div class="reg"><span class="rn">rsp</span><span class="rv">00cff9e0</span></div><div class="reg"><span class="rn">rip</span><span class="rv ch">7ff6c1002a</span></div>
+          </div>
+        </div>
+        <div class="panel" style="flex:1">
+          <div class="phead">Watchpoints &amp; breakpoints<span class="grow"></span><span class="sub">3</span></div>
+          <div style="overflow:auto">
+            <div class="wprow"><span class="wpi"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--live)" stroke-width="2"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="2.5"/></svg></span><div><div class="mono">7FF6C21A40</div><div style="color:var(--tx2);font-size:.68rem">write · health</div></div><span class="hit">1,204</span></div>
+            <div class="wprow"><span class="wpi"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--acc)" stroke-width="2"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="2.5"/></svg></span><div><div class="mono">7FF6C218E0</div><div style="color:var(--tx2);font-size:.68rem">read · ammo</div></div><span class="hit">86</span></div>
+            <div class="wprow"><span class="wpi"><svg width="13" height="13" viewBox="0 0 24 24" fill="var(--dgr)"><circle cx="12" cy="12" r="8"/></svg></span><div><div class="mono">7FF6C1002A</div><div style="color:var(--tx2);font-size:.68rem">execute · sub_1002A</div></div><span class="hit" style="color:var(--dgr);background:rgba(255,107,122,.1)">hit</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="col">
+        <div class="panel" style="flex:0 0 auto">
+          <div class="phead">Memory scanner<span class="grow"></span><span class="sub">3 results</span></div>
+          <div class="scanbar">
+            <div class="field"><input class="inp" value="87"><span class="selbox">4-byte int ▾</span><span class="selbox">exact ▾</span></div>
+            <div class="field"><button class="b p" style="flex:1">Next scan</button><button class="b g" style="flex:1">New scan</button><button class="b g">Undo</button></div>
+            <div style="color:var(--tx2);font-size:.75rem">Scan 4 of 5 · 2,481,003 → 3 candidates · value 100 → 87</div>
+          </div>
+          <div style="overflow:auto">
+            <div class="srow on"><span class="saddr">7FF6C21A40</span><span class="sval" style="color:var(--live)">87</span><span class="sprev">100</span></div>
+            <div class="srow"><span class="saddr">7FF6C21A44</span><span class="sval">87</span><span class="sprev">100</span></div>
+            <div class="srow"><span class="saddr">02A9F0E8</span><span class="sval">87</span><span class="sprev">92</span></div>
+          </div>
+        </div>
+        <div class="panel" style="flex:1">
+          <div class="phead">Live memory · <span class="sub mono">7FF6C21A40</span><span class="grow"></span><span style="color:var(--ok)" class="sub">● reading @ 60 Hz</span></div>
+          <div class="hex">
+            <div class="hx"><span class="hxa">7FF6C21A40</span><span class="hxb"><span class="hb-hi">57 00 00 00</span> 2a 00 00 00 5c 21 c2 f6 ff 7f 00 00</span><span class="hxc">W....*...\!......</span></div>
+            <div class="hx"><span class="hxa">7FF6C21A50</span><span class="hxb">64 00 00 00 00 00 80 3f 00 00 80 3f cd cc 4c 3e</span><span class="hxc">d......?...?..L&gt;</span></div>
+            <div class="hx"><span class="hxa">7FF6C21A60</span><span class="hxb">10 27 00 00 e8 03 00 00 01 00 00 00 00 00 00 00</span><span class="hxc">.'..............</span></div>
+            <div class="hx"><span class="hxa">7FF6C21A80</span><span class="hxb">48 65 61 6c 74 68 43 6f 6d 70 6f 6e 65 6e 74 00</span><span class="hxc" style="color:var(--ok)">HealthComponent.</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="col">
+        <div class="panel" style="flex:1">
+          <div class="phead">Watchlist<span class="grow"></span><span class="sub">freeze · edit</span></div>
+          <div style="overflow:auto">
+            <div class="wlrow"><span class="frz on"></span><span class="wname">health</span><span class="wval">87</span></div>
+            <div class="wlrow"><span class="frz on"></span><span class="wname">max_health</span><span class="wval">100</span></div>
+            <div class="wlrow"><span class="frz"></span><span class="wname">ammo</span><span class="wval">42</span></div>
+            <div class="wlrow"><span class="frz"></span><span class="wname">gold</span><span class="wval">10000</span></div>
+          </div>
+        </div>
+        <div class="panel ai" style="flex:0 0 auto">
+          <div class="phead" style="color:var(--vio)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--vio)" stroke-width="2"><path d="M12 2l2.4 6.9L22 9.5l-5.6 4.5L18 22l-6-4.2L6 22l1.6-8L2 9.5z"/></svg>Copilot · following</div>
+          <div style="padding:11px;font-size:.82rem;line-height:1.5;flex:1;overflow:auto">Found it. <span class="mono" style="color:var(--live)">7FF6C21A40</span> is <b>health</b> — I set a write-watchpoint and traced the writer to <span class="mono" style="color:var(--acc)">HealthComponent::TakeDamage</span>.
+            <div style="margin-top:8px;color:var(--vio);font-size:.72rem"><div>→ scan 87 (4-byte)</div><div>→ watch write 7FF6C21A40</div><div>→ provenance → decompile</div></div>
+          </div>
+          <div class="ask" style="margin:0 10px 10px"><span class="provsel">Local · Ollama</span>Ask…<span class="grow"></span><span style="color:var(--vio)">↵</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- GRAPH WORKSPACE -->
+    <div class="wsview" id="view-graph">
+      <div class="panel graphwrap">
+        <div class="phead">CFG · <span class="sub mono" style="color:var(--acc)">crc32_z</span><span class="sub">· 6 blocks · scroll = zoom · drag = pan</span><span class="grow"></span><button class="pill on">structured</button><button class="pill">dominators</button></div>
+        <div class="gviewport" id="gviewport">
+          <div class="gcanvas" id="gcanvas">
+            <svg class="gsvg" id="gsvg" width="920" height="700"></svg>
+            <!-- nodes injected by app.js -->
+          </div>
+          <div class="gzoom">
+            <button id="gz-in" title="Zoom in">+</button>
+            <div class="gzl" id="gz-lvl">100%</div>
+            <button id="gz-out" title="Zoom out">−</button>
+            <button id="gz-fit" title="Fit to view"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 9V5a1 1 0 0 1 1-1h4M20 9V5a1 1 0 0 0-1-1h-4M4 15v4a1 1 0 0 0 1 1h4M20 15v4a1 1 0 0 1-1 1h-4"/></svg></button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- FLOATING DOCK (Blender-style widgets) -->
+    <div class="dockspace" id="dockspace" style="pointer-events:none"></div>
+    <div class="snaphint" id="snaphint"></div>
+
+    <!-- COMMAND PALETTE -->
+    <div class="overlay" id="palette-ov">
+      <div class="pal">
+        <div class="psearch"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--acc)" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg><input class="pin mono" id="pal-input" placeholder="Type a command…" autocomplete="off"><span class="kbd">esc</span></div>
+        <div class="psec">Commands · from n0x guide</div>
+        <div id="pal-list"></div>
+        <div class="pfoot2"><span><span class="kbd">↑</span> <span class="kbd">↓</span> navigate</span><span><span class="kbd">↵</span> run</span><span class="grow"></span><span>77 capabilities</span></div>
+      </div>
+    </div>
+
+    <!-- SETTINGS -->
+    <div class="overlay" id="settings-ov">
+      <div class="modal">
+        <div class="mhead">Settings<div class="grow"></div><button class="wc cls" id="settings-close"><svg width="14" height="14" viewBox="0 0 12 12" stroke="currentColor" stroke-width="1.4"><path d="M3 3l6 6M9 3l-6 6"/></svg></button></div>
+        <div class="mbody">
+          <div class="snav">
+            <div class="sni on">Appearance</div><div class="sni">Layout</div><div class="sni">Editor &amp; code</div><div class="sni">Analysis</div><div class="sni">Dynamic &amp; debug</div><div class="sni">AI Copilot</div><div class="sni">Keybindings</div><div class="sni">Advanced</div>
+          </div>
+          <div class="scontent">
+            <div class="h1">Appearance</div><div class="h1s">Themes, palette and scaling — tuned for long sessions.</div>
+            <div class="gl">Theme · click to preview live</div>
+            <div class="themes" id="theme-grid">
+              <button class="th on" data-theme=""><div class="thp"><div style="flex:1;background:#090c12"></div><div style="width:22px;background:#141924"></div><div style="width:8px;background:#3fdcc4"></div></div><div class="thn"><span class="d" style="background:#3fdcc4"></span>Midnight</div></button>
+              <button class="th" data-theme="deep"><div class="thp"><div style="flex:1;background:#000205"></div><div style="width:22px;background:#0b0f16"></div><div style="width:8px;background:#2dd4bf"></div></div><div class="thn"><span class="d" style="background:#2dd4bf"></span>Deep</div></button>
+              <button class="th" data-theme="light"><div class="thp"><div style="flex:1;background:#eef1f5"></div><div style="width:22px;background:#ffffff"></div><div style="width:8px;background:#0d9488"></div></div><div class="thn" style="color:#111"><span class="d" style="background:#0d9488"></span>Light</div></button>
+              <button class="th" data-theme="nebula"><div class="thp"><div style="flex:1;background:#0b0d15"></div><div style="width:22px;background:#171a29"></div><div style="width:8px;background:#a78bfa"></div></div><div class="thn"><span class="d" style="background:#a78bfa"></span>Nebula</div></button>
+              <button class="th" data-theme="warm"><div class="thp"><div style="flex:1;background:#14100c"></div><div style="width:22px;background:#231c15"></div><div style="width:8px;background:#e0a56a"></div></div><div class="thn"><span class="d" style="background:#e0a56a"></span>Warm</div></button>
+              <button class="th" data-theme="forest"><div class="thp"><div style="flex:1;background:#0a120f"></div><div style="width:22px;background:#14241c"></div><div style="width:8px;background:#5ad19a"></div></div><div class="thn"><span class="d" style="background:#5ad19a"></span>Forest</div></button>
+            </div>
+            <div class="gl">Scaling &amp; type</div>
+            <div class="srowset"><div style="flex:1"><div class="rl">Global UI scale</div><div class="rd">Scales the whole interface · Ctrl + / − / 0</div></div><div class="seg" id="scale-seg"><button class="sg" data-scale=".9">90%</button><button class="sg on" data-scale="1">100%</button><button class="sg" data-scale="1.1">110%</button><button class="sg" data-scale="1.25">125%</button></div></div>
+            <div class="srowset"><div style="flex:1"><div class="rl">Density</div><div class="rd">Row height across lists and panels</div></div><div class="seg"><button class="sg">Compact</button><button class="sg on">Comfortable</button></div></div>
+            <div class="gl">AI Copilot · provider <span style="color:var(--vio)">(model-agnostic)</span></div>
+            <div class="provs">
+              <div class="prov"><div class="pv-i"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7l8-4 8 4-8 4z"/><path d="M4 12l8 4 8-4"/></svg></div><div><div class="rl">Cloud API key</div><div class="rd">Claude · GPT · bring your own</div></div></div>
+              <div class="prov on"><div class="pv-i"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="var(--vio)" stroke-width="2"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg></div><div><div class="rl" style="color:var(--vio)">Local · Ollama</div><div class="rd">Private · offline · nothing leaves</div></div></div>
+              <div class="prov"><div class="pv-i"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 17l6-6-6-6M12 19h8"/></svg></div><div><div class="rl">External agent · MCP</div><div class="rd">Claude Code / Cursor drives n0x</div></div></div>
+              <div class="prov"><div class="pv-i"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M5 5l14 14"/></svg></div><div><div class="rl">Off</div><div class="rd">No copilot panel</div></div></div>
+            </div>
+            <div class="srowset" style="margin-top:8px"><div style="flex:1"><div class="rl">Show what the model runs</div><div class="rd">Tool calls appear inline · transparency</div></div><div class="tog on"><div class="knob"></div></div></div>
+            <div class="srowset" style="border:none"><div style="flex:1"><div class="rl">Let Copilot move my view (Follow AI)</div><div class="rd">Highlights what the AI is examining · you stay in control</div></div><div class="tog on"><div class="knob"></div></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- STATUS BAR -->
+  <div class="sbar" id="statusbar">
+    <div class="sb"><span class="dot" id="sb-dot"></span><span id="sb-mode">static · PE x86-64</span></div>
+    <div class="sb mono">0x100001510</div>
+    <div class="sb">crc32_z</div>
+    <div class="grow"></div>
+    <div class="sb">analysis <span style="color:var(--ok)">100%</span></div>
+    <div class="sb">FLIRT · WARP</div>
+    <div class="sb mono" id="sb-zoom">zoom 100%</div>
+  </div>
+
+</div>
+
+<!-- RIGHT-CLICK CONTEXT MENU (populated by app.js) -->
+<div class="ctx" id="ctxmenu"></div>
+
+<!-- WIDGET PALETTE (add-widget menu) -->
+<div class="wpal" id="wpal">
+  <div class="wph">Add widget to canvas</div>
+  <div id="wpal-list"></div>
+</div>
+
+<script src="app.js" type="module"></script>
+</body>
+</html>
+</content>
