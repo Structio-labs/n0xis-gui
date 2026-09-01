@@ -98,7 +98,10 @@ function openTarget(kind) {
   recordRecent($('#target-name')?.textContent, kind); // remember for Open Recent
 }
 // ---------- launcher ----------
-$$('#launcher .card').forEach(card => card.addEventListener('click', () => openTarget(card.dataset.open)));
+$$('#launcher .card').forEach(card => card.addEventListener('click', () => {
+  if (card.dataset.open === 'dynamic' || card.dataset.open === 'both') pickProcess();
+  else openTarget(card.dataset.open);
+}));
 $('#btn-live').addEventListener('click', () => openTarget('dynamic'));
 
 // ---------- delegated widget interactions (widgets are created dynamically) ----------
@@ -116,6 +119,9 @@ $('#dockspace').addEventListener('click', e => {
     if (a) { selAddr = a.trim(); selName = (n || '').trim(); onSymbolSelect(); }   // track + follow the current symbol
     return;
   }
+  // decompiler style pills → re-decompile with that style
+  const pill = e.target.closest('.pill[data-style]');
+  if (pill) { pill.parentElement.querySelectorAll('.pill').forEach(x => x.classList.remove('on')); pill.classList.add('on'); decompStyle = pill.dataset.style; loadDecomp(); return; }
   // cosmetic single-select groups inside a widget
   for (const sel of ['.nt', '.rt', '.pill', '.dt']) {
     const g = e.target.closest(sel);
@@ -126,6 +132,17 @@ $('#dockspace').addEventListener('click', e => {
   if (act) { const t = act.textContent.trim(); if (act.classList.contains('b')) echo('scan ' + t.toLowerCase(), 'ok · 3 candidates'); else toast(t); return; }
   // freeze toggle in the watchlist
   const frz = e.target.closest('.frz'); if (frz) { frz.classList.toggle('on'); return; }
+});
+// live filter for the function list (and any .frow list with a .ffilter)
+$('#dockspace').addEventListener('input', e => {
+  const f = e.target.closest('.ffilter'); if (!f) return;
+  const q = f.value.trim().toLowerCase();
+  const list = f.closest('.dk-widget-body')?.querySelector('.flist'); if (!list) return;
+  let shown = 0;
+  list.querySelectorAll('.frow').forEach(r => {
+    const t = ((r.querySelector('.nm')?.textContent || '') + ' ' + (r.querySelector('.fa')?.textContent || '')).toLowerCase();
+    const ok = !q || t.includes(q); r.style.display = ok ? '' : 'none'; if (ok) shown++;
+  });
 });
 
 // ---------- shell buttons (launcher links, new-workspace, target chip) ----------
@@ -270,8 +287,8 @@ const COMMANDS = [
   ['Find xrefs to / from', 'Who calls this · what it calls', 'Shift+F12', () => toast('Xrefs')],
   ['Set watchpoint (R / W / X)', 'Break when this address is touched', '', () => setWorkspace('dynamic')],
   ['Find what accesses this address', 'Cheat-Engine-style hit counter', '', () => setWorkspace('dynamic')],
-  ['Memory scan…', 'Hunt a value in a live process', '', () => setWorkspace('dynamic')],
-  ['Attach to a process', 'Bind a live process to this session', '', () => setWorkspace('dynamic')],
+  ['Memory scan…', 'Hunt a value in a live process', '', () => { setWorkspace('dynamic'); if (!isLive()) pickProcess(); }],
+  ['Attach to a process', 'Bind a live process to this session', '', () => pickProcess()],
   ['Apply FLIRT signatures', 'Name statically-linked library code', '', () => echo('sig apply --flirt zlib-1.3.1.npat', 'named 118 functions')],
   ['Explain this with Copilot', 'Walk through the current function', '↵', () => toast('Copilot')],
   ['Change theme…', 'Switch the colour palette', '', () => settings.classList.add('on')],
@@ -664,9 +681,63 @@ function recordRecent(name, kind) {
   try { localStorage.setItem(RECENT_KEY, JSON.stringify(r.slice(0, 8))); } catch {}
 }
 function fmtAgo(ts) { const s = (Date.now() - ts) / 1000; if (s < 60) return 'just now'; if (s < 3600) return Math.floor(s / 60) + 'm ago'; if (s < 86400) return Math.floor(s / 3600) + 'h ago'; return Math.floor(s / 86400) + 'd ago'; }
-const isLive = () => $('#target-state')?.textContent === 'live';
+let curPid = 0, curPidName = '';
+const isLive = () => curPid > 0;
 const winCtl = a => $(`[data-win="${a}"]`)?.click();
-function closeTarget() { $('#launcher').classList.remove('hidden'); $('#sb-dot').classList.remove('live'); toast('Target closed'); }
+function closeTarget() { curPid = 0; curPidName = ''; $('#launcher').classList.remove('hidden'); $('#sb-dot').classList.remove('live'); toast('Target closed'); }
+
+/* ---- attach to a live process (real: `process ps` → pick → validate) ---- */
+function pickFromList(title, items, opts = {}) {
+  return new Promise(resolve => {
+    const ov = document.createElement('div'); ov.className = 'ask-ov';
+    ov.innerHTML = `<div class="ask-box lst"><div class="ask-t">${escH(title)}</div>` +
+      `<input class="ask-in lst-f mono" placeholder="${escH(opts.placeholder || 'Filter…')}">` +
+      `<div class="lst-items"></div><div class="ask-a"><button class="ask-cancel">Cancel</button></div></div>`;
+    document.body.appendChild(ov);
+    const filt = ov.querySelector('.lst-f'), box = ov.querySelector('.lst-items');
+    const done = v => { ov.remove(); resolve(v); };
+    const render = q => {
+      const s = (q || '').toLowerCase();
+      const rows = items.filter(it => !s || (it.label + ' ' + (it.sub || '')).toLowerCase().includes(s)).slice(0, 400);
+      box.innerHTML = rows.map(it => `<div class="lst-row" data-i="${items.indexOf(it)}"><span class="lst-l">${escH(it.label)}</span><span class="lst-s mono">${escH(it.sub || '')}</span></div>`).join('') || '<div class="xr-none">no matches</div>';
+    };
+    render('');
+    filt.addEventListener('input', () => render(filt.value));
+    box.addEventListener('click', e => { const r = e.target.closest('.lst-row'); if (r) done(items[+r.dataset.i].value); });
+    ov.querySelector('.ask-cancel').onclick = () => done(null);
+    ov.addEventListener('mousedown', e => { if (e.target === ov) done(null); });
+    filt.addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Escape') done(null); });
+    setTimeout(() => filt.focus(), 20);
+  });
+}
+async function pickProcess() {
+  let procs;
+  if (isNative) {
+    toast('Enumerating processes…');
+    const r = await n0x(['process', 'ps']);
+    if (!r?.ok) { toast('process ps failed: ' + (r?.error?.message || '?')); return; }
+    procs = (r.data.processes || []).slice();
+  } else {   // web preview — demo list so the flow is exercisable
+    procs = [{ name: 'game.exe', pid: 8124 }, { name: 'chrome.exe', pid: 4410 }, { name: 'explorer.exe', pid: 1200 }, { name: 'discord.exe', pid: 9931 }, { name: 'steam.exe', pid: 5567 }];
+  }
+  procs.sort((a, b) => a.name.localeCompare(b.name));
+  const items = procs.map(p => ({ label: p.name, sub: 'pid ' + p.pid, value: p }));
+  const pick = await pickFromList(`Attach to a process · ${procs.length} running`, items, { placeholder: 'Filter by name…' });
+  if (pick) attachProcess(pick.pid, pick.name);
+}
+function attachProcess(pid, name) {
+  curPid = pid; curPidName = name;
+  $('#launcher').classList.add('hidden');
+  $('#target-name').textContent = name;
+  const st = $('#target-state'); if (st) { st.textContent = 'live'; st.style.color = 'var(--live)'; }
+  $('#sb-dot').classList.add('live');
+  $('#sb-mode').textContent = `live · pid ${pid} · ${name}`;
+  setWorkspace('dynamic');
+  recordRecent(name, 'dynamic');
+  toast(`Attached to <span class="mono">${escH(name)}</span> · pid ${pid}`);
+  // validate access up front so permission problems surface immediately, not as silent dead panels
+  n0x(['mem', 'map', '--pid', String(pid)]).then(m => { if (m && !m.ok) toast('⚠ ' + escH(m.error?.message || 'cannot read this process')); });
+}
 function reopenRecent(rec) { $('#target-name').textContent = rec.name; openTarget(rec.kind === 'dynamic' || rec.kind === 'both' ? 'dynamic' : 'static'); }
 async function openFileTarget() {
   if (isNative) {
@@ -686,8 +757,8 @@ function menuItems(name) {
     case 'File': return [            // target lifecycle
       item('New project', 'add', '', newProject),
       item('Open file…', 'open', 'Ctrl+O', openFileTarget),
-      item('Attach to process…', 'play', '', () => openTarget('dynamic')),
-      item('Launch & attach…', 'play', '', () => openTarget('both')),
+      item('Attach to process…', 'play', '', () => pickProcess()),
+      item('Launch & attach…', 'play', '', () => pickProcess()),
       sep, lbl('Open recent'), ...recentItems(), sep,
       item('Settings', 'settings', 'Ctrl ,', () => openSettings()),
       item('Keyboard shortcuts', 'type', '', () => openSettings('keybindings')),
@@ -723,9 +794,10 @@ function menuItems(name) {
       item('Re-run analysis', 'reset', '', () => toast('Re-analyzing…')),
     ];
     case 'Debug': return [           // control of the running target
+      item('Attach to process…', 'play', '', () => pickProcess()),
+      item('Memory scan…', 'scan', '', () => { setWorkspace('dynamic'); if (!isLive()) pickProcess(); }),
       item('Set watchpoint', 'watch', '', () => setWorkspace('dynamic')),
       item('Find what writes…', 'xref', '', () => setWorkspace('dynamic')),
-      item('Memory scan…', 'scan', '', () => setWorkspace('dynamic')),
       sep,
       item('Continue', 'play', 'F5', () => toast('Continue'), { disabled: !isLive() }),
       item('Step over', 'step', 'F10', () => toast('Step over'), { disabled: !isLive() }),
@@ -822,12 +894,12 @@ const FUNCS = [
 const WIDGETS = {
   functions: { title: 'Functions', icon: 'strings', body: () => `<div class="wfill">
     <div class="navtabs"><button class="nt on">Functions</button><button class="nt">Imports</button><button class="nt">Strings</button><button class="nt">Types</button></div>
-    <div class="search">${svg(ICON.scan,'')}Filter functions…</div>
+    <div class="search">${svg(ICON.scan,'')}<input class="ffilter" placeholder="Filter functions…" spellcheck="false"></div>
     <div class="flist">${FUNCS.map(([n,a,b])=>`<div class="frow${n==='crc32_z'?' on':''}${b==='sub'?' sub':''}"><span class="sym">ƒ</span><span class="nm mono">${n}</span>${b==='sig'?'<span class="badge">sig</span>':''}<span class="fa mono">${a}</span></div>`).join('')}</div>
     <div class="pfoot"><span class="fcount">2,318 functions</span><span class="grow"></span><span class="fnamed" style="color:var(--ok)">86% named</span></div></div>` },
 
   decompiler: { title: 'Decompiler', icon: 'decomp', body: () => `<div class="wfill">
-    <div class="dockhead"><button class="pill on">structured</button><button class="pill">ssa</button><button class="pill">goto</button><div class="grow"></div><button class="dt" data-ws="graph">CFG ↗</button></div>
+    <div class="dockhead"><button class="pill on" data-style="structured">structured</button><button class="pill" data-style="ssa">ssa</button><button class="pill" data-style="goto">goto</button><div class="grow"></div><button class="dt" data-ws="graph">CFG ↗</button></div>
     ${pseudoInner()}</div>` },
 
   disassembly: { title: 'Disassembly · x86-64', icon: 'disasm', body: () => `<div style="height:100%;display:flex;flex-direction:column">${disasmInner()}</div>` },
@@ -870,11 +942,13 @@ const WIDGETS = {
     <div class="wprow" data-ctx="wprow"><span class="wpico" style="color:var(--acc)">${svg(ICON.watch,'')}</span><div><div class="mono">7FF6C218E0</div><div style="color:var(--tx2);font-size:.68rem">read · ammo</div></div><span class="hit" style="color:var(--acc);background:rgba(63,220,196,.1)">86</span></div>
     <div class="wprow" data-ctx="wprow"><span class="wpico" style="color:var(--dgr)">${svg(ICON.bp,'')}</span><div><div class="mono">7FF6C1002A</div><div style="color:var(--tx2);font-size:.68rem">execute · sub_1002A</div></div><span class="hit" style="color:var(--dgr);background:rgba(255,107,122,.1)">hit</span></div></div>` },
 
-  scanner: { title: 'Memory scanner', icon: 'scan', body: () => `<div class="wfill">
-    <div class="scanbar"><div class="field"><input class="inp" value="87"><span class="selbox">4-byte int ▾</span><span class="selbox">exact ▾</span></div>
-    <div class="field"><button class="b p" style="flex:1">Next scan</button><button class="b g" style="flex:1">New scan</button><button class="b g">Undo</button></div>
-    <div style="color:var(--tx2);font-size:.75rem">Scan 4 of 5 · 2,481,003 → 3 candidates · value 100 → 87</div></div>
-    <div style="overflow:auto;flex:1">${[['7FF6C21A40','87','100','on'],['7FF6C21A44','87','100',''],['02A9F0E8','87','92','']].map(([a,v,p,o])=>`<div class="srow ${o}" data-ctx="srow"><span class="saddr">${a}</span><span class="sval"${o?' style="color:var(--live)"':''}>${v}</span><span class="sprev">${p}</span></div>`).join('')}</div></div>` },
+  scanner: { title: 'Memory scanner', icon: 'scan', body: () => `<div class="wfill scanw">
+    <div class="scanbar">
+      <div class="field"><input class="inp scan-val" placeholder="value…" value=""><select class="scan-type selbox">${['i8', 'u8', 'i16', 'u16', 'i32', 'u32', 'i64', 'u64', 'f32', 'f64'].map(t => `<option${t === 'i32' ? ' selected' : ''}>${t}</option>`).join('')}</select></div>
+      <div class="field"><button class="b p scan-new" style="flex:1">New scan</button><button class="b g scan-next" style="flex:1">Next scan</button></div>
+      <div class="scan-stat" style="color:var(--tx2);font-size:.75rem">not scanning — attach a process to begin</div>
+    </div>
+    <div class="scan-res" style="overflow:auto;flex:1"></div></div>`, init: root => initScanner(root) },
 
   livemem: { title: 'Live memory · 7FF6C21A40', icon: 'hex', body: () => `<div class="hex selectable" style="height:100%">
     <div class="hx"><span class="hxa">7FF6C21A40</span><span class="hxb"><span class="hb-hi">57 00 00 00</span> 2a 00 00 00 5c 21 c2 f6 ff 7f 00 00</span><span class="hxc">W....*...\\!......</span></div>
@@ -1026,9 +1100,10 @@ function paintXrefs(scope) {                         // scope: one widget root, 
   });
 }
 function initXrefs(root) { paintXrefs(root.querySelector('.xrefs') || root); root.querySelector('.xr-refresh')?.addEventListener('click', loadXrefs); }
-async function loadXrefs() {
+async function loadXrefs(seq) {
   if (!isNative || !curPath) { paintXrefs(); return; }
   const [t, f] = await Promise.all([n0x(['xref', 'to', '--file', curPath, '--addr', selAddr]), n0x(['xref', 'from', '--file', curPath, '--addr', selAddr])]);
+  if (seq !== undefined && seq !== selSeq) return;
   if (t?.ok) XREF.to = t.data.refs || []; if (f?.ok) XREF.from = f.data.refs || [];
   paintXrefs();
 }
@@ -1056,10 +1131,15 @@ function paintStack(el) {
 function paintDecomp(lines) {
   $$('.code').forEach(code => { if (!code.querySelector('.gut')) return; code.innerHTML = lines.map((l, i) => `<div class="cl"><span class="gut">${i + 1}</span><span class="mono">${escH(l)}</span></div>`).join(''); });
 }
-async function loadDecomp() {
+let decompStyle = 'structured', selSeq = 0;
+function paintDecompMsg(msg) { $$('.code').forEach(code => { code.innerHTML = `<div class="cl"><span class="gut"></span><span class="mono" style="color:var(--tx2)">${escH(msg)}</span></div>`; }); }
+async function loadDecomp(seq) {
   if (!isNative || !curPath) return;                 // keep the demo pseudo in the web preview
-  const r = await n0x(['decomp', 'pseudo', '--file', curPath, '--addr', selAddr]);
+  paintDecompMsg('decompiling ' + (selName || selAddr) + '…');
+  const r = await n0x(['decomp', 'pseudo', '--file', curPath, '--addr', selAddr, '--style', decompStyle]);
+  if (seq !== undefined && seq !== selSeq) return;    // a newer selection superseded this one
   if (r?.ok && Array.isArray(r.data.pseudo)) { paintDecomp(r.data.pseudo); VARS = parseVars(r.data.signature, r.data.pseudo); paintVars(); }
+  else paintDecompMsg('// no decompilation for ' + selAddr + (r?.error ? ' — ' + r.error.message : ''));
 }
 function paintDisasm(insns) {
   const html = insns.map(i => {
@@ -1068,17 +1148,55 @@ function paintDisasm(insns) {
   }).join('');
   $$('.disasm').forEach(d => { d.innerHTML = html; });
 }
-async function loadDisasm() {
+async function loadDisasm(seq) {
   if (!isNative || !curPath) return;
   const r = await engine.disasm(curPath, selAddr);
+  if (seq !== undefined && seq !== selSeq) return;
   if (r?.ok && Array.isArray(r.data.insns)) paintDisasm(r.data.insns);
+  else $$('.disasm').forEach(d => { d.innerHTML = `<div class="drow" style="color:var(--tx2)">no disassembly for ${escH(selAddr)}</div>`; });
 }
 
 // one place that refreshes every symbol-following widget when the selection moves
 function onSymbolSelect() {
+  const my = ++selSeq;
   const a = $('#sb-addr'); if (a) a.textContent = selAddr;
   const n = $('#sb-name'); if (n) n.textContent = selName || '—';
-  paintXrefs(); loadXrefs(); loadDecomp(); loadDisasm();
+  paintXrefs(); loadXrefs(my); loadDecomp(my); loadDisasm(my);
+}
+
+/* ---- memory scanner: real `scan value` / `scan filter` against the attached pid ---- */
+let scanPass = 0;
+function initScanner(root) {
+  const valEl = root.querySelector('.scan-val'), typeEl = root.querySelector('.scan-type');
+  const stat = root.querySelector('.scan-stat'), res = root.querySelector('.scan-res');
+  const setStat = (t, c) => { stat.textContent = t; stat.style.color = c || 'var(--tx2)'; };
+  if (!curPid) setStat('not scanning — attach a process to begin');
+  const renderMatches = d => {
+    const ms = d.matches || [];
+    res.innerHTML = ms.slice(0, 300).map(m => `<div class="srow" data-ctx="srow" data-addr="${escH(m.addr)}"><span class="saddr">${escH(m.addr)}</span><span class="sval" style="color:var(--live)">${escH(String(m.value))}</span></div>`).join('') || '<div class="xr-none">no matches</div>';
+    const total = d.total_matches ?? ms.length;
+    setStat(`pass ${scanPass} · ${total.toLocaleString()} match${total === 1 ? '' : 'es'}` + (d.shown < total ? ` · showing ${d.shown}` : ''), total ? 'var(--ok)' : 'var(--tx2)');
+  };
+  async function scan(kind) {
+    if (!curPid) { setStat('attach a process first (Debug ▸ Attach)', 'var(--live)'); return; }
+    const type = typeEl.value, val = valEl.value.trim();
+    if (val === '') { setStat('enter a value to search for', 'var(--live)'); return; }
+    if (!isNative) {   // web preview — demo matches so the scanner is exercisable
+      scanPass = kind === 'next' ? scanPass + 1 : 1;
+      const n = kind === 'next' ? 2 : 6;
+      renderMatches({ matches: Array.from({ length: n }, (_, i) => ({ addr: '0x7FF6C21A' + (40 + i * 4).toString(16).toUpperCase(), value: val })), total_matches: n, shown: n });
+      return;
+    }
+    setStat(kind === 'next' ? 'narrowing…' : 'scanning memory…');
+    const args = kind === 'next'
+      ? ['scan', 'filter', '--pid', String(curPid), '--from', 'gui', '--criterion', 'exact', '--value', val, '--save-as', 'gui']
+      : ['scan', 'value', '--pid', String(curPid), '--type', type, '--criterion', 'exact', '--value', val, '--save-as', 'gui'];
+    const r = await n0x(args);
+    if (r?.ok) { scanPass = kind === 'next' ? scanPass + 1 : 1; renderMatches(r.data); }
+    else setStat('scan failed · ' + (r?.error?.message || 'unknown'), 'var(--dgr)');
+  }
+  root.querySelector('.scan-new').addEventListener('click', () => scan('new'));
+  root.querySelector('.scan-next').addEventListener('click', () => scan('next'));
 }
 
 /* ---- switchable Code view (Pseudo-C / Disassembly / Graph in one pane) ---- */

@@ -526,3 +526,17 @@ a{ color:var(--acc); }
 
 /* ---- empty / loading states ---- */
 .fl-empty{ padding:16px 12px; color:var(--tx2); font-size:.8rem; line-height:1.5; }
+
+/* ---- function filter input ---- */
+.search input.ffilter{ flex:1; min-width:0; background:transparent; border:none; outline:none; color:var(--tx0); font:inherit; font-size:.85rem; }
+.search input.ffilter::placeholder{ color:var(--tx2); }
+
+/* ---- list picker (process attach) ---- */
+.ask-box.lst{ width:min(520px,92vw); }
+.lst-items{ margin-top:10px; max-height:min(52vh,420px); overflow:auto; border:1px solid var(--bd2); border-radius:8px; }
+.lst-row{ display:flex; align-items:center; justify-content:space-between; gap:12px; padding:7px 11px; cursor:pointer; border-bottom:1px solid rgba(45,54,72,.5); }
+.lst-row:hover{ background:var(--bg3); }
+.lst-l{ color:var(--tx0); font-size:.85rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.lst-s{ color:var(--tx2); font-size:.75rem; flex:0 0 auto; }
+/* scanner type select */
+select.scan-type{ background:var(--bg2); color:var(--tx0); border:1px solid var(--bd2); border-radius:6px; padding:3px 6px; font:inherit; font-size:.78rem; outline:none; }
