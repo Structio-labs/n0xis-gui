@@ -92,9 +92,10 @@
         <div class="mhead">Settings<div class="grow"></div><button class="wc cls" id="settings-close"><svg width="14" height="14" viewBox="0 0 12 12" stroke="currentColor" stroke-width="1.4"><path d="M3 3l6 6M9 3l-6 6"/></svg></button></div>
         <div class="mbody">
           <div class="snav">
-            <div class="sni on">Appearance</div><div class="sni">Layout</div><div class="sni">Editor &amp; code</div><div class="sni">Analysis</div><div class="sni">Dynamic &amp; debug</div><div class="sni">AI Copilot</div><div class="sni">Keybindings</div><div class="sni">Advanced</div>
+            <div class="sni on" data-pane="appearance">Appearance</div><div class="sni" data-pane="layout">Layout</div><div class="sni" data-pane="editor">Editor &amp; code</div><div class="sni" data-pane="analysis">Analysis</div><div class="sni" data-pane="dynamic">Dynamic &amp; debug</div><div class="sni" data-pane="copilot">AI Copilot</div><div class="sni" data-pane="keybindings">Keybindings</div><div class="sni" data-pane="advanced">Advanced</div>
           </div>
           <div class="scontent">
+            <div class="spane" data-pane="appearance">
             <div class="h1">Appearance</div><div class="h1s">Themes, palette and scaling — tuned for long sessions.</div>
             <div class="gl">Theme · click to preview live</div>
             <div class="themes" id="theme-grid">
@@ -107,16 +108,53 @@
             </div>
             <div class="gl">Scaling &amp; type</div>
             <div class="srowset"><div style="flex:1"><div class="rl">Global UI scale</div><div class="rd">Scales the whole interface · Ctrl + / − / 0</div></div><div class="seg" id="scale-seg"><button class="sg" data-scale=".9">90%</button><button class="sg on" data-scale="1">100%</button><button class="sg" data-scale="1.1">110%</button><button class="sg" data-scale="1.25">125%</button></div></div>
+            </div><!-- /appearance -->
+
+            <div class="spane" data-pane="layout" hidden>
+            <div class="h1">Layout</div><div class="h1s">Docking, density and how panes behave.</div>
             <div class="srowset"><div style="flex:1"><div class="rl">Density</div><div class="rd">Row height across lists and panels</div></div><div class="seg"><button class="sg">Compact</button><button class="sg on">Comfortable</button></div></div>
-            <div class="gl">AI Copilot · provider <span style="color:var(--vio)">(model-agnostic)</span></div>
+            <div class="srowset" style="border:none"><div style="flex:1"><div class="rl">Restore layout on open</div><div class="rd">Reopen each workspace exactly where you left it</div></div><div class="tog on"><div class="knob"></div></div></div>
+            </div><!-- /layout -->
+
+            <div class="spane" data-pane="editor" hidden>
+            <div class="h1">Editor &amp; code</div><div class="h1s">Decompiler and disassembly presentation.</div>
+            <div class="srowset"><div style="flex:1"><div class="rl">Default decompile style</div><div class="rd">structured · ssa · goto</div></div><div class="seg"><button class="sg on">structured</button><button class="sg">ssa</button><button class="sg">goto</button></div></div>
+            <div class="srowset" style="border:none"><div style="flex:1"><div class="rl">Show instruction bytes</div><div class="rd">Hex byte column in the disassembly view</div></div><div class="tog on"><div class="knob"></div></div></div>
+            </div><!-- /editor -->
+
+            <div class="spane" data-pane="analysis" hidden>
+            <div class="h1">Analysis</div><div class="h1s">What the engine does when a target opens.</div>
+            <div class="srowset"><div style="flex:1"><div class="rl">Auto-profile on open</div><div class="rd">Run <span class="mono">profile</span> the moment a target loads</div></div><div class="tog on"><div class="knob"></div></div></div>
+            <div class="srowset" style="border:none"><div style="flex:1"><div class="rl">Function-discovery cap</div><div class="rd">Bound on <span class="mono">function discover</span> results (data-seam discipline)</div></div><div class="seg"><button class="sg">200</button><button class="sg on">500</button><button class="sg">2000</button></div></div>
+            </div><!-- /analysis -->
+
+            <div class="spane" data-pane="dynamic" hidden>
+            <div class="h1">Dynamic &amp; debug</div><div class="h1s">Live-process attach, scanning and patching.</div>
+            <div class="srowset" style="border:none"><div style="flex:1"><div class="rl">Confirm before patching</div><div class="rd">Ask before a journaled write to a live process</div></div><div class="tog on"><div class="knob"></div></div></div>
+            </div><!-- /dynamic -->
+
+            <div class="spane" data-pane="copilot" hidden>
+            <div class="h1">AI Copilot</div><div class="h1s">Model-agnostic — cloud, local, or an external agent driving n0x.</div>
+            <div class="gl">Provider</div>
             <div class="provs">
               <div class="prov"><div class="pv-i"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7l8-4 8 4-8 4z"/><path d="M4 12l8 4 8-4"/></svg></div><div><div class="rl">Cloud API key</div><div class="rd">Claude · GPT · bring your own</div></div></div>
               <div class="prov on"><div class="pv-i"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="var(--vio)" stroke-width="2"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg></div><div><div class="rl" style="color:var(--vio)">Local · Ollama</div><div class="rd">Private · offline · nothing leaves</div></div></div>
               <div class="prov"><div class="pv-i"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 17l6-6-6-6M12 19h8"/></svg></div><div><div class="rl">External agent · MCP</div><div class="rd">Claude Code / Cursor drives n0x</div></div></div>
               <div class="prov"><div class="pv-i"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M5 5l14 14"/></svg></div><div><div class="rl">Off</div><div class="rd">No copilot panel</div></div></div>
             </div>
-            <div class="srowset" style="margin-top:8px"><div style="flex:1"><div class="rl">Show what the model runs</div><div class="rd">Tool calls appear inline · transparency</div></div><div class="tog on"><div class="knob"></div></div></div>
-            <div class="srowset" style="border:none"><div style="flex:1"><div class="rl">Let Copilot move my view (Follow AI)</div><div class="rd">Highlights what the AI is examining · you stay in control</div></div><div class="tog on"><div class="knob"></div></div></div>
+            <div class="srowset" style="margin-top:8px;border:none"><div style="flex:1"><div class="rl">Show what the model runs</div><div class="rd">Tool calls appear inline · transparency</div></div><div class="tog on"><div class="knob"></div></div></div>
+            </div><!-- /copilot -->
+
+            <div class="spane" data-pane="keybindings" hidden>
+            <div class="h1">Keybindings</div><div class="h1s">VS Code-style, adapted for reverse engineering — every global shortcut, in one place.</div>
+            <div id="keybind-list"></div>
+            </div><!-- /keybindings -->
+
+            <div class="spane" data-pane="advanced" hidden>
+            <div class="h1">Advanced</div><div class="h1s">Engine binary, project store and diagnostics.</div>
+            <div class="srowset"><div style="flex:1"><div class="rl">Engine binary</div><div class="rd mono" id="adv-engine">n0xis · resolving…</div></div></div>
+            <div class="srowset" style="border:none"><div style="flex:1"><div class="rl">Reset all preferences</div><div class="rd">Themes, zoom, layout and recents</div></div><button class="sg" id="adv-reset">Reset</button></div>
+            </div><!-- /advanced -->
           </div>
         </div>
       </div>

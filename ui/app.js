@@ -167,14 +167,64 @@ $$('#theme-grid .th').forEach(t => t.addEventListener('click', () => applyTheme(
 if (prefs.theme) applyTheme(prefs.theme);
 if (prefs.zoom) setZoom(prefs.zoom);
 
-// ---------- settings overlay ----------
+// ---------- keybindings: single source of truth (menus + Settings read this) ----------
+const KEYMAP = [
+  ['General', [
+    ['Command palette', 'Ctrl+Shift+P'],
+    ['Command palette · quick', 'Ctrl+P'],
+    ['Open file / process', 'Ctrl+O'],
+    ['Go to address / symbol', 'Ctrl+G'],
+    ['Settings', 'Ctrl+,'],
+    ['Zoom in / out / reset', 'Ctrl + = / − / 0'],
+    ['Close window', 'Ctrl+Q'],
+  ]],
+  ['Analysis', [
+    ['Decompile', 'F5'],
+    ['Rename symbol', 'F2'],
+    ['Comment', 'Ctrl+/'],
+    ['Find references (xrefs)', 'Shift+F12'],
+  ]],
+  ['Debug (live target)', [
+    ['Continue', 'F5'],
+    ['Step over', 'F10'],
+    ['Step into', 'F11'],
+    ['Toggle breakpoint', 'F9'],
+  ]],
+  ['Layout', [
+    ['Undo layout change', 'Ctrl+Shift+Z'],
+    ['Redo layout change', 'Ctrl+Shift+X'],
+  ]],
+];
+function renderKeybindings() {
+  const el = $('#keybind-list'); if (!el) return;
+  el.innerHTML = KEYMAP.map(([grp, binds]) =>
+    `<div class="kb-grp">${escH(grp)}</div>` +
+    binds.map(([c, k]) => `<div class="kb-row"><span class="kb-c">${escH(c)}</span><span class="kbd">${escH(k)}</span></div>`).join('')
+  ).join('');
+}
+
+// ---------- settings overlay (real pane switching) ----------
 const settings = $('#settings-ov');
-$('#btn-settings').addEventListener('click', () => settings.classList.add('on'));
+let advWired = false;
+async function refreshAdvanced() {
+  const eng = $('#adv-engine');
+  if (eng) {
+    if (!isNative) eng.textContent = 'web preview — engine offline';
+    else { const i = await engineInfo(); eng.textContent = i && i.ok ? `${i.bin || 'n0xis'} · v${i.version} · ${i.commandCount} cmds` : 'engine not found on PATH'; }
+  }
+  if (!advWired) { advWired = true; $('#adv-reset')?.addEventListener('click', () => { try { localStorage.clear(); } catch {} toast('Preferences reset — reload the window to apply'); }); }
+}
+function showSettingsPane(name) {
+  $$('.snav .sni').forEach(x => x.classList.toggle('on', x.dataset.pane === name));
+  $$('.scontent .spane').forEach(p => { p.hidden = p.dataset.pane !== name; });
+  if (name === 'keybindings') renderKeybindings();
+  if (name === 'advanced') refreshAdvanced();
+}
+function openSettings(pane) { settings.classList.add('on'); if (pane) showSettingsPane(pane); }
+$('#btn-settings').addEventListener('click', () => openSettings());
 $('#settings-close').addEventListener('click', () => settings.classList.remove('on'));
 settings.addEventListener('click', e => { if (e.target === settings) settings.classList.remove('on'); });
-$$('.snav .sni').forEach(n => n.addEventListener('click', () => {
-  $$('.snav .sni').forEach(x => x.classList.remove('on')); n.classList.add('on');
-}));
+$$('.snav .sni').forEach(n => n.addEventListener('click', () => showSettingsPane(n.dataset.pane)));
 
 // ---------- command palette ----------
 const COMMANDS = [
@@ -532,6 +582,15 @@ function doPatch(kind, addr = selAddr) {          // invert branch / NOP — a l
   if (!isLive()) { toast('Patch needs a live target — attach a process first (Debug ▸ Attach)'); return; }
   toast(`${kind} @ ${addr} — journaled patch (live) …`);   // full pid+bytes flow lands with the Debugger tier
 }
+async function doGoto() {                          // navigate to an address or symbol (like VS Code's Go to Line)
+  const v = await askInput('Go to address or symbol', '', 'e.g.  0x140001510   or   crc32_z');
+  if (v === null || !v.trim()) return;
+  const q = v.trim(), rows = $$('#dockspace .flist .frow');
+  const hit = rows.find(r => (r.querySelector('.nm')?.textContent || '').toLowerCase() === q.toLowerCase())
+    || rows.find(r => (r.querySelector('.fa')?.textContent || '').toLowerCase() === q.toLowerCase());
+  if (hit) { hit.click(); hit.scrollIntoView({ block: 'nearest' }); toast('Jumped to ' + escH(hit.querySelector('.nm')?.textContent || q)); }
+  else { selAddr = /^0x/i.test(q) ? q : selAddr; selName = q; onSymbolSelect(); toast('Go to ' + escH(q)); }
+}
 
 function openCtx(x, y, items) {
   ctx.innerHTML = items.map((it, i) => {
@@ -598,10 +657,15 @@ function menuItems(name) {
       item('Attach to process…', 'play', '', () => openTarget('dynamic')),
       item('Launch & attach…', 'play', '', () => openTarget('both')),
       sep, lbl('Open recent'), ...recentItems(), sep,
-      item('Settings', 'settings', 'Ctrl ,', () => settings.classList.add('on')),
+      item('Settings', 'settings', 'Ctrl ,', () => openSettings()),
+      item('Keyboard shortcuts', 'type', '', () => openSettings('keybindings')),
+      sep,
       item('Close target', 'x', '', closeTarget),
+      item('Exit', 'x', 'Ctrl+Q', () => winCtl('close'), { danger: true }),
     ];
     case 'Edit': return [            // edits to the analysis database (engine-backed)
+      item('Go to address…', 'xref', 'Ctrl+G', () => doGoto()),
+      sep,
       item('Rename…', 'rename', 'F2', () => doRename()),
       item('Comment…', 'comment', 'Ctrl+/', () => doComment()),
       item('Change type…', 'type', '', () => doRetype()),
@@ -611,11 +675,13 @@ function menuItems(name) {
       item('Command palette', 'scan', 'Ctrl+Shift+P', openPal),
     ];
     case 'View': return [            // presentation only
+      item('Command palette', 'scan', 'Ctrl+Shift+P', openPal),
+      sep,
       item('Zoom in', 'add', 'Ctrl +', () => setZoom(zoom + 0.1)),
       item('Zoom out', 'min', 'Ctrl −', () => setZoom(zoom - 0.1)),
       item('Reset zoom', 'reset', 'Ctrl 0', () => setZoom(1)),
       sep,
-      item('Themes & appearance…', 'settings', '', () => settings.classList.add('on')),
+      item('Themes & appearance…', 'settings', '', () => openSettings('appearance')),
     ];
     case 'Analyze': return [         // analysis actions
       item('Decompile', 'decomp', 'F5', () => { setWorkspace('decompile'); toast('Decompiling'); }),
@@ -648,7 +714,7 @@ function menuItems(name) {
     case 'Help': return [
       item('Getting started', 'book', '', () => toast('Getting started')),
       item('Glossary of terms', 'strings', '', () => toast('Glossary of RE terms')),
-      item('Keyboard shortcuts', 'type', '', openPal),
+      item('Keyboard shortcuts', 'type', '', () => openSettings('keybindings')),
       sep,
       item('Documentation', 'book', '', () => toast('Docs')),
       item('About N0xis', 'about', '', () => toast('N0xis GUI · a thin client over the n0xis engine')),
@@ -675,7 +741,9 @@ window.addEventListener('keydown', e => {
     const k = e.key.toLowerCase();
     if (e.shiftKey) return;                                 // Ctrl+Shift+P palette & Z/X layout have own listeners
     if (k === 'o') { e.preventDefault(); openFileTarget(); }
-    else if (e.key === ',') { e.preventDefault(); settings.classList.add('on'); }
+    else if (e.key === ',') { e.preventDefault(); openSettings(); }
+    else if (k === 'g') { e.preventDefault(); if (targetOpen()) doGoto(); }
+    else if (k === 'q') { e.preventDefault(); winCtl('close'); }
     else if (k === '/') { e.preventDefault(); if (targetOpen()) doComment(); }
     return;                                                 // Ctrl+P / Ctrl+±0 handled elsewhere
   }

@@ -502,3 +502,11 @@ a{ color:var(--acc); }
 .cv-sel{ padding:5px 11px; border:1px solid var(--bd2); border-radius:6px; color:var(--tx0); font-size:.82rem; background:var(--bg2); }
 .cv-sel:hover{ border-color:var(--accd); color:var(--acc); }
 .cv-body .graphwrap{ height:100%; }
+
+/* ---- settings panes + keybindings table ---- */
+.spane[hidden]{ display:none; }
+.kb-grp{ font-size:.68rem; text-transform:uppercase; letter-spacing:.05em; color:var(--tx2); margin:16px 0 6px; }
+.kb-grp:first-child{ margin-top:2px; }
+.kb-row{ display:flex; align-items:center; justify-content:space-between; gap:12px; padding:7px 2px; border-bottom:1px solid var(--bd2); }
+.kb-c{ color:var(--tx0); font-size:.84rem; }
+.kb-row .kbd{ color:var(--tx1); font-size:.72rem; }
