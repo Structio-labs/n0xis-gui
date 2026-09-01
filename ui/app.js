@@ -1,5 +1,5 @@
 // N0xis GUI — interactive shell (framework-free; drops into Tauri's webview as-is)
-import { isNative, engineInfo, engine, pickFile, n0x, initialTarget } from './bridge.js';
+import { isNative, engineInfo, engine, pickFile, n0x, initialTarget, listProcesses } from './bridge.js';
 import { initDock } from './dock.js';
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -328,7 +328,7 @@ window.addEventListener('keydown', e => {   // Escape is not a bindable command 
 /* =====================================================================
    CONTROL-FLOW GRAPH — data-driven, aligned edges, pan + zoom
    ===================================================================== */
-const GRAPH = {
+let GRAPH = {
   blocks: [
     { id: 'block_0', addr: '0x1510', tag: 'entry',     x: 355, y: 24,  w: 210, body: 'if (rsi == 0) return 0;<br>v14 = ~rdi;' },
     { id: 'block_1', addr: '0x1538', tag: '',          x: 360, y: 150, w: 200, body: 'if (rdx &lt;= 0x2e)' },
@@ -352,12 +352,13 @@ const GRAPH = {
 };
 // Self-contained: bound to one graph widget's own elements (many can coexist).
 let graphSeq = 0;
+const graphRebuilds = [];                          // every mounted graph re-reads GRAPH on demand
 function initGraphWidget(root) {
   const gv = root.querySelector('.gviewport'), gc = root.querySelector('.gcanvas'), gs = root.querySelector('.gsvg');
   if (!gv || !gc || !gs) return;
   const mid = 'arrow-' + (graphSeq++);            // unique marker id per graph instance
   const cam = { x: 40, y: 20, s: 1 };
-  const blocks = GRAPH.blocks.map(b => ({ ...b })); // local, independently draggable positions
+  let blocks = GRAPH.blocks.map(b => ({ ...b }));  // local, independently draggable positions
   const rectOf = {};
   const rankOf = {};
 
@@ -476,12 +477,49 @@ function initGraphWidget(root) {
   root.querySelector('.gz-in').addEventListener('click', () => zoomBy(1.15));
   root.querySelector('.gz-out').addEventListener('click', () => zoomBy(0.87));
   root.querySelector('.gz-fit').addEventListener('click', () => { userAdjusted = false; fitGraph(); }); // fit re-enables auto-fit
-  // a small graph is self-explanatory — drop the legend (only large CFGs keep it)
-  if (blocks.length <= 12) root.querySelector('.glegend')?.remove();
+  function trimLegend() { if (blocks.length <= 12) root.querySelector('.glegend')?.remove(); }
+  trimLegend();
   renderGraph();
   requestAnimationFrame(fitGraph);
   setTimeout(fitGraph, 120); // refit once layout settles
   try { new ResizeObserver(() => { if (!userAdjusted) fitGraph(); }).observe(gv); } catch {}
+  // rebuild from the current GRAPH (a new function was selected) — re-read, re-layout, re-fit
+  function rebuild() {
+    if (!gc.isConnected) return;                  // widget was closed
+    blocks = GRAPH.blocks.map(b => ({ ...b }));
+    for (const k in rectOf) delete rectOf[k];
+    for (const k in rankOf) delete rankOf[k];
+    layout(); renderGraph(); userAdjusted = false; fitGraph(); setTimeout(fitGraph, 60);
+  }
+  graphRebuilds.push(rebuild);
+}
+// convert the engine's `ir build` CFG into the graph widget's block/edge model
+function cfgToGraph(d) {
+  const idByStart = {};
+  (d.blocks || []).forEach(b => { idByStart[b.start] = 'block_' + b.id; });
+  const val = a => { try { return parseInt(a, 16); } catch { return 0; } };
+  const blocks = (d.blocks || []).map((b, i) => {
+    const ins = b.insns || [];
+    const body = ins.slice(0, 6).map(x => escH(x.text || x.mnemonic || '')).join('<br>') + (ins.length > 6 ? `<br><span style="color:var(--tx2)">… +${ins.length - 6}</span>` : '');
+    const isExit = !(b.successors && b.successors.length);
+    return { id: 'block_' + b.id, addr: b.start, tag: i === 0 ? 'entry' : (isExit ? 'exit' : ''), x: 0, y: 0, w: 250, body: body || '—' };
+  });
+  const edges = [];
+  (d.blocks || []).forEach(b => (b.successors || []).forEach(s => {
+    const to = idByStart[s.to]; if (!to) return;
+    let type = s.kind === 'cjmp-true' ? 't' : s.kind === 'cjmp-false' ? 'f' : 'u';
+    if (val(s.to) <= val(b.start)) type = 'loop';   // backward edge = loop back-edge
+    edges.push({ f: 'block_' + b.id, t: to, type });
+  }));
+  return { blocks, edges };
+}
+async function loadGraph() {
+  if (!isNative || !curPath) return;               // keep the demo CFG in the web preview
+  const r = await n0x(['ir', 'build', '--file', curPath, '--addr', selAddr]);
+  if (r?.ok && Array.isArray(r.data.blocks) && r.data.blocks.length) {
+    GRAPH = cfgToGraph(r.data);
+    graphRebuilds.forEach(fn => { try { fn(); } catch {} });
+  }
 }
 
 /* =====================================================================
@@ -714,9 +752,11 @@ async function pickProcess() {
   let procs;
   if (isNative) {
     toast('Enumerating processes…');
-    const r = await n0x(['process', 'ps']);
-    if (!r?.ok) { toast('process ps failed: ' + (r?.error?.message || '?')); return; }
-    procs = (r.data.processes || []).slice();
+    // prefer the host /proc names (real exe names for Proton/Wine games — the
+    // engine's `process ps` reports 'wine-preloader' for those), fall back to it.
+    const host = await listProcesses();
+    if (host?.ok && host.data.processes?.length) procs = host.data.processes.slice();
+    else { const r = await n0x(['process', 'ps']); if (!r?.ok) { toast('process list failed: ' + (r?.error?.message || '?')); return; } procs = (r.data.processes || []).slice(); }
   } else {   // web preview — demo list so the flow is exercisable
     procs = [{ name: 'game.exe', pid: 8124 }, { name: 'chrome.exe', pid: 4410 }, { name: 'explorer.exe', pid: 1200 }, { name: 'discord.exe', pid: 9931 }, { name: 'steam.exe', pid: 5567 }];
   }
@@ -929,7 +969,7 @@ const WIDGETS = {
 
   hex: { title: 'Hex', icon: 'hex', body: () => `<div class="hex selectable" style="height:100%"><div class="hx"><span class="hxa">7FF6C21A40</span><span class="hxb"><span class="hb-hi">57 00 00 00</span> 2a 00 00 00 5c 21 c2 f6</span><span class="hxc">W....*...\\!</span></div><div class="hx"><span class="hxa">7FF6C21A50</span><span class="hxb">64 00 00 00 00 00 80 3f 00 00 80 3f</span><span class="hxc">d......?...?</span></div></div>` },
 
-  graph: { title: 'CFG · crc32_z', icon: 'graph', body: () => `<div class="graphwrap" style="height:100%">
+  graph: { title: 'Control-flow graph', icon: 'graph', body: () => `<div class="graphwrap" style="height:100%">
     <div class="gviewport"><div class="gcanvas"><svg class="gsvg" width="920" height="700"></svg></div>
     <div class="gzoom"><button class="gz-in">+</button><div class="gzl">100%</div><button class="gz-out">−</button><button class="gz-fit">${svg('M4 9V5a1 1 0 0 1 1-1h4;M20 9V5a1 1 0 0 0-1-1h-4;M4 15v4a1 1 0 0 0 1 1h4;M20 15v4a1 1 0 0 1-1 1h-4','')}</button></div>
     <div class="glegend"><span class="lg"><span class="ln t"></span>true</span><span class="lg"><span class="ln f"></span>false</span><span class="lg"><span class="ln u"></span>uncond</span><span class="lg"><span class="ln loop"></span>loop</span><span class="lg" style="color:var(--tx2)">drag blocks · scroll = zoom</span></div></div></div>`,
@@ -1194,7 +1234,7 @@ function onSymbolSelect() {
   const my = ++selSeq;
   const a = $('#sb-addr'); if (a) a.textContent = selAddr;
   const n = $('#sb-name'); if (n) n.textContent = selName || '—';
-  paintXrefs(); loadXrefs(my); loadDecomp(my); loadDisasm(my);
+  paintXrefs(); loadXrefs(my); loadDecomp(my); loadDisasm(my); loadGraph();
 }
 
 /* ---- memory scanner: real `scan value` / `scan filter` against the attached pid ---- */

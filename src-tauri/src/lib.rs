@@ -85,6 +85,32 @@ fn initial_target() -> Option<String> {
     })
 }
 
+/// List running processes with USEFUL names. The engine's `process ps` reads a
+/// name that, for Proton/Wine games, is just "wine-preloader"; the kernel's
+/// /proc/<pid>/comm carries the real exe name ("Sam2.exe"). On Linux we read
+/// that directly; elsewhere we return empty so the caller falls back to the engine.
+#[tauri::command]
+fn list_processes() -> Value {
+    #[allow(unused_mut)]
+    let mut procs: Vec<Value> = Vec::new();
+    #[cfg(target_os = "linux")]
+    if let Ok(entries) = std::fs::read_dir("/proc") {
+        for e in entries.flatten() {
+            let s = e.file_name();
+            let s = s.to_string_lossy();
+            if let Ok(pid) = s.parse::<u32>() {
+                let comm = std::fs::read_to_string(format!("/proc/{pid}/comm"))
+                    .map(|c| c.trim().to_string())
+                    .unwrap_or_default();
+                if !comm.is_empty() {
+                    procs.push(json!({ "pid": pid, "name": comm }));
+                }
+            }
+        }
+    }
+    json!({ "ok": true, "data": { "count": procs.len(), "processes": procs } })
+}
+
 /// Native file picker for choosing a target binary.
 #[tauri::command]
 async fn pick_file(app: tauri::AppHandle, title: String) -> Option<String> {
@@ -109,7 +135,7 @@ async fn pick_file(app: tauri::AppHandle, title: String) -> Option<String> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![n0x_run, engine_info, pick_file, initial_target])
+        .invoke_handler(tauri::generate_handler![n0x_run, engine_info, pick_file, initial_target, list_processes])
         .run(tauri::generate_context!())
         .expect("error while running N0xis GUI");
 }

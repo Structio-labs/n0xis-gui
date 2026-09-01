@@ -38,6 +38,12 @@ export function initialTarget() {
   return invoke('initial_target', {});
 }
 
+/** Host process list with real names (/proc/comm on Linux) -> {ok,data:{processes}} | null */
+export function listProcesses() {
+  if (!isNative) return Promise.resolve(null);
+  return invoke('list_processes', {});
+}
+
 /** Convenience wrappers over the CLI's verbs. */
 export const engine = {
   guide: (topic) => n0x(topic ? ['guide', topic, '--brief'] : ['guide', '--brief']),
