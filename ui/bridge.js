@@ -49,9 +49,10 @@ export const engine = {
   guide: (topic) => n0x(topic ? ['guide', topic, '--brief'] : ['guide', '--brief']),
   // profile takes --file (not a positional); --exports pulls the export table too.
   profile: (path) => n0x(['profile', '--file', path, '--exports']),
-  // the real verb is `function discover`; bounded by --limit (data-seam discipline).
-  functions: (path, limit = 500, offset = 0) =>
-    n0x(['function', 'discover', '--file', path, '--limit', String(limit), '--offset', String(offset)]),
+  // the real verb is `function discover`; --limit 0 = every function (BN/Ghidra
+  // show them all; the UI virtualizes the list so huge counts stay smooth).
+  functions: (path, limit = 0) =>
+    n0x(['function', 'discover', '--file', path, '--limit', String(limit)]),
   decompile: (path, addr, style = 'structured') =>
     n0x(['decomp', 'pseudo', '--file', path, '--addr', addr, '--style', style]),
   disasm: (path, addr, count = 40) =>

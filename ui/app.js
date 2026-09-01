@@ -133,16 +133,12 @@ $('#dockspace').addEventListener('click', e => {
   // freeze toggle in the watchlist
   const frz = e.target.closest('.frz'); if (frz) { frz.classList.toggle('on'); return; }
 });
-// live filter for the function list (and any .frow list with a .ffilter)
+// live filter for the function list — filters the DATA, so it works with the
+// virtualized list and matches functions that aren't currently rendered.
 $('#dockspace').addEventListener('input', e => {
   const f = e.target.closest('.ffilter'); if (!f) return;
-  const q = f.value.trim().toLowerCase();
-  const list = f.closest('.dk-widget-body')?.querySelector('.flist'); if (!list) return;
-  let shown = 0;
-  list.querySelectorAll('.frow').forEach(r => {
-    const t = ((r.querySelector('.nm')?.textContent || '') + ' ' + (r.querySelector('.fa')?.textContent || '')).toLowerCase();
-    const ok = !q || t.includes(q); r.style.display = ok ? '' : 'none'; if (ok) shown++;
-  });
+  funcQuery = f.value;
+  paintFunctions();
 });
 
 // ---------- shell buttons (launcher links, new-workspace, target chip) ----------
@@ -933,18 +929,35 @@ const FUNCS = [
 ];
 // function list is DATA (survives re-render / workspace switch / project change),
 // not a one-off DOM patch. null → the built-in demo list.
-let FUNCLIST = null, FUNCMETA = null;
+let FUNCLIST = null, FUNCMETA = null, funcQuery = '';
 const funcRows = () => FUNCLIST || FUNCS.map(([name, addr, tag]) => ({ name, addr, tag }));
-const frowHTML = f => `<div class="frow${f.tag === 'sub' ? ' sub' : ''}"><span class="sym">ƒ</span><span class="nm mono">${escH(f.name)}</span>${f.tag === 'sig' ? '<span class="badge">sig</span>' : ''}<span class="fa mono">${escH(f.addr)}</span></div>`;
+function funcView() {                       // full list filtered by the search box
+  const q = funcQuery.trim().toLowerCase(), rows = funcRows();
+  return q ? rows.filter(f => (f.name + ' ' + f.addr).toLowerCase().includes(q)) : rows;
+}
+const frowHTML = f => `<div class="frow${f.tag === 'sub' ? ' sub' : ''}${f.addr === selAddr ? ' on' : ''}" data-addr="${escH(f.addr)}"><span class="sym">ƒ</span><span class="nm mono">${escH(f.name)}</span>${f.tag === 'sig' ? '<span class="badge">sig</span>' : ''}<span class="fa mono">${escH(f.addr)}</span></div>`;
+const FROW_H = 27;                          // px — must match .frow height in CSS
+function renderFlist(fl) {                  // virtualized: no cap, only visible rows in the DOM
+  const rows = funcView(), total = rows.length;
+  if (total <= 300) { fl.onscroll = null; fl.innerHTML = rows.map(frowHTML).join(''); return; }
+  fl.innerHTML = `<div class="flist-vp" style="height:${total * FROW_H}px;position:relative"><div class="flist-win" style="position:absolute;left:0;right:0;top:0"></div></div>`;
+  const win = fl.querySelector('.flist-win');
+  const draw = () => {
+    const st = fl.scrollTop, vh = fl.clientHeight || 400;
+    const start = Math.max(0, Math.floor(st / FROW_H) - 8), end = Math.min(total, Math.ceil((st + vh) / FROW_H) + 8);
+    win.style.transform = `translateY(${start * FROW_H}px)`;
+    win.innerHTML = rows.slice(start, end).map(frowHTML).join('');
+  };
+  fl.onscroll = draw; draw();
+}
 function funcFootHTML() {
-  const rows = funcRows();
-  const total = FUNCMETA ? FUNCMETA.total : rows.length;
+  const total = FUNCMETA ? FUNCMETA.total : funcRows().length;
   const named = FUNCMETA ? FUNCMETA.named : 86;
-  const extra = FUNCMETA && FUNCMETA.total > FUNCMETA.shown ? ` · showing ${FUNCMETA.shown}` : '';
+  const extra = funcQuery ? ` · ${funcView().length.toLocaleString()} shown` : '';
   return `<span class="fcount">${total.toLocaleString()} functions${extra}</span><span class="grow"></span><span class="fnamed" style="color:var(--ok)">${named}% named</span>`;
 }
-function paintFunctions() {   // repaint every mounted function list from the data model
-  $$('#dockspace .flist').forEach(fl => { fl.innerHTML = funcRows().map(frowHTML).join(''); });
+function paintFunctions() {
+  $$('#dockspace .flist').forEach(renderFlist);
   $$('#dockspace .pfoot').forEach(pf => { pf.innerHTML = funcFootHTML(); });
 }
 const WIDGETS = {
@@ -1398,7 +1411,8 @@ async function openBinary(path) {
   if (!path) return;
   const name = path.split(/[\\/]/).pop();
   curPid = 0; curPidName = '';                 // leave any live session
-  selAddr = ''; selName = ''; FUNCLIST = null; FUNCMETA = null;
+  selAddr = ''; selName = ''; FUNCLIST = null; FUNCMETA = null; funcQuery = '';
+  $$('.ffilter').forEach(i => { i.value = ''; });
   paintFunctions();                            // clear the old list immediately
   paintDecompMsg('analyzing ' + name + '…'); paintTriage();
   openTarget('static');
@@ -1418,14 +1432,13 @@ function renderRealFunctions(res) {
     $$('#dockspace .flist').forEach(fl => { fl.innerHTML = `<div class="fl-empty">${escH(msg)}</div>`; });
     toast('Engine: ' + msg); return;
   }
-  const shown = list.slice(0, 500);
-  FUNCLIST = shown.map(f => {
+  FUNCLIST = list.map(f => {                    // ALL functions — no cap (the list is virtualized)
     const addr = f.addr || f.address || f.va || '';
     return { addr, name: f.name || f.symbol || f.label || 'sub_' + String(addr).replace(/^0x/, ''), tag: '' };
   });
-  const total = res?.meta?.total ?? list.length;
+  const total = res?.meta?.total ?? FUNCLIST.length;
   const named = Math.round(FUNCLIST.filter(f => !/^sub_/i.test(f.name)).length / FUNCLIST.length * 100);
-  FUNCMETA = { total, shown: shown.length, named };
+  FUNCMETA = { total, shown: FUNCLIST.length, named };
   paintFunctions();
   toast('Loaded ' + total.toLocaleString() + ' functions');
   $('#dockspace .flist .frow')?.click();       // select the first → hydrate decompiler/xrefs/disasm
