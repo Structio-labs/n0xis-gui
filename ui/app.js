@@ -200,8 +200,8 @@ const GRAPH = {
     { id: 'block_2', addr: '0x1580', tag: '',          x: 110, y: 300, w: 185, body: 'rbx = rsi;' },
     { id: 'block_3', addr: '0x1560', tag: 'loop head', x: 600, y: 290, w: 205, body: 'while (rbx &amp; 7)' },
     { id: 'block_4', addr: '0x156e', tag: 'loop body', x: 600, y: 430, w: 205, body: 'v14 = tbl[v14 ^ *rbx];<br>rdx--;' },
-    { id: 'block_5', addr: '0x1590', tag: '',          x: 355, y: 445, w: 200, body: 'v9 = &amp;crc_table;' },
-    { id: 'block_6', addr: '0x15fa', tag: 'exit',      x: 350, y: 590, w: 210, body: 'return ~v14;' },
+    { id: 'block_5', addr: '0x1590', tag: '',          x: 420, y: 450, w: 200, body: 'v9 = &amp;crc_table;' },
+    { id: 'block_6', addr: '0x15fa', tag: 'exit',      x: 300, y: 600, w: 210, body: 'return ~v14;' },
   ],
   // a real loop: header (block_3) enters the body (block_4), which jumps BACK to the header.
   edges: [

@@ -139,7 +139,8 @@ button{ font:inherit; color:inherit; background:none; border:none; cursor:pointe
 .reg{ display:flex; gap:8px; font-family:'JetBrains Mono',monospace; font-size:.76rem; }
 .reg .rn{ color:var(--acc); width:2.2rem; } .reg .rv{ color:var(--tx1); } .reg .rv.ch{ color:var(--live); }
 .wprow{ display:flex; align-items:center; gap:9px; padding:6px 10px; border-bottom:1px solid var(--bd); font-size:.82rem; }
-.wpico{ width:1.15rem; flex:0 0 auto; display:flex; align-items:center; }
+.wpico{ width:1.3rem; flex:0 0 auto; display:flex; align-items:center; justify-content:center; }
+.wpico > span{ display:flex; align-items:center; justify-content:center; }
 .scanbar{ padding:9px 10px; display:flex; flex-direction:column; gap:8px; border-bottom:1px solid var(--bd); }
 .field{ display:flex; align-items:center; gap:8px; }
 .inp{ flex:1; padding:6px 9px; background:var(--bg2); border:1px solid var(--bd2); border-radius:7px; color:var(--tx0); font-family:'JetBrains Mono',monospace; font-size:.8rem; }
