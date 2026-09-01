@@ -98,6 +98,11 @@ $('#dockspace').addEventListener('click', e => {
   }
 });
 
+// ---------- lightweight prefs persistence ----------
+const PREF = 'n0xis.prefs.v1';
+const prefs = (() => { try { return JSON.parse(localStorage.getItem(PREF)) || {}; } catch { return {}; } })();
+const savePrefs = () => { try { localStorage.setItem(PREF, JSON.stringify(prefs)); } catch {} };
+
 // ---------- zoom ----------
 let zoom = 1;
 function setZoom(z) {
@@ -105,6 +110,7 @@ function setZoom(z) {
   document.documentElement.style.setProperty('--zoom', zoom);
   $('#sb-zoom').textContent = 'zoom ' + Math.round(zoom * 100) + '%';
   $$('#scale-seg .sg').forEach(b => b.classList.toggle('on', Math.abs(parseFloat(b.dataset.scale) - zoom) < 0.001));
+  prefs.zoom = zoom; savePrefs();
 }
 $$('#scale-seg .sg').forEach(b => b.addEventListener('click', () => setZoom(parseFloat(b.dataset.scale))));
 window.addEventListener('keydown', e => {
@@ -114,14 +120,17 @@ window.addEventListener('keydown', e => {
   else if (e.key === '0') { e.preventDefault(); setZoom(1); }
 });
 
-// ---------- theme (live preview) ----------
-$$('#theme-grid .th').forEach(t => t.addEventListener('click', () => {
-  const th = t.dataset.theme;
+// ---------- theme (live preview, persisted) ----------
+function applyTheme(th) {
   if (th) document.documentElement.setAttribute('data-theme', th);
   else document.documentElement.removeAttribute('data-theme');
-  $$('#theme-grid .th').forEach(x => x.classList.remove('on'));
-  t.classList.add('on');
-}));
+  $$('#theme-grid .th').forEach(x => x.classList.toggle('on', (x.dataset.theme || '') === (th || '')));
+  prefs.theme = th || ''; savePrefs();
+}
+$$('#theme-grid .th').forEach(t => t.addEventListener('click', () => applyTheme(t.dataset.theme)));
+// restore saved prefs
+if (prefs.theme) applyTheme(prefs.theme);
+if (prefs.zoom) setZoom(prefs.zoom);
 
 // ---------- settings overlay ----------
 const settings = $('#settings-ov');
