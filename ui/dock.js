@@ -291,10 +291,25 @@ export function initDock(deps) {
     drag.hit = { leafId: area.dataset.leaf, zone, r };
     paint(drag.hit);
   }
+  // Dropping a pane onto its OWN area is a cancel — you can't split/tab a widget
+  // against itself. The one exception is un-tabbing: splitting one tab out of a
+  // MULTI-tab area to an edge makes it its own pane, which is meaningful.
+  function isNoop(hit, tab, movingLeaf) {
+    if (!hit || !movingLeaf || movingLeaf !== hit.leafId) return false;
+    const n = findLeaf(trees[ws], hit.leafId)?.node;
+    const solo = !n || n.tabs.length <= 1;
+    return tab || hit.zone === 'center' || solo;
+  }
   function paint(hit) {
     if (!ov) return;
     if (!hit) { ov.classList.remove('on'); return; }
     const { r, zone } = hit, tab = ctrl;
+    if (isNoop(hit, tab, drag?.payload.leafId)) {
+      ov.className = 'dk-ov on noop';
+      Object.assign(ov.style, { left: r.left + 'px', top: r.top + 'px', width: r.width + 'px', height: r.height + 'px' });
+      ov.dataset.mode = 'cancel';
+      return;
+    }
     ov.className = 'dk-ov on' + (tab ? ' tab' : '');
     let x = r.left, y = r.top, w = r.width, h = r.height;
     if (!tab) {
@@ -315,10 +330,7 @@ export function initDock(deps) {
     if (!d.hit) return;
     const { payload } = d, { leafId, zone } = d.hit;
     const moving = payload.leafId ? { leafId: payload.leafId, inst: payload.entry.inst } : null;
-    if (moving && moving.leafId === leafId) {
-      const n = findLeaf(trees[ws], leafId)?.node;
-      if (zone === 'center' && (!n || n.tabs.length <= 1) && !wasTab) return; // onto itself = no-op
-    }
+    if (isNoop(d.hit, wasTab, payload.leafId)) return; // dropped onto its own area → cancel
     if (wasTab) addTab(leafId, zone === 'center' ? 'top' : zone, payload.entry, moving);
     else if (zone === 'center') takeover(leafId, payload.entry, moving);
     else splitAt(leafId, zone, payload.entry, moving);

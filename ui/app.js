@@ -464,7 +464,7 @@ function menuFor(el, tgt) {
       item('Command palette', 'decomp', 'Ctrl+P', openPal),
       item('Reset layout', 'reset', '', resetDock),
       sep,
-      item('Settings', 'settings', ',', () => settings.classList.add('on')),
+      item('Settings', 'settings', 'Ctrl ,', () => settings.classList.add('on')),
     ];
   }
 }
@@ -535,7 +535,7 @@ function menuItems(name) {
       item('Attach to process…', 'play', '', () => openTarget('dynamic')),
       item('Launch & attach…', 'play', '', () => openTarget('both')),
       sep, lbl('Open recent'), ...recentItems(), sep,
-      item('Settings', 'settings', ',', () => settings.classList.add('on')),
+      item('Settings', 'settings', 'Ctrl ,', () => settings.classList.add('on')),
       item('Close target', 'x', '', closeTarget),
     ];
     case 'Edit': return [            // edits to the analysis database
@@ -597,6 +597,38 @@ $$('.tbar .menu').forEach(btn => btn.addEventListener('click', e => {
   const r = btn.getBoundingClientRect();
   openCtx(r.left, r.bottom + 3, menuItems(btn.textContent.trim()));
 }));
+
+// ---------- global keyboard accelerators (mirror the menu-bar hints) ----------
+// Only the shortcuts we actually advertise in the menus. Bare-key ones stay out
+// of text fields and off the launcher; modifier combos with their own handlers
+// (Ctrl+P palette, Ctrl+±0 zoom, Ctrl+Shift+Z/X layout) are left untouched here.
+const isEditable = t => !!t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
+const targetOpen = () => $('#launcher')?.classList.contains('hidden');
+window.addEventListener('keydown', e => {
+  if (isEditable(e.target)) return;
+  const mod = e.ctrlKey || e.metaKey;
+  if (mod && !e.shiftKey && !e.altKey) {                 // advertised Ctrl combos
+    const k = e.key.toLowerCase();
+    if (k === 'o') { e.preventDefault(); openFileTarget(); }
+    else if (e.key === ',') { e.preventDefault(); settings.classList.add('on'); }
+    return;                                              // Ctrl+P/zoom handled elsewhere
+  }
+  if (mod || e.altKey) return;                           // leave other combos alone
+  // bare-key accelerators — only once a target is open
+  if (!targetOpen()) return;
+  switch (e.key) {
+    case 'F5': e.preventDefault(); if (isLive()) toast('Continue'); else { setWorkspace('decompile'); toast('Decompiling'); } break;
+    case 'F7': if (isLive()) { e.preventDefault(); toast('Step into'); } break;
+    case 'F8': if (isLive()) { e.preventDefault(); toast('Step over'); } break;
+    case 'g': case 'G': setWorkspace('graph'); break;
+    case 'n': case 'N': toast('Rename'); break;
+    case 'x': case 'X': toast('Find xrefs'); break;
+    case 'y': case 'Y': toast('Change type'); break;
+    case 'w': case 'W': setWorkspace('dynamic'); toast('Set watchpoint'); break;
+    case ';': toast('Comment'); break;
+    default: return;
+  }
+});
 
 /* =====================================================================
    WIDGET CATALOG + TILING DOCK (Blender/AreaKit-style)
