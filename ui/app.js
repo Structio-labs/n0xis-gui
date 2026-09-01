@@ -229,8 +229,9 @@ function initGraphWidget(root) {
   const rectOf = {};
   const rankOf = {};
 
-  // layered auto-layout (Sugiyama-lite): rank by longest path from entry, order each
-  // rank by the barycentre of its parents, place rows centred with a fixed pitch → no overlaps.
+  // layered auto-layout (Sugiyama-lite): rank by longest path from entry, then place each
+  // node at the BARYCENTRE x of its neighbours (parents + loop partners) and push apart on
+  // overlap — so a child sits under its parent, and rows never overlap.
   function layout() {
     const byId = {}; blocks.forEach(b => byId[b.id] = b);
     const fwd = GRAPH.edges.filter(e => e.type !== 'loop');
@@ -243,19 +244,31 @@ function initGraphWidget(root) {
     }
     blocks.forEach(b => { if (rankOf[b.id] == null) rankOf[b.id] = 0; });
     const rows = {}; blocks.forEach(b => (rows[rankOf[b.id]] ||= []).push(b));
-    const CX = 470, GAPX = 64, PITCH = 158;
-    Object.keys(rows).map(Number).sort((a, c) => a - c).forEach(r => {
+    const ranks = Object.keys(rows).map(Number).sort((a, c) => a - c);
+    const CX = 470, GAPX = 46, PITCH = 158;
+    blocks.forEach(b => b.y = 24 + rankOf[b.id] * PITCH);
+    ranks.forEach(r => {
       const row = rows[r];
-      if (r > 0) {
-        row.forEach(b => { const ps = fwd.filter(e => e.t === b.id && rankOf[e.f] < r).map(e => byId[e.f].x + byId[e.f].w / 2).filter(v => !isNaN(v)); b._bc = ps.length ? ps.reduce((a, c) => a + c, 0) / ps.length : CX; });
-        row.sort((a, b) => (a._bc - b._bc) || 0);
-      }
-      const tot = row.reduce((s, b) => s + b.w, 0) + GAPX * (row.length - 1);
-      let x = CX - tot / 2;
-      row.forEach(b => { b.x = Math.round(x); b.y = 24 + r * PITCH; x += b.w + GAPX; });
+      if (r === 0) { const tot = row.reduce((s, b) => s + b.w, 0) + GAPX * (row.length - 1); let x = CX - tot / 2; row.forEach(b => { b.x = Math.round(x); x += b.w + GAPX; }); return; }
+      // desired centre = barycentre of already-placed neighbours (parents, and loop partner for a body block)
+      row.forEach(b => {
+        const nb = GRAPH.edges
+          .filter(e => (e.t === b.id && rankOf[e.f] < r) || (e.f === b.id && e.type === 'loop' && rankOf[e.t] < r))
+          .map(e => e.t === b.id ? byId[e.f] : byId[e.t]).filter(n => n)
+          .map(n => n.x + n.w / 2);
+        b._d = nb.length ? nb.reduce((a, c) => a + c, 0) / nb.length : CX;
+      });
+      row.sort((a, b) => a._d - b._d);
+      row.forEach(b => b.x = Math.round(b._d - b.w / 2));
+      for (let i = 1; i < row.length; i++) { const minX = row[i - 1].x + row[i - 1].w + GAPX; if (row[i].x < minX) row[i].x = minX; }
     });
   }
   layout();
+  // does the direct edge from (sx) to (tx) spanning ranks (rf..rt) hit an intermediate block?
+  function corridorBlocked(sx, tx, rf, rt, ids) {
+    const lo = Math.min(sx, tx) - 8, hi = Math.max(sx, tx) + 8;
+    return blocks.some(b => rankOf[b.id] > rf && rankOf[b.id] < rt && !ids.includes(b.id) && b.x < hi && b.x + b.w > lo);
+  }
 
   function buildNodes() {
     gc.querySelectorAll('.gnode').forEach(n => n.remove());
@@ -298,8 +311,10 @@ function initGraphWidget(root) {
       }
       const sx = a.x + a.w / 2, sy = a.y + a.h, tx = b.x + b.w / 2, ty = b.y, my = (sy + ty) / 2;
       const gap = (rankOf[e.t] ?? 0) - (rankOf[e.f] ?? 0);
-      if (gap > 1) { // long edge — bow out to the side so it skips the ranks in between
-        const off = sx <= 470 ? Math.min(sx, tx) - 150 : Math.max(sx, tx) + 150;
+      // adaptive: only bow around when the straight corridor is actually blocked by a block
+      if (gap > 1 && corridorBlocked(sx, tx, rankOf[e.f], rankOf[e.t], [e.f, e.t])) {
+        const leftOff = Math.min(sx, tx) - 130, rightOff = Math.max(sx, tx) + 130;
+        const off = !corridorBlocked(leftOff, leftOff, rankOf[e.f], rankOf[e.t], [e.f, e.t]) ? leftOff : rightOff;
         return `<path class="${cls}" marker-end="url(#${arw})" d="M${sx} ${sy} C${off} ${sy + 40},${off} ${ty - 40},${tx} ${ty - 2}"/>`;
       }
       return `<path class="${cls}" marker-end="url(#${arw})" d="M${sx} ${sy} C${sx} ${my},${tx} ${my},${tx} ${ty - 2}"/>`;
