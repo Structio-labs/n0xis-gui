@@ -556,3 +556,6 @@ select.scan-type{ background:var(--bg2); color:var(--tx0); border:1px solid var(
 
 /* real per-app icon in the process picker */
 .lst-img{ width:18px; height:18px; border-radius:4px; object-fit:contain; flex:0 0 auto; }
+
+/* large-CFG notice */
+.gtoobig{ position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); max-width:70%; text-align:center; color:var(--tx1); font-size:.9rem; line-height:1.6; background:var(--bg2); border:1px solid var(--bd2); border-radius:10px; padding:16px 20px; }

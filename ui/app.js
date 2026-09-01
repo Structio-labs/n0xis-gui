@@ -362,6 +362,7 @@ function initGraphWidget(root) {
   // node at the BARYCENTRE x of its neighbours (parents + loop partners) and push apart on
   // overlap — so a child sits under its parent, and rows never overlap.
   function layout() {
+    if (blocks.length > 160) return;            // skip the O(blocks·edges) layout for capped graphs
     const byId = {}; blocks.forEach(b => byId[b.id] = b);
     const fwd = GRAPH.edges.filter(e => e.type !== 'loop');
     for (const k in rankOf) delete rankOf[k];
@@ -450,7 +451,19 @@ function initGraphWidget(root) {
     }).join('');
     gs.innerHTML = defs + paths;
   }
-  function renderGraph() { buildNodes(); drawEdges(); }
+  function renderGraph() {
+    // our Sugiyama-lite layout is fine for typical functions but O(blocks·edges);
+    // a giant CFG would freeze the webview, so cap it (a real ELK/dagre engine is
+    // the production path). Show a note instead of hanging.
+    if (blocks.length > 160) {
+      gc.querySelectorAll('.gnode').forEach(n => n.remove()); gs.innerHTML = '';
+      let m = gv.querySelector('.gtoobig'); if (!m) { m = document.createElement('div'); m.className = 'gtoobig'; gv.appendChild(m); }
+      m.innerHTML = `Large control-flow graph — <b>${blocks.length}</b> blocks.<br>Rendering is capped for performance; use the Decompiler / Disassembly for this function.`;
+      return;
+    }
+    gv.querySelector('.gtoobig')?.remove();
+    buildNodes(); drawEdges();
+  }
   function applyCam() { gc.style.transform = `translate(${cam.x}px,${cam.y}px) scale(${cam.s})`; const l = root.querySelector('.gzl'); if (l) l.textContent = Math.round(cam.s * 100) + '%'; }
   function fitGraph() {
     const vw = gv.clientWidth, vh = gv.clientHeight; if (!vw || !vh) return;
@@ -975,8 +988,11 @@ const WIDGETS = {
   functions: { title: 'Functions', icon: 'strings', body: () => `<div class="wfill">
     <div class="navtabs"><button class="nt on">Functions</button><button class="nt">Imports</button><button class="nt">Strings</button><button class="nt">Types</button></div>
     <div class="search">${svg(ICON.scan,'')}<input class="ffilter" placeholder="Filter functions…" spellcheck="false"></div>
-    <div class="flist">${funcRows().map(frowHTML).join('')}</div>
-    <div class="pfoot">${funcFootHTML()}</div></div>` },
+    <div class="flist"></div>
+    <div class="pfoot">${funcFootHTML()}</div></div>`,
+    // NEVER dump the whole list into body() — a 371k-function binary would build
+    // 371k DOM nodes at once and freeze/crash the webview. Render virtualized on mount.
+    init: root => { renderFlist(root.querySelector('.flist')); root.querySelector('.pfoot').innerHTML = funcFootHTML(); } },
 
   decompiler: { title: 'Decompiler', icon: 'decomp', body: () => `<div class="wfill">
     <div class="dockhead"><button class="pill on" data-style="structured">structured</button><button class="pill" data-style="ssa">ssa</button><button class="pill" data-style="goto">goto</button><div class="grow"></div><button class="dt" data-ws="graph">CFG ↗</button></div>
