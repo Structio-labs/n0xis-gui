@@ -1,5 +1,5 @@
 // N0xis GUI — interactive shell (framework-free; drops into Tauri's webview as-is)
-import { isNative, engineInfo, engine, pickFile } from './bridge.js';
+import { isNative, engineInfo, engine, pickFile, n0x } from './bridge.js';
 import { initDock } from './dock.js';
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -44,6 +44,8 @@ const ICON = {
   patch: "<path d='m3 7 3 3 3-3' /> <path d='M6 10V5a2 2 0 0 1 2-2h2' /> <rect x='3' y='14' width='7' height='7' rx='1' />",
   about: "<circle cx='12' cy='12' r='10' /> <path d='M12 16v-4' /> <path d='M12 8h.01' />",
   book: "<path d='M12 7v14' /> <path d='M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z' />",
+  term: "<path d='m4 17 6-6-6-6' /> <path d='M12 19h8' />",
+  chip: "<path d='M12 20v2' /> <path d='M12 2v2' /> <path d='M17 20v2' /> <path d='M17 2v2' /> <path d='M2 12h2' /> <path d='M2 17h2' /> <path d='M2 7h2' /> <path d='M20 12h2' /> <path d='M20 17h2' /> <path d='M20 7h2' /> <path d='M7 20v2' /> <path d='M7 2v2' /> <rect x='4' y='4' width='16' height='16' rx='2' /> <rect x='8' y='8' width='8' height='8' rx='1' />",
 };
 const svg = (d, cls = 'cxi') =>
   `<span class="${cls}"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${
@@ -516,7 +518,7 @@ function reopenRecent(rec) { $('#target-name').textContent = rec.name; openTarge
 async function openFileTarget() {
   if (isNative) {
     const p = await pickFile('Choose a binary to analyze'); if (!p) return;
-    $('#target-name').textContent = p.split(/[\\/]/).pop(); openTarget('static'); engine.functions(p).then(renderRealFunctions);
+    $('#target-name').textContent = p.split(/[\\/]/).pop(); openTarget('static'); setTarget(p); engine.functions(p).then(renderRealFunctions);
   } else { $('#launcher').classList.remove('hidden'); toast('Choose a target on the launcher'); }
 }
 function newProject() { $('#launcher').classList.remove('hidden'); toast('New project — pick a target'); }
@@ -728,7 +730,111 @@ const WIDGETS = {
   strings: { title: 'Strings', icon: 'strings', body: () => `<div style="overflow:auto;height:100%;padding:6px 0">${['HealthComponent','TakeDamage','crc_table','zlib 1.3.1','deflate','Assertion failed'].map(s=>`<div class="frow"><span class="nm mono selectable">"${s}"</span></div>`).join('')}</div>` },
 
   notes: { title: 'Notes', icon: 'note', body: () => `<textarea class="selectable" style="width:100%;height:100%;background:transparent;border:none;color:var(--tx0);padding:11px;font:inherit;resize:none;outline:none;box-sizing:border-box" placeholder="Session notes…"></textarea>` },
+
+  // Triage — a view over `profile`: image facts, sections, exports, runtime hints,
+  // and the advisories that say which commands will be ineffective and why.
+  triage: { title: 'Triage · overview', icon: 'chip', body: () => `<div class="triage-root selectable" style="height:100%;overflow:auto">${triageHTML(TRIAGE)}</div>` },
+
+  // Console — the process seam made interactive: run ANY n0xis command, see the
+  // {ok,data,meta} envelope pretty-printed (bounded so a huge result can't flood).
+  console: { title: 'Console · n0xis', icon: 'term', body: () => `<div class="nxc"><div class="nxc-log selectable"></div><div class="nxc-inp"><span class="nxc-ps mono">n0xis›</span><input class="nxc-in mono" spellcheck="false" placeholder="profile · guide scan · xref to --addr … · function discover"></div></div>`, init: root => initConsole(root) },
 };
+
+/* ---- Triage: render the `profile` envelope (demo data until a real target) ---- */
+const escH = s => String(s).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+const hx = n => typeof n === 'number' ? '0x' + n.toString(16) : (n ?? '');
+let TRIAGE = {
+  source: 'demo · no target open', image: {
+    machine: 'x64', module_base: '0x140000000', image_end: '0x14a2c000',
+    pdata_present: true, pdata_functions: 48213, thunk_count: 1120,
+    export_count: 3, export_distinct_addresses: 3,
+    sections: [
+      { name: '.text', va: '0x140001000', raw_size: 0x9fc00, virtual_size: 0x9fb42 },
+      { name: '.rdata', va: '0x1400a1000', raw_size: 0x2a000, virtual_size: 0x29e10 },
+      { name: '.data', va: '0x1400cb000', raw_size: 0x1a000, virtual_size: 0x4c200 },
+      { name: '.pdata', va: '0x140117000', raw_size: 0x24000, virtual_size: 0x23f40 },
+      { name: '.rsrc', va: '0x14013b000', raw_size: 0x1200, virtual_size: 0x1180 },
+    ],
+    exports: [{ name: 'CreateResetEvent', va: '0x1800080f0' }, { name: 'DllCanUnloadNow', va: '0x1800017f0' }, { name: 'GetHandleVerifier', va: '0x180002210' }],
+    engine_hints: ['msvc-2022', 'statically-linked zlib 1.3.1'], folded: [], detoured_exports: [],
+  },
+  advisories: [{ code: 'demo', message: 'Open a target (File → Open file) to profile it for real.' }],
+};
+function triageHTML(p) {
+  const im = p.image || {};
+  const secs = im.sections || [], exps = im.exports || [], hints = im.engine_hints || [], adv = p.advisories || [];
+  const kb = n => (typeof n === 'number' ? (n >= 1024 ? (n / 1024).toFixed(n >= 1048576 ? 0 : 1) + ' KB' : n + ' B') : n);
+  const fact = (k, v) => `<div class="tg-fact"><span class="tg-fk">${k}</span><span class="tg-fv mono">${v}</span></div>`;
+  const secRows = secs.map(s => `<div class="tg-sec"><span class="mono tg-sn">${escH(s.name || '—')}</span><span class="mono">${s.va}</span><span class="mono tg-ss">${kb(s.raw_size)}</span><span class="mono tg-ss">${kb(s.virtual_size)}</span></div>`).join('');
+  const expCap = exps.slice(0, 40);
+  const expRows = expCap.map(e => `<div class="tg-exp"><span class="fnc mono">${escH(e.name)}</span><span class="mono tg-ea">${e.va}</span></div>`).join('') +
+    (exps.length > expCap.length ? `<div class="tg-more">+${exps.length - expCap.length} more · Console: <span class="mono">profile --exports</span></div>` : '');
+  return `
+    <div class="tg-head"><span class="chip-b mono">${escH(im.machine || '?')}</span><span class="tg-src mono">${escH(p.source || '')}</span></div>
+    ${adv.length ? `<div class="tg-adv">${adv.map(a => `<div class="tg-adv-i"><span class="mono tg-ac">${escH(a.code || 'note')}</span>${escH(a.message || a)}</div>`).join('')}</div>` : ''}
+    <div class="tg-grid">
+      ${fact('Module base', im.module_base || '?')}
+      ${fact('Image end', im.image_end || '?')}
+      ${fact('.pdata funcs', (im.pdata_functions ?? '?') + (im.pdata_present ? '' : ' (none)'))}
+      ${fact('Exports', im.export_count ?? exps.length)}
+      ${fact('Thunks', im.thunk_count ?? '?')}
+      ${fact('Distinct addrs', im.export_distinct_addresses ?? '?')}
+    </div>
+    ${hints.length ? `<div class="tg-hints">${hints.map(h => `<span class="tg-chip">${escH(h)}</span>`).join('')}</div>` : ''}
+    <div class="tg-t">Sections</div>
+    <div class="tg-sec tg-sh"><span>name</span><span>va</span><span>raw</span><span>virtual</span></div>
+    ${secRows || '<div class="tg-more">no section table (x86 fallback)</div>'}
+    ${exps.length ? `<div class="tg-t">Exports</div>${expRows}` : ''}`;
+}
+function paintTriage() { $$('.triage-root').forEach(el => { el.innerHTML = triageHTML(TRIAGE); }); }
+
+/* ---- current target + real profile load ---- */
+let curPath = '';
+function setTarget(path) { curPath = path || ''; loadProfile(); }
+async function loadProfile() {
+  if (!isNative || !curPath) return;
+  const r = await engine.profile(curPath);
+  if (r && r.ok && r.data) { TRIAGE = { ...r.data, source: r.meta?.source || curPath.split(/[\\/]/).pop() }; paintTriage(); toast('Profiled ' + TRIAGE.source); }
+  else if (r && !r.ok) toast('Profile failed: ' + (r.error?.message || 'unknown'));
+}
+
+/* ---- Console: interactive n0xis REPL (bounded output) ---- */
+function tokenize(line) {                       // minimal shell-ish split with quotes
+  const out = []; const re = /"([^"]*)"|'([^']*)'|(\S+)/g; let m;
+  while ((m = re.exec(line))) out.push(m[1] ?? m[2] ?? m[3]);
+  return out;
+}
+const CONSOLE_CAP = 16000;                      // never flood the pane / the model's eyes
+function initConsole(root) {
+  const log = root.querySelector('.nxc-log'), inp = root.querySelector('.nxc-in');
+  const line = (html, cls = '') => { const d = document.createElement('div'); d.className = 'oline ' + cls; d.innerHTML = html; log.appendChild(d); log.scrollTop = log.scrollHeight; };
+  if (!log.dataset.init) {
+    log.dataset.init = '1';
+    line(isNative ? 'n0xis engine · type a command, or <span class="mono">guide</span> for the catalog' : 'web preview — engine offline; commands echo only', 'dim');
+  }
+  const hist = []; let hi = -1;
+  inp.addEventListener('keydown', async e => {
+    if (e.key === 'ArrowUp') { if (hi < hist.length - 1) inp.value = hist[++hi] || ''; e.preventDefault(); return; }
+    if (e.key === 'ArrowDown') { if (hi > 0) inp.value = hist[--hi] || ''; else { hi = -1; inp.value = ''; } e.preventDefault(); return; }
+    if (e.key !== 'Enter') return;
+    const raw = inp.value.trim(); if (!raw) return;
+    inp.value = ''; hist.unshift(raw); hi = -1;
+    let args = tokenize(raw);
+    // convenience: a static command with no target gets the current --file
+    const bare = !args.some(a => a === '--file' || a === '--pid') && curPath && !/^(guide|doctor|--version|version)$/.test(args[0] || '');
+    if (bare) args = [...args, '--file', curPath];
+    line(`<span class="p">›</span> ${escH(raw)}${bare ? ` <span class="dim">--file ${escH(curPath.split(/[\\/]/).pop())}</span>` : ''}`);
+    if (!isNative) { line('engine offline — native app only', 'dim'); return; }
+    line('<span class="dim">running…</span>', 'run-tmp');
+    const res = await n0x(args);
+    root.querySelector('.run-tmp')?.remove();
+    if (res === null) { line('no engine', 'dim'); return; }
+    let js = JSON.stringify(res, null, 2);
+    const clipped = js.length > CONSOLE_CAP;
+    if (clipped) js = js.slice(0, CONSOLE_CAP);
+    line(`<pre class="nxc-json ${res.ok ? 'ok' : 'err'}">${escH(js)}</pre>${clipped ? '<div class="dim">… output clipped (' + CONSOLE_CAP + ' chars) — narrow it with flags/--limit</div>' : ''}`);
+  });
+}
 
 // Default workspace layouts — trees over the same widget catalog.
 const L = (...tabs) => ({ t: 'leaf', tabs });
@@ -739,9 +845,10 @@ const DEFAULT_LAYOUTS = {
     R(0.2, L('functions'),
       0.8, R(0.66, C(0.68, L('decompiler'), 0.32, L('disassembly')),
                  0.34, C(0.58, L('copilot'), 0.42, L('details')))),
-    0.18, L('output')),
+    0.18, L('output', 'console')),
   static: R(0.22, L('functions'),
-    0.78, R(0.6, C(0.7, L('decompiler'), 0.3, L('disassembly')), 0.4, L('strings'))),
+    0.78, R(0.6, C(0.7, L('decompiler'), 0.3, L('disassembly')),
+      0.4, C(0.5, L('triage'), 0.5, L('strings')))),
   graph: L('graph'),
   dynamic: R(0.34, C(0.4, L('registers'), 0.6, L('watchpoints')),
     0.66, R(0.5, C(0.55, L('scanner'), 0.45, L('livemem')),
@@ -825,6 +932,7 @@ async function hydrateFromEngine() {
       if (!path) return;
       openTarget('static');
       $('#target-name').textContent = path.split(/[\\/]/).pop();
+      setTarget(path);
       const res = await engine.functions(path);
       renderRealFunctions(res);
     }, true);

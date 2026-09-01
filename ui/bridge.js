@@ -35,8 +35,11 @@ export function pickFile(title) {
 /** Convenience wrappers over the CLI's verbs. */
 export const engine = {
   guide: (topic) => n0x(topic ? ['guide', topic, '--brief'] : ['guide', '--brief']),
-  profile: (path) => n0x(['profile', path]),
-  functions: (path) => n0x(['functions', path]),
+  // profile takes --file (not a positional); --exports pulls the export table too.
+  profile: (path) => n0x(['profile', '--file', path, '--exports']),
+  // the real verb is `function discover`; bounded by --limit (data-seam discipline).
+  functions: (path, limit = 500, offset = 0) =>
+    n0x(['function', 'discover', '--file', path, '--limit', String(limit), '--offset', String(offset)]),
   decompile: (path, addr, style = 'structured') =>
     n0x(['decomp', 'pseudo', '--file', path, '--addr', addr, '--style', style]),
 };
