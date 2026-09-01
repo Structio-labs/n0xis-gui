@@ -52,8 +52,9 @@ function toast(msg) {
 }
 // also echo to the Output console when it exists
 function echo(cmd, ok) {
-  const out = $('#view-decompile .out div');
-  if (!out) return;
+  const line = document.querySelector('#dockspace .oline');
+  const out = line?.parentElement;
+  if (!out) { toast(cmd + ' — ' + ok); return; }
   const l1 = document.createElement('div'); l1.className = 'oline'; l1.innerHTML = `<span class="p">›</span> ${cmd}`;
   const l2 = document.createElement('div'); l2.className = 'oline'; l2.style.color = 'var(--ok)'; l2.textContent = ok;
   out.append(l1, l2); out.scrollTop = out.scrollHeight;
@@ -64,8 +65,7 @@ function setWorkspace(ws) {
   $$('.wsview').forEach(v => v.classList.toggle('on', v.id === 'view-' + ws));
   $$('#wsbar .ws').forEach(t => t.classList.toggle('on', t.dataset.ws === ws));
   document.documentElement.dataset.ws = ws;
-  dock.setWorkspace(ws);
-  if (ws === 'graph') requestAnimationFrame(() => { renderGraph(); fitGraph(); });
+  dock.setWorkspace(ws); // the workspace IS a dock layout of widgets
 }
 $$('#wsbar .ws[data-ws]').forEach(t => t.addEventListener('click', () => setWorkspace(t.dataset.ws)));
 $$('[data-ws]').forEach(el => { if (!el.classList.contains('ws')) el.addEventListener('click', () => setWorkspace(el.dataset.ws)); });
@@ -83,11 +83,19 @@ function openTarget(kind) {
 $$('#launcher .card').forEach(card => card.addEventListener('click', () => openTarget(card.dataset.open)));
 $('#btn-live').addEventListener('click', () => openTarget('dynamic'));
 
-// ---------- function list selection ----------
-$('#flist').addEventListener('click', e => {
-  const row = e.target.closest('.frow'); if (!row) return;
-  $$('#flist .frow').forEach(r => r.classList.remove('on'));
-  row.classList.add('on');
+// ---------- delegated widget interactions (widgets are created dynamically) ----------
+$('#dockspace').addEventListener('click', e => {
+  // workspace jump buttons (e.g. the decompiler's "CFG ↗")
+  const jump = e.target.closest('[data-ws]');
+  if (jump) { setWorkspace(jump.dataset.ws); return; }
+  // function / string list selection
+  const row = e.target.closest('.frow');
+  if (row) { row.closest('.flist,div')?.querySelectorAll('.frow.on').forEach(r => r.classList.remove('on')); row.classList.add('on'); return; }
+  // cosmetic single-select groups inside a widget
+  for (const sel of ['.nt', '.rt', '.pill', '.dt']) {
+    const g = e.target.closest(sel);
+    if (g && !g.hasAttribute('data-ws')) { g.parentElement.querySelectorAll(sel).forEach(x => x.classList.remove('on')); g.classList.add('on'); return; }
+  }
 });
 
 // ---------- zoom ----------
@@ -172,19 +180,6 @@ window.addEventListener('keydown', e => {
   else if (e.key === 'Escape') { closePal(); settings.classList.remove('on'); closeCtx(); closeWpal(); }
 });
 
-// ---------- cosmetic group toggles ----------
-function groupToggle(sel, cls = 'on') {
-  $$(sel).forEach(g => g.addEventListener('click', () => {
-    g.parentElement.querySelectorAll(sel.split(' ').pop()).forEach(x => x.classList.remove(cls));
-    g.classList.add(cls);
-  }));
-}
-groupToggle('.dockhead .pill');
-groupToggle('.rtabs .rt');
-groupToggle('.navtabs .nt');
-$$('.dockhead .dt:not([data-ws])').forEach(d => d.addEventListener('click', () => {
-  d.parentElement.querySelectorAll('.dt').forEach(x => x.classList.remove('on')); d.classList.add('on');
-}));
 
 /* =====================================================================
    CONTROL-FLOW GRAPH — data-driven, aligned edges, pan + zoom
@@ -209,77 +204,52 @@ const GRAPH = {
     { f: 'block_2', t: 'block_5' },
   ],
 };
-const gv = $('#gviewport'), gc = $('#gcanvas'), gs = $('#gsvg');
-const gcam = { x: 40, y: 20, s: 1 };
-const rectOf = {};
-function renderGraph() {
-  if (!gc) return;
-  // nodes
-  gc.querySelectorAll('.gnode').forEach(n => n.remove());
-  GRAPH.blocks.forEach(b => {
-    const n = document.createElement('div');
-    n.className = 'gnode' + (b.tag === 'entry' ? ' entry' : b.tag === 'exit' ? ' exit' : '');
-    n.style.left = b.x + 'px'; n.style.top = b.y + 'px'; n.style.width = b.w + 'px';
-    n.dataset.ctx = 'gnode'; n.dataset.addr = b.addr; n.dataset.id = b.id;
-    const tag = b.tag && b.tag !== 'entry' && b.tag !== 'exit' ? ' · ' + b.tag : (b.tag ? ' · ' + b.tag : '');
-    n.innerHTML = `<div class="gt">${b.id} · ${b.addr}${tag}</div>${b.body}`;
-    gc.appendChild(n);
-    rectOf[b.id] = { x: b.x, y: b.y, w: b.w, h: n.offsetHeight };
-  });
-  // edges (measured, so they always meet the boxes)
-  const defs = `<defs>
-    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-      <path d="M0 0L10 5L0 10z" fill="context-stroke"/>
-    </marker></defs>`;
-  const paths = GRAPH.edges.map(e => {
-    const a = rectOf[e.f], b = rectOf[e.t];
-    const cls = 'gedge' + (e.type ? ' ' + e.type : '');
-    if (e.type === 'loop') {
-      const x = a.x + a.w, y1 = a.y + a.h * 0.28, y2 = a.y + a.h * 0.72;
-      return `<path class="${cls}" marker-end="url(#arrow)" d="M${x} ${y1} C${x + 46} ${y1 - 6},${x + 46} ${y2 + 6},${x} ${y2}"/>`;
-    }
-    const sx = a.x + a.w / 2, sy = a.y + a.h, tx = b.x + b.w / 2, ty = b.y;
-    const my = (sy + ty) / 2;
-    return `<path class="${cls}" marker-end="url(#arrow)" d="M${sx} ${sy} C${sx} ${my},${tx} ${my},${tx} ${ty - 2}"/>`;
-  }).join('');
-  gs.innerHTML = defs + paths;
-}
-function applyCam() {
-  gc.style.transform = `translate(${gcam.x}px,${gcam.y}px) scale(${gcam.s})`;
-  const l = $('#gz-lvl'); if (l) l.textContent = Math.round(gcam.s * 100) + '%';
-}
-function fitGraph() {
-  if (!gv) return;
-  const vw = gv.clientWidth, vh = gv.clientHeight;
-  let maxX = 0, maxY = 0;
-  GRAPH.blocks.forEach(b => { maxX = Math.max(maxX, b.x + b.w); maxY = Math.max(maxY, b.y + (rectOf[b.id]?.h || 70)); });
-  gcam.s = clamp(Math.min(vw / (maxX + 60), vh / (maxY + 60)), 0.4, 1.3);
-  gcam.x = (vw - maxX * gcam.s) / 2;
-  gcam.y = Math.max(16, (vh - maxY * gcam.s) / 2);
-  applyCam();
-}
-if (gv) {
+// Self-contained: bound to one graph widget's own elements (many can coexist).
+function initGraphWidget(root) {
+  const gv = root.querySelector('.gviewport'), gc = root.querySelector('.gcanvas'), gs = root.querySelector('.gsvg');
+  if (!gv || !gc || !gs) return;
+  const cam = { x: 40, y: 20, s: 1 };
+  const rectOf = {};
+  function renderGraph() {
+    gc.querySelectorAll('.gnode').forEach(n => n.remove());
+    GRAPH.blocks.forEach(b => {
+      const n = document.createElement('div');
+      n.className = 'gnode' + (b.tag === 'entry' ? ' entry' : b.tag === 'exit' ? ' exit' : '');
+      n.style.left = b.x + 'px'; n.style.top = b.y + 'px'; n.style.width = b.w + 'px';
+      n.dataset.ctx = 'gnode'; n.dataset.addr = b.addr; n.dataset.id = b.id;
+      const tag = b.tag ? ' · ' + b.tag : '';
+      n.innerHTML = `<div class="gt">${b.id} · ${b.addr}${tag}</div>${b.body}`;
+      gc.appendChild(n);
+      rectOf[b.id] = { x: b.x, y: b.y, w: b.w, h: n.offsetHeight };
+    });
+    const defs = `<defs><marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>`;
+    const paths = GRAPH.edges.map(e => {
+      const a = rectOf[e.f], b = rectOf[e.t], cls = 'gedge' + (e.type ? ' ' + e.type : '');
+      if (e.type === 'loop') { const x = a.x + a.w, y1 = a.y + a.h * 0.28, y2 = a.y + a.h * 0.72; return `<path class="${cls}" marker-end="url(#arrow)" d="M${x} ${y1} C${x + 46} ${y1 - 6},${x + 46} ${y2 + 6},${x} ${y2}"/>`; }
+      const sx = a.x + a.w / 2, sy = a.y + a.h, tx = b.x + b.w / 2, ty = b.y, my = (sy + ty) / 2;
+      return `<path class="${cls}" marker-end="url(#arrow)" d="M${sx} ${sy} C${sx} ${my},${tx} ${my},${tx} ${ty - 2}"/>`;
+    }).join('');
+    gs.innerHTML = defs + paths;
+  }
+  function applyCam() { gc.style.transform = `translate(${cam.x}px,${cam.y}px) scale(${cam.s})`; const l = root.querySelector('.gzl'); if (l) l.textContent = Math.round(cam.s * 100) + '%'; }
+  function fitGraph() {
+    const vw = gv.clientWidth, vh = gv.clientHeight; if (!vw || !vh) return;
+    let maxX = 0, maxY = 0;
+    GRAPH.blocks.forEach(b => { maxX = Math.max(maxX, b.x + b.w); maxY = Math.max(maxY, b.y + (rectOf[b.id]?.h || 70)); });
+    cam.s = clamp(Math.min(vw / (maxX + 60), vh / (maxY + 60)), 0.4, 1.3);
+    cam.x = (vw - maxX * cam.s) / 2; cam.y = Math.max(16, (vh - maxY * cam.s) / 2); applyCam();
+  }
   let pan = null;
-  gv.addEventListener('pointerdown', e => {
-    if (e.target.closest('.gzoom')) return;
-    pan = { x: e.clientX, y: e.clientY, cx: gcam.x, cy: gcam.y };
-    gv.classList.add('panning'); gv.setPointerCapture(e.pointerId);
-  });
-  gv.addEventListener('pointermove', e => {
-    if (!pan) return;
-    gcam.x = pan.cx + (e.clientX - pan.x); gcam.y = pan.cy + (e.clientY - pan.y); applyCam();
-  });
-  gv.addEventListener('pointerup', e => { pan = null; gv.classList.remove('panning'); });
-  gv.addEventListener('wheel', e => {
-    e.preventDefault();
-    const r = gv.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
-    const ns = clamp(gcam.s * (e.deltaY < 0 ? 1.12 : 0.89), 0.3, 2.4);
-    gcam.x = mx - (mx - gcam.x) * (ns / gcam.s); gcam.y = my - (my - gcam.y) * (ns / gcam.s);
-    gcam.s = ns; applyCam();
-  }, { passive: false });
-  $('#gz-in').addEventListener('click', () => { gcam.s = clamp(gcam.s * 1.15, 0.3, 2.4); applyCam(); });
-  $('#gz-out').addEventListener('click', () => { gcam.s = clamp(gcam.s * 0.87, 0.3, 2.4); applyCam(); });
-  $('#gz-fit').addEventListener('click', fitGraph);
+  gv.addEventListener('pointerdown', e => { if (e.target.closest('.gzoom')) return; pan = { x: e.clientX, y: e.clientY, cx: cam.x, cy: cam.y }; gv.classList.add('panning'); gv.setPointerCapture(e.pointerId); });
+  gv.addEventListener('pointermove', e => { if (!pan) return; cam.x = pan.cx + (e.clientX - pan.x); cam.y = pan.cy + (e.clientY - pan.y); applyCam(); });
+  gv.addEventListener('pointerup', () => { pan = null; gv.classList.remove('panning'); });
+  gv.addEventListener('wheel', e => { e.preventDefault(); const r = gv.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top; const ns = clamp(cam.s * (e.deltaY < 0 ? 1.12 : 0.89), 0.3, 2.4); cam.x = mx - (mx - cam.x) * (ns / cam.s); cam.y = my - (my - cam.y) * (ns / cam.s); cam.s = ns; applyCam(); }, { passive: false });
+  root.querySelector('.gz-in').addEventListener('click', () => { cam.s = clamp(cam.s * 1.15, 0.3, 2.4); applyCam(); });
+  root.querySelector('.gz-out').addEventListener('click', () => { cam.s = clamp(cam.s * 0.87, 0.3, 2.4); applyCam(); });
+  root.querySelector('.gz-fit').addEventListener('click', fitGraph);
+  renderGraph();
+  requestAnimationFrame(fitGraph);
+  setTimeout(fitGraph, 120); // refit once layout settles
 }
 
 /* =====================================================================
@@ -402,23 +372,129 @@ window.addEventListener('scroll', closeCtx, true);
 /* =====================================================================
    WIDGET CATALOG + TILING DOCK (Blender/AreaKit-style)
    ===================================================================== */
+// Every panel — static and dynamic — is a widget. The default workspaces below
+// are just dock layouts built from this same catalog (no privileged core).
+const CODE_LINES = [
+  '<span class="ty">uint64_t</span> <span class="fnc">crc32_z</span>(<span class="ty">uint64_t</span> rdi, <span class="ty">void</span> *rsi, <span class="ty">uint64_t</span> rdx) {',
+  '&nbsp;&nbsp;<span class="k">if</span> ((rsi == <span class="nu">0x0</span>)) <span class="k">return</span> <span class="nu">0x0</span>;',
+  '&nbsp;&nbsp;v14 = ~rdi;',
+  '&nbsp;&nbsp;<span class="k">if</span> ((rdx &lt;= <span class="cm">/*u*/</span> <span class="nu">0x2e</span>)) {',
+  '&nbsp;&nbsp;&nbsp;&nbsp;rbx = rsi;',
+  '&nbsp;&nbsp;} <span class="k">else</span> {',
+  '&nbsp;&nbsp;&nbsp;&nbsp;v9 = &amp;<span class="st">crc_table</span>;',
+  '&nbsp;&nbsp;&nbsp;&nbsp;<span class="k">while</span> (((rbx &amp; <span class="nu">0x7</span>) != <span class="nu">0x0</span>)) {',
+  '&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;v14 = (v9[(<span class="ty">uint32_t</span>)(v14 ^ rbx-&gt;<span class="pu">field_0x0</span>)] ^ (v14 &gt;&gt; <span class="nu">0x8</span>));',
+  '&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;rdx = (rdx - <span class="nu">0x1</span>);',
+  '&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="k">if</span> ((rdx != <span class="nu">0x0</span>)) <span class="k">continue</span>; <span class="k">else</span> <span class="k">break</span>;',
+  '&nbsp;&nbsp;&nbsp;&nbsp;}',
+  '&nbsp;&nbsp;&nbsp;&nbsp;<span class="cm">// main CRC-by-8 loop</span>',
+  '&nbsp;&nbsp;&nbsp;&nbsp;<span class="k">for</span> (; (rdx != <span class="nu">0x0</span>); rdx = (rdx - <span class="nu">0x8</span>)) {',
+  '&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;v12 = (v9[(<span class="ty">uint32_t</span>)(v14 ^ *rbx)] ^ (v14 &gt;&gt; <span class="nu">0x8</span>));',
+  '&nbsp;&nbsp;&nbsp;&nbsp;}',
+  '&nbsp;&nbsp;}',
+  '&nbsp;&nbsp;<span class="k">return</span> ~v14;',
+  '}',
+];
+const FUNCS = [
+  ['main', '0x401060', ''], ['crc32_z', '0x1510', 'sig'], ['crc32', '0x19d0', ''],
+  ['compress', '0x14d0', 'sig'], ['deflate', '0x4650', ''], ['inflate_table', '0x2a10', ''],
+  ['sub_180002780', '0x2780', 'sub'], ['adler32', '0x7d70', ''], ['uncompress', '0x7850', ''],
+  ['sub_180003b40', '0x3b40', 'sub'],
+];
 const WIDGETS = {
-  decomp:   { title: 'Decompiler',      icon: 'decomp',  w: 460, h: 300, body: () => `<div class="code selectable" style="padding:10px 0"><div class="cl"><span class="gut">1</span><span><span class="ty">uint64_t</span> <span class="fnc">crc32_z</span>(<span class="ty">uint64_t</span>, <span class="ty">void</span> *, <span class="ty">uint64_t</span>) {</span></div><div class="cl"><span class="gut">2</span><span>&nbsp;&nbsp;<span class="k">return</span> ~v14;</span></div><div class="cl"><span class="gut">3</span><span>}</span></div></div>` },
-  disasm:   { title: 'Disassembly',     icon: 'disasm',  w: 380, h: 220, body: () => `<div class="disasm" style="height:100%">${['48 89 d8|mov|rax, rbx','83 e0 07|and|eax, 0x7','74 2a|je|0x15fa','0f b6 03|movzx|eax, [rbx]'].map(r=>{const[b,m,o]=r.split('|');return `<div class="drow" data-ctx="drow"><span class="daddr">0x1000015c8</span><span class="dbytes">${b}</span><span class="dmn">${m}</span><span>${o}</span></div>`;}).join('')}</div>` },
-  hex:      { title: 'Hex / memory',    icon: 'hex',     w: 420, h: 190, body: () => `<div class="hex" style="height:100%"><div class="hx"><span class="hxa">7FF6C21A40</span><span class="hxb"><span class="hb-hi">57 00 00 00</span> 2a 00 00 00 5c 21 c2 f6</span><span class="hxc">W....*...\\!</span></div><div class="hx"><span class="hxa">7FF6C21A50</span><span class="hxb">64 00 00 00 00 00 80 3f 00 00 80 3f</span><span class="hxc">d......?...?</span></div></div>` },
-  regs:     { title: 'Registers',       icon: 'regs',    w: 260, h: 180, body: () => `<div class="regs" style="height:100%">${['rax|00000064','rbx|7ff6c21a40 ch','rcx|00000000','rdx|00000057','rsi|7ff6c218e0','rdi|0000002a'].map(r=>{const[n,v,c]=r.split(' ');const[rn,rv]=n.split('|');return `<div class="reg"><span class="rn">${rn}</span><span class="rv${c?' ch':''}">${rv}</span></div>`;}).join('')}</div>` },
-  watch:    { title: 'Watchpoints',     icon: 'watch',   w: 300, h: 170, body: () => `<div style="overflow:auto;height:100%"><div class="wprow" data-ctx="wprow"><span class="wpi">${svg(ICON.watch,'')}</span><div><div class="mono">7FF6C21A40</div><div style="color:var(--tx2);font-size:.68rem">write · health</div></div><span class="hit">1,204</span></div></div>` },
-  scan:     { title: 'Memory scanner',  icon: 'scan',    w: 320, h: 200, body: () => `<div class="scanbar"><div class="field"><input class="inp" value="87"><span class="selbox">4-byte ▾</span></div><div class="field"><button class="b p" style="flex:1">Next scan</button><button class="b g" style="flex:1">New scan</button></div></div><div class="srow on" data-ctx="srow"><span class="saddr">7FF6C21A40</span><span class="sval" style="color:var(--live)">87</span><span class="sprev">100</span></div>` },
-  copilot:  { title: 'Copilot',         icon: 'chat',    w: 320, h: 240, body: () => `<div class="chat" style="height:100%"><div class="msg"><div class="av ai">AI</div><div class="bub">Ask me to explain, rename, or trace a value. I can drive n0x for you.</div></div></div>` },
-  strings:  { title: 'Strings',         icon: 'strings', w: 300, h: 200, body: () => `<div style="overflow:auto;height:100%;padding:6px 0">${['HealthComponent','TakeDamage','crc_table','zlib 1.3.1'].map(s=>`<div class="frow"><span class="nm mono selectable">"${s}"</span></div>`).join('')}</div>` },
-  notes:    { title: 'Notes',           icon: 'note',    w: 300, h: 180, body: () => `<textarea class="selectable" style="width:100%;height:100%;background:transparent;border:none;color:var(--tx0);padding:11px;font:inherit;resize:none;outline:none;box-sizing:border-box" placeholder="Session notes…"></textarea>` },
-  output:   { title: 'Output console',  icon: 'disasm',  w: 400, h: 160, body: () => `<div style="padding:8px 0;height:100%;overflow:auto"><div class="oline"><span class="p">›</span> decomp pseudo --addr 0x1510</div><div class="oline" style="color:var(--ok)">ok · 19 lines · 7 ms</div></div>` },
+  functions: { title: 'Functions', icon: 'strings', body: () => `<div class="wfill">
+    <div class="navtabs"><button class="nt on">Functions</button><button class="nt">Imports</button><button class="nt">Strings</button><button class="nt">Types</button></div>
+    <div class="search">${svg(ICON.scan,'')}Filter functions…</div>
+    <div class="flist">${FUNCS.map(([n,a,b])=>`<div class="frow${n==='crc32_z'?' on':''}${b==='sub'?' sub':''}"><span class="sym">ƒ</span><span class="nm mono">${n}</span>${b==='sig'?'<span class="badge">sig</span>':''}<span class="fa mono">${a}</span></div>`).join('')}</div>
+    <div class="pfoot">2,318 functions<span class="grow"></span><span style="color:var(--ok)">86% named</span></div></div>` },
+
+  decompiler: { title: 'Decompiler', icon: 'decomp', body: () => `<div class="wfill">
+    <div class="dockhead"><button class="pill on">structured</button><button class="pill">ssa</button><button class="pill">goto</button><div class="grow"></div><button class="dt" data-ws="graph">CFG ↗</button></div>
+    <div class="code selectable" style="flex:1">${CODE_LINES.map((l,i)=>`<div class="cl${i===7?' hot':''}"><span class="gut">${i+1}</span><span>${l}</span></div>`).join('')}</div></div>` },
+
+  disassembly: { title: 'Disassembly · x86-64', icon: 'disasm', body: () => `<div class="disasm selectable" style="height:100%;">${[
+      ['0x1000015c8','48 89 d8','mov','rax, rbx',''],['0x1000015cb','83 e0 07','and','eax, 0x7',''],
+      ['0x1000015ce','74 2a','je','0x1000015fa','hot'],['0x1000015d0','0f b6 03','movzx','eax, byte [rbx]',''],
+      ['0x1000015d3','31 f0','xor','eax, esi',''],['0x1000015d8','8b 04 87','mov','eax, [rdi + rax*4]',''],
+    ].map(([a,b,m,o,h])=>`<div class="drow${h?' hot':''}" data-ctx="drow"><span class="daddr">${a}</span><span class="dbytes">${b}</span><span class="dmn"${h?' style="color:var(--live)"':''}>${m}</span><span>${o}</span></div>`).join('')}</div>` },
+
+  hex: { title: 'Hex', icon: 'hex', body: () => `<div class="hex selectable" style="height:100%"><div class="hx"><span class="hxa">7FF6C21A40</span><span class="hxb"><span class="hb-hi">57 00 00 00</span> 2a 00 00 00 5c 21 c2 f6</span><span class="hxc">W....*...\\!</span></div><div class="hx"><span class="hxa">7FF6C21A50</span><span class="hxb">64 00 00 00 00 00 80 3f 00 00 80 3f</span><span class="hxc">d......?...?</span></div></div>` },
+
+  graph: { title: 'CFG · crc32_z', icon: 'graph', body: () => `<div class="graphwrap" style="height:100%">
+    <div class="gviewport"><div class="gcanvas"><svg class="gsvg" width="920" height="700"></svg></div>
+    <div class="gzoom"><button class="gz-in">+</button><div class="gzl">100%</div><button class="gz-out">−</button><button class="gz-fit">${svg('M4 9V5a1 1 0 0 1 1-1h4;M20 9V5a1 1 0 0 0-1-1h-4;M4 15v4a1 1 0 0 0 1 1h4;M20 15v4a1 1 0 0 1-1 1h-4','')}</button></div></div></div>`,
+    init: root => initGraphWidget(root) },
+
+  copilot: { title: 'Copilot', icon: 'chat', body: () => `<div class="wfill">
+    <div class="chat" style="flex:1"><div class="msg"><div class="av me">ME</div><div class="bub mine">What does <span class="mono" style="color:var(--acc)">crc32_z</span> do?</div></div>
+    <div class="msg"><div class="av ai">AI</div><div><div class="bub">This is the <b>zlib CRC-32</b> checksum core. It folds each input byte through a 256-entry table (<span class="mono" style="color:var(--st)">crc_table</span>) — byte-by-byte until 8-aligned, then 8 bytes per pass.<div style="margin-top:6px;color:var(--tx1)">• <span class="mono">rsi</span> = buffer, <span class="mono">rdx</span> = length, <span class="mono">rdi</span> = seed.</div></div>
+    <div class="sug"><span class="sugb">Find callers</span><span class="sugb">Explain “SSA”</span><span class="sugb">Rename vars</span></div></div></div></div>
+    <div class="ask"><span class="provsel">Claude · cloud</span>Ask, or “guide me through…”<span class="grow"></span><span style="color:var(--acc)">↵</span></div></div>` },
+
+  details: { title: 'Details · Provenance', icon: 'note', body: () => `<div class="det selectable" style="height:100%">
+    <div><div class="dk">Signature</div><span class="mono">uint64_t crc32_z(uint64_t, void*, uint64_t)</span></div>
+    <div><div class="dk">Callers</div><div class="xr"><span class="fnc mono">crc32</span> <span style="color:var(--tx2)">→ tail-call</span><span class="hit">live 1,204</span></div><div class="xr"><span class="fnc mono">compress2</span> <span style="color:var(--tx2)">→ 0x14e6</span><span class="hit">live 3</span></div></div>
+    <div><div class="dk">Provenance — line 8 ◆</div><div style="color:var(--tx1);font-size:.78rem;line-height:1.5">Written by <span class="mono" style="color:var(--live)">and eax, 0x7</span> @ <span class="mono">0x1000015cb</span> · watchpoint hit <span class="mono" style="color:var(--live)">1,204×</span></div></div></div>` },
+
+  output: { title: 'Output · n0x console', icon: 'disasm', body: () => `<div class="selectable" style="padding:8px 0;height:100%;overflow:auto"><div class="oline"><span class="p">›</span> decomp pseudo --addr 0x1510 --style structured</div><div class="oline" style="color:var(--ok)">ok · 19 lines · schema n0x.decomp.pseudo.v1 · 7 ms</div><div class="oline"><span class="p">›</span> sig apply --flirt zlib-1.3.1.npat</div><div class="oline">named 118 functions · <span style="color:var(--live)">crc32_z, compress, adler32 …</span></div></div>` },
+
+  registers: { title: 'Registers · thread 0', icon: 'regs', body: () => `<div class="regs selectable" style="height:100%">${[
+      ['rax','00000064',''],['rbx','7ff6c21a40','ch'],['rcx','00000000',''],['rdx','00000057',''],
+      ['rsi','7ff6c218e0',''],['rdi','0000002a',''],['rsp','00cff9e0',''],['rip','7ff6c1002a','ch'],
+    ].map(([n,v,c])=>`<div class="reg"><span class="rn">${n}</span><span class="rv${c?' ch':''}">${v}</span></div>`).join('')}</div>` },
+
+  watchpoints: { title: 'Watchpoints & breakpoints', icon: 'watch', body: () => `<div style="overflow:auto;height:100%">
+    <div class="wprow" data-ctx="wprow"><span class="wpi">${svg(ICON.watch,'')}</span><div><div class="mono">7FF6C21A40</div><div style="color:var(--tx2);font-size:.68rem">write · health</div></div><span class="hit">1,204</span></div>
+    <div class="wprow" data-ctx="wprow"><span class="wpi" style="color:var(--acc)">${svg(ICON.watch,'')}</span><div><div class="mono">7FF6C218E0</div><div style="color:var(--tx2);font-size:.68rem">read · ammo</div></div><span class="hit" style="color:var(--acc);background:rgba(63,220,196,.1)">86</span></div>
+    <div class="wprow" data-ctx="wprow"><span class="wpi" style="color:var(--dgr)">${svg(ICON.bp,'')}</span><div><div class="mono">7FF6C1002A</div><div style="color:var(--tx2);font-size:.68rem">execute · sub_1002A</div></div><span class="hit" style="color:var(--dgr);background:rgba(255,107,122,.1)">hit</span></div></div>` },
+
+  scanner: { title: 'Memory scanner', icon: 'scan', body: () => `<div class="wfill">
+    <div class="scanbar"><div class="field"><input class="inp" value="87"><span class="selbox">4-byte int ▾</span><span class="selbox">exact ▾</span></div>
+    <div class="field"><button class="b p" style="flex:1">Next scan</button><button class="b g" style="flex:1">New scan</button><button class="b g">Undo</button></div>
+    <div style="color:var(--tx2);font-size:.75rem">Scan 4 of 5 · 2,481,003 → 3 candidates · value 100 → 87</div></div>
+    <div style="overflow:auto;flex:1">${[['7FF6C21A40','87','100','on'],['7FF6C21A44','87','100',''],['02A9F0E8','87','92','']].map(([a,v,p,o])=>`<div class="srow ${o}" data-ctx="srow"><span class="saddr">${a}</span><span class="sval"${o?' style="color:var(--live)"':''}>${v}</span><span class="sprev">${p}</span></div>`).join('')}</div></div>` },
+
+  livemem: { title: 'Live memory · 7FF6C21A40', icon: 'hex', body: () => `<div class="hex selectable" style="height:100%">
+    <div class="hx"><span class="hxa">7FF6C21A40</span><span class="hxb"><span class="hb-hi">57 00 00 00</span> 2a 00 00 00 5c 21 c2 f6 ff 7f 00 00</span><span class="hxc">W....*...\\!......</span></div>
+    <div class="hx"><span class="hxa">7FF6C21A50</span><span class="hxb">64 00 00 00 00 00 80 3f 00 00 80 3f cd cc 4c 3e</span><span class="hxc">d......?...?..L&gt;</span></div>
+    <div class="hx"><span class="hxa">7FF6C21A60</span><span class="hxb">10 27 00 00 e8 03 00 00 01 00 00 00 00 00 00 00</span><span class="hxc">.'..............</span></div>
+    <div class="hx"><span class="hxa">7FF6C21A80</span><span class="hxb">48 65 61 6c 74 68 43 6f 6d 70 6f 6e 65 6e 74 00</span><span class="hxc" style="color:var(--ok)">HealthComponent.</span></div></div>` },
+
+  watchlist: { title: 'Watchlist', icon: 'watch', body: () => `<div style="overflow:auto;height:100%">${[
+      ['health','87','on'],['max_health','100','on'],['ammo','42',''],['gold','10000','']
+    ].map(([n,v,f])=>`<div class="wlrow" data-ctx="wlrow"><span class="frz ${f}"></span><span class="wname">${n}</span><span class="wval">${v}</span></div>`).join('')}</div>` },
+
+  copilotFollow: { title: 'Copilot · following', icon: 'chat', body: () => `<div class="wfill">
+    <div style="padding:11px;font-size:.82rem;line-height:1.5;flex:1;overflow:auto">Found it. <span class="mono" style="color:var(--live)">7FF6C21A40</span> is <b>health</b> — I set a write-watchpoint and traced the writer to <span class="mono" style="color:var(--acc)">HealthComponent::TakeDamage</span>.
+    <div style="margin-top:8px;color:var(--vio);font-size:.72rem"><div>→ scan 87 (4-byte)</div><div>→ watch write 7FF6C21A40</div><div>→ provenance → decompile</div></div></div>
+    <div class="ask" style="margin:0 10px 10px"><span class="provsel">Local · Ollama</span>Ask…<span class="grow"></span><span style="color:var(--vio)">↵</span></div></div>` },
+
+  strings: { title: 'Strings', icon: 'strings', body: () => `<div style="overflow:auto;height:100%;padding:6px 0">${['HealthComponent','TakeDamage','crc_table','zlib 1.3.1','deflate','Assertion failed'].map(s=>`<div class="frow"><span class="nm mono selectable">"${s}"</span></div>`).join('')}</div>` },
+
+  notes: { title: 'Notes', icon: 'note', body: () => `<textarea class="selectable" style="width:100%;height:100%;background:transparent;border:none;color:var(--tx0);padding:11px;font:inherit;resize:none;outline:none;box-sizing:border-box" placeholder="Session notes…"></textarea>` },
 };
+
+// Default workspace layouts — trees over the same widget catalog.
+const L = (...tabs) => ({ t: 'leaf', tabs });
+const R = (ra, a, rb, b) => ({ t: 'split', dir: 'row', ratio: [ra, rb], kids: [a, b] });
+const C = (ca, a, cb, b) => ({ t: 'split', dir: 'col', ratio: [ca, cb], kids: [a, b] });
+const DEFAULT_LAYOUTS = {
+  decompile: C(0.82,
+    R(0.2, L('functions'),
+      0.8, R(0.66, C(0.68, L('decompiler'), 0.32, L('disassembly')),
+                 0.34, C(0.58, L('copilot'), 0.42, L('details')))),
+    0.18, L('output')),
+  static: R(0.22, L('functions'),
+    0.78, R(0.6, C(0.7, L('decompiler'), 0.3, L('disassembly')), 0.4, L('strings'))),
+  graph: L('graph'),
+  dynamic: R(0.34, C(0.4, L('registers'), 0.6, L('watchpoints')),
+    0.66, R(0.5, C(0.55, L('scanner'), 0.45, L('livemem')),
+               0.5, C(0.5, L('watchlist'), 0.5, L('copilotFollow')))),
+};
+
 // tiling dock instance (Blender/AreaKit-style: split · tabs · resize · undo)
 const dockspace = $('#dockspace'), wpal = $('#wpal');
-const dock = initDock({ container: dockspace, widgets: WIDGETS, ICON, svg, toast, showMenu: openCtx });
-dock.onChangeHook(updateUndoButtons);
-function updateUndoButtons() { /* buttons reflect availability lazily; kept simple */ }
+const dock = initDock({ container: dockspace, widgets: WIDGETS, ICON, svg, toast, showMenu: openCtx, defaults: DEFAULT_LAYOUTS });
 
 // widget palette — click adds to the largest area; drag to place precisely
 function openWpal(anchor) {
@@ -501,7 +577,8 @@ async function hydrateFromEngine() {
 function renderRealFunctions(res) {
   const list = res?.data?.functions || res?.data?.symbols || res?.data?.items;
   if (!Array.isArray(list) || !list.length) { toast('Engine returned no functions — keeping demo'); return; }
-  const fl = $('#flist'); fl.innerHTML = '';
+  const fl = $('#dockspace .flist'); if (!fl) { toast('Open the Functions widget to list them'); return; }
+  fl.innerHTML = '';
   list.slice(0, 400).forEach(f => {
     const name = f.name || f.symbol || f.label || 'sub_' + (f.addr || f.address || '');
     const addr = f.addr || f.address || f.va || '';
@@ -513,8 +590,7 @@ function renderRealFunctions(res) {
   toast('Loaded ' + list.length + ' functions from the engine');
 }
 
-renderGraph();
 deepLink();
-dock.setWorkspace(document.documentElement.dataset.ws || 'decompile'); // restore any saved layout
+dock.setWorkspace(document.documentElement.dataset.ws || 'decompile'); // seed/restore the workspace layout
 hydrateFromEngine();
 console.log('N0xis GUI ready · graph, context menus, dock widgets, palette (Ctrl+P), themes, zoom');

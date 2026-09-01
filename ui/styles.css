@@ -374,3 +374,9 @@ a{ color:var(--acc); }
 .urbtn:hover{ background:var(--bg3); color:var(--tx0); }
 .urbtn:disabled{ opacity:.35; }
 .wpi{ cursor:grab; }
+
+/* widget body fills its area; multi-part widgets use .wfill */
+.dk-widget-body{ height:100%; min-height:0; }
+.wfill{ display:flex; flex-direction:column; height:100%; min-height:0; }
+.wfill > .flist, .wfill > .code, .wfill > .chat, .wfill > .disasm{ flex:1; min-height:0; }
+.dk-body .dockhead{ border-radius:0; }

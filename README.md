@@ -27,7 +27,11 @@ over the existing `n0xis` engine.
 ## Features
 
 - Frameless custom window (own title bar, drag regions, min/max/close wired to the OS window).
-- Workspaces: **Decompile · Static · Graph · Dynamic**.
+- **Everything is a widget — no privileged core.** Functions, Decompiler, Disassembly, CFG graph,
+  Registers, Watchpoints, Memory scanner, Live memory, Watchlist, Copilot, Details, Output … are
+  all dock widgets from one catalog. The **Decompile / Static / Graph / Dynamic** workspaces are
+  just *default dock layouts* over that catalog ([`app.js`](ui/app.js) `DEFAULT_LAYOUTS`), so every
+  built-in panel is itself resizable, movable, tabbable and closable — same as any widget you add.
 - **Blender/AreaKit tiling dock** ([`ui/dock.js`](ui/dock.js)) — a BSP tree of areas:
   - drag an area header (or a palette widget) onto another area — near an **edge** it splits,
     over the **centre** it takes over; hold **Ctrl** to drop it as a **tab** instead;
