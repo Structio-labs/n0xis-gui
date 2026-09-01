@@ -29,7 +29,7 @@ body{ margin:0; background:#000; color:var(--tx0); font-family:'IBM Plex Sans',s
 svg{ display:block; stroke-linecap:round; stroke-linejoin:round; }
 
 /* ---- text selection discipline: only real content/data is selectable ---- */
-.code, .disasm, .hex, .regs, .oline, .det, .chat .bub, .gnode, .sval, .saddr, .wval, .daddr, .dbytes, .hxa, .hxb, .hxc, .selectable{
+.code, .disasm, .hex, .regs, .oline, .det, .chat .bub, .sval, .saddr, .wval, .daddr, .dbytes, .hxa, .hxb, .hxc, .selectable{
   user-select:text; -webkit-user-select:text; cursor:text;
 }
 .frow .nm, .frow .fa{ user-select:text; -webkit-user-select:text; }
@@ -61,19 +61,8 @@ button{ font:inherit; color:inherit; background:none; border:none; cursor:pointe
 .mode{ display:flex; align-items:center; gap:6px; color:var(--tx2); font-size:.85rem; padding-bottom:7px; margin-left:auto; }
 .mode b{ color:var(--acc); font-weight:500; }
 
-/* generic panels + layout */
+/* stage holds the launcher + the tiling dock */
 .stage{ flex:1; min-height:0; position:relative; }
-.wsview{ position:absolute; inset:0; display:none; padding:8px; gap:8px; }
-.wsview.on{ display:grid; }
-#view-decompile{ grid-template-columns:260px 1fr 330px; grid-template-rows:1fr auto; }
-#view-dynamic{ grid-template-columns:262px 1fr 330px; }
-#view-graph{ grid-template-columns:1fr; }
-
-.panel{ background:var(--bg1); border:1px solid var(--bd); border-radius:9px; display:flex; flex-direction:column; overflow:hidden; min-height:0; }
-.panel.ai{ border-color:rgba(167,139,250,.5); box-shadow:0 0 0 1px rgba(167,139,250,.22),0 0 26px rgba(167,139,250,.1); }
-.col{ display:flex; flex-direction:column; gap:8px; min-height:0; }
-.phead{ height:2.3rem; flex:0 0 auto; display:flex; align-items:center; gap:8px; padding:0 10px; border-bottom:1px solid var(--bd); color:var(--tx1); font-size:.8rem; font-weight:600; letter-spacing:.04em; text-transform:uppercase; }
-.phead .sub{ text-transform:none; font-weight:400; color:var(--tx2); }
 
 /* nav */
 .navtabs{ display:flex; gap:2px; padding:6px; }
@@ -150,7 +139,7 @@ button{ font:inherit; color:inherit; background:none; border:none; cursor:pointe
 .reg{ display:flex; gap:8px; font-family:'JetBrains Mono',monospace; font-size:.76rem; }
 .reg .rn{ color:var(--acc); width:2.2rem; } .reg .rv{ color:var(--tx1); } .reg .rv.ch{ color:var(--live); }
 .wprow{ display:flex; align-items:center; gap:9px; padding:6px 10px; border-bottom:1px solid var(--bd); font-size:.82rem; }
-.wpi{ width:1.15rem; flex:0 0 auto; display:flex; }
+.wpico{ width:1.15rem; flex:0 0 auto; display:flex; align-items:center; }
 .scanbar{ padding:9px 10px; display:flex; flex-direction:column; gap:8px; border-bottom:1px solid var(--bd); }
 .field{ display:flex; align-items:center; gap:8px; }
 .inp{ flex:1; padding:6px 9px; background:var(--bg2); border:1px solid var(--bd2); border-radius:7px; color:var(--tx0); font-family:'JetBrains Mono',monospace; font-size:.8rem; }
@@ -392,3 +381,24 @@ a{ color:var(--acc); }
 .dk-empty-a button:hover{ border-color:var(--acc); color:var(--acc); }
 .dk-empty-a button[data-a="add"]{ background:linear-gradient(135deg,var(--acc),var(--accd)); color:#042; border:none; font-weight:600; }
 .dk-empty-a button[data-a="add"]:hover{ color:#042; }
+
+/* ---- thin, space-reserving scrollbars everywhere (no overlay over content) ---- */
+*{ scrollbar-width:thin; scrollbar-color:var(--bd2) transparent; }
+::-webkit-scrollbar{ width:9px; height:9px; }
+::-webkit-scrollbar-track{ background:transparent; }
+::-webkit-scrollbar-thumb{ background:var(--bd2); border-radius:6px; border:2px solid transparent; background-clip:content-box; }
+::-webkit-scrollbar-thumb:hover{ background:var(--tx2); background-clip:content-box; }
+::-webkit-scrollbar-corner{ background:transparent; }
+/* tab strips: keep the scrollbar in its own lane, below/beside the tabs */
+.dk-tabs.h{ scrollbar-width:thin; padding-bottom:0; }
+.dk-tabs.h::-webkit-scrollbar{ height:6px; }
+.dk-tabs.v::-webkit-scrollbar{ width:6px; }
+
+/* ---- graph: draggable blocks + edge legend ---- */
+.gnode{ cursor:grab; }
+.gnode.dragging{ cursor:grabbing; border-color:var(--acc); box-shadow:0 0 0 1px var(--acc),0 10px 24px rgba(0,0,0,.5); z-index:5; }
+.glegend{ position:absolute; left:12px; bottom:12px; display:flex; gap:12px; align-items:center; background:var(--bg2);
+  border:1px solid var(--bd2); border-radius:8px; padding:6px 11px; font-size:.7rem; color:var(--tx1); box-shadow:0 6px 18px rgba(0,0,0,.4); z-index:3; }
+.glegend .lg{ display:flex; align-items:center; gap:5px; }
+.glegend .ln{ width:16px; height:0; border-top:2px solid var(--bd2); }
+.glegend .ln.t{ border-color:var(--ok); } .glegend .ln.f{ border-color:var(--dgr); } .glegend .ln.loop{ border-top-style:dashed; border-color:var(--live); }

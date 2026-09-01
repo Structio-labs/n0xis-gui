@@ -214,43 +214,66 @@ const GRAPH = {
   ],
 };
 // Self-contained: bound to one graph widget's own elements (many can coexist).
+let graphSeq = 0;
 function initGraphWidget(root) {
   const gv = root.querySelector('.gviewport'), gc = root.querySelector('.gcanvas'), gs = root.querySelector('.gsvg');
   if (!gv || !gc || !gs) return;
+  const mid = 'arrow-' + (graphSeq++);            // unique marker id per graph instance
   const cam = { x: 40, y: 20, s: 1 };
+  const blocks = GRAPH.blocks.map(b => ({ ...b })); // local, independently draggable positions
   const rectOf = {};
-  function renderGraph() {
+
+  function buildNodes() {
     gc.querySelectorAll('.gnode').forEach(n => n.remove());
-    GRAPH.blocks.forEach(b => {
+    blocks.forEach(b => {
       const n = document.createElement('div');
       n.className = 'gnode' + (b.tag === 'entry' ? ' entry' : b.tag === 'exit' ? ' exit' : '');
       n.style.left = b.x + 'px'; n.style.top = b.y + 'px'; n.style.width = b.w + 'px';
       n.dataset.ctx = 'gnode'; n.dataset.addr = b.addr; n.dataset.id = b.id;
-      const tag = b.tag ? ' · ' + b.tag : '';
-      n.innerHTML = `<div class="gt">${b.id} · ${b.addr}${tag}</div>${b.body}`;
+      n.innerHTML = `<div class="gt">${b.id} · ${b.addr}${b.tag ? ' · ' + b.tag : ''}</div>${b.body}`;
       gc.appendChild(n);
       rectOf[b.id] = { x: b.x, y: b.y, w: b.w, h: n.offsetHeight };
+      // drag the block to reposition it — edges follow live
+      n.addEventListener('pointerdown', e => {
+        if (e.button !== 0) return;               // leave right-click for the context menu
+        e.stopPropagation();                      // don't pan the viewport
+        const sx = e.clientX, sy = e.clientY, ox = b.x, oy = b.y;
+        n.setPointerCapture(e.pointerId); n.classList.add('dragging');
+        const move = ev => {
+          b.x = ox + (ev.clientX - sx) / cam.s; b.y = oy + (ev.clientY - sy) / cam.s;
+          n.style.left = b.x + 'px'; n.style.top = b.y + 'px';
+          rectOf[b.id].x = b.x; rectOf[b.id].y = b.y; drawEdges();
+        };
+        const up = () => { n.releasePointerCapture(e.pointerId); n.classList.remove('dragging'); window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
+        window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+      });
     });
-    const defs = `<defs><marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>`;
+  }
+  function drawEdges() {
+    const defs = `<defs><marker id="${mid}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>`;
     const paths = GRAPH.edges.map(e => {
-      const a = rectOf[e.f], b = rectOf[e.t], cls = 'gedge' + (e.type ? ' ' + e.type : '');
-      if (e.type === 'loop') { const x = a.x + a.w, y1 = a.y + a.h * 0.28, y2 = a.y + a.h * 0.72; return `<path class="${cls}" marker-end="url(#arrow)" d="M${x} ${y1} C${x + 46} ${y1 - 6},${x + 46} ${y2 + 6},${x} ${y2}"/>`; }
+      const a = rectOf[e.f], b = rectOf[e.t]; if (!a || !b) return '';
+      const cls = 'gedge' + (e.type ? ' ' + e.type : '');
+      if (e.f === e.t) { // self-loop: out the bottom-right, around, back into the TOP of the same block
+        const lx = a.x + a.w * 0.72, bulge = a.x + a.w + 40;
+        return `<path class="${cls}" marker-end="url(#${mid})" d="M${lx} ${a.y + a.h} C${bulge} ${a.y + a.h + 6},${bulge} ${a.y - 8},${lx} ${a.y - 1}"/>`;
+      }
       const sx = a.x + a.w / 2, sy = a.y + a.h, tx = b.x + b.w / 2, ty = b.y, my = (sy + ty) / 2;
-      return `<path class="${cls}" marker-end="url(#arrow)" d="M${sx} ${sy} C${sx} ${my},${tx} ${my},${tx} ${ty - 2}"/>`;
+      return `<path class="${cls}" marker-end="url(#${mid})" d="M${sx} ${sy} C${sx} ${my},${tx} ${my},${tx} ${ty - 2}"/>`;
     }).join('');
     gs.innerHTML = defs + paths;
   }
+  function renderGraph() { buildNodes(); drawEdges(); }
   function applyCam() { gc.style.transform = `translate(${cam.x}px,${cam.y}px) scale(${cam.s})`; const l = root.querySelector('.gzl'); if (l) l.textContent = Math.round(cam.s * 100) + '%'; }
   function fitGraph() {
     const vw = gv.clientWidth, vh = gv.clientHeight; if (!vw || !vh) return;
     let maxX = 0, maxY = 0;
-    GRAPH.blocks.forEach(b => { maxX = Math.max(maxX, b.x + b.w); maxY = Math.max(maxY, b.y + (rectOf[b.id]?.h || 70)); });
+    blocks.forEach(b => { maxX = Math.max(maxX, b.x + b.w); maxY = Math.max(maxY, b.y + (rectOf[b.id]?.h || 70)); });
     cam.s = clamp(Math.min(vw / (maxX + 60), vh / (maxY + 60)), 0.4, 1.3);
     cam.x = (vw - maxX * cam.s) / 2; cam.y = Math.max(16, (vh - maxY * cam.s) / 2); applyCam();
   }
-  let pan = null;
-  let userAdjusted = false;                       // once the user pans/zooms, stop auto-fitting
-  gv.addEventListener('pointerdown', e => { if (e.target.closest('.gzoom')) return; pan = { x: e.clientX, y: e.clientY, cx: cam.x, cy: cam.y }; gv.classList.add('panning'); gv.setPointerCapture(e.pointerId); });
+  let pan = null, userAdjusted = false;           // once the user pans/zooms, stop auto-fitting
+  gv.addEventListener('pointerdown', e => { if (e.target.closest('.gzoom, .gnode, .glegend')) return; pan = { x: e.clientX, y: e.clientY, cx: cam.x, cy: cam.y }; gv.classList.add('panning'); gv.setPointerCapture(e.pointerId); });
   gv.addEventListener('pointermove', e => { if (!pan) return; cam.x = pan.cx + (e.clientX - pan.x); cam.y = pan.cy + (e.clientY - pan.y); userAdjusted = true; applyCam(); });
   gv.addEventListener('pointerup', () => { pan = null; gv.classList.remove('panning'); });
   gv.addEventListener('wheel', e => { e.preventDefault(); const r = gv.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top; const ns = clamp(cam.s * (e.deltaY < 0 ? 1.12 : 0.89), 0.3, 2.4); cam.x = mx - (mx - cam.x) * (ns / cam.s); cam.y = my - (my - cam.y) * (ns / cam.s); cam.s = ns; userAdjusted = true; applyCam(); }, { passive: false });
@@ -260,7 +283,7 @@ function initGraphWidget(root) {
   renderGraph();
   requestAnimationFrame(fitGraph);
   setTimeout(fitGraph, 120); // refit once layout settles
-  try { new ResizeObserver(() => { if (!userAdjusted) fitGraph(); }).observe(gv); } catch {} // refit when the area is resized, until the user takes over
+  try { new ResizeObserver(() => { if (!userAdjusted) fitGraph(); }).observe(gv); } catch {}
 }
 
 /* =====================================================================
@@ -433,7 +456,8 @@ const WIDGETS = {
 
   graph: { title: 'CFG · crc32_z', icon: 'graph', body: () => `<div class="graphwrap" style="height:100%">
     <div class="gviewport"><div class="gcanvas"><svg class="gsvg" width="920" height="700"></svg></div>
-    <div class="gzoom"><button class="gz-in">+</button><div class="gzl">100%</div><button class="gz-out">−</button><button class="gz-fit">${svg('M4 9V5a1 1 0 0 1 1-1h4;M20 9V5a1 1 0 0 0-1-1h-4;M4 15v4a1 1 0 0 0 1 1h4;M20 15v4a1 1 0 0 1-1 1h-4','')}</button></div></div></div>`,
+    <div class="gzoom"><button class="gz-in">+</button><div class="gzl">100%</div><button class="gz-out">−</button><button class="gz-fit">${svg('M4 9V5a1 1 0 0 1 1-1h4;M20 9V5a1 1 0 0 0-1-1h-4;M4 15v4a1 1 0 0 0 1 1h4;M20 15v4a1 1 0 0 1-1 1h-4','')}</button></div>
+    <div class="glegend"><span class="lg"><span class="ln t"></span>true</span><span class="lg"><span class="ln f"></span>false</span><span class="lg"><span class="ln loop"></span>loop (back-edge)</span><span class="lg" style="color:var(--tx2)">drag blocks · scroll = zoom</span></div></div></div>`,
     init: root => initGraphWidget(root) },
 
   copilot: { title: 'Copilot', icon: 'chat', body: () => `<div class="wfill">
@@ -455,9 +479,9 @@ const WIDGETS = {
     ].map(([n,v,c])=>`<div class="reg"><span class="rn">${n}</span><span class="rv${c?' ch':''}">${v}</span></div>`).join('')}</div>` },
 
   watchpoints: { title: 'Watchpoints & breakpoints', icon: 'watch', body: () => `<div style="overflow:auto;height:100%">
-    <div class="wprow" data-ctx="wprow"><span class="wpi">${svg(ICON.watch,'')}</span><div><div class="mono">7FF6C21A40</div><div style="color:var(--tx2);font-size:.68rem">write · health</div></div><span class="hit">1,204</span></div>
-    <div class="wprow" data-ctx="wprow"><span class="wpi" style="color:var(--acc)">${svg(ICON.watch,'')}</span><div><div class="mono">7FF6C218E0</div><div style="color:var(--tx2);font-size:.68rem">read · ammo</div></div><span class="hit" style="color:var(--acc);background:rgba(63,220,196,.1)">86</span></div>
-    <div class="wprow" data-ctx="wprow"><span class="wpi" style="color:var(--dgr)">${svg(ICON.bp,'')}</span><div><div class="mono">7FF6C1002A</div><div style="color:var(--tx2);font-size:.68rem">execute · sub_1002A</div></div><span class="hit" style="color:var(--dgr);background:rgba(255,107,122,.1)">hit</span></div></div>` },
+    <div class="wprow" data-ctx="wprow"><span class="wpico">${svg(ICON.watch,'')}</span><div><div class="mono">7FF6C21A40</div><div style="color:var(--tx2);font-size:.68rem">write · health</div></div><span class="hit">1,204</span></div>
+    <div class="wprow" data-ctx="wprow"><span class="wpico" style="color:var(--acc)">${svg(ICON.watch,'')}</span><div><div class="mono">7FF6C218E0</div><div style="color:var(--tx2);font-size:.68rem">read · ammo</div></div><span class="hit" style="color:var(--acc);background:rgba(63,220,196,.1)">86</span></div>
+    <div class="wprow" data-ctx="wprow"><span class="wpico" style="color:var(--dgr)">${svg(ICON.bp,'')}</span><div><div class="mono">7FF6C1002A</div><div style="color:var(--tx2);font-size:.68rem">execute · sub_1002A</div></div><span class="hit" style="color:var(--dgr);background:rgba(255,107,122,.1)">hit</span></div></div>` },
 
   scanner: { title: 'Memory scanner', icon: 'scan', body: () => `<div class="wfill">
     <div class="scanbar"><div class="field"><input class="inp" value="87"><span class="selbox">4-byte int ▾</span><span class="selbox">exact ▾</span></div>
