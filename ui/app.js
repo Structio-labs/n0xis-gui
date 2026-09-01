@@ -6,33 +6,35 @@ const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
 // ---------- tiny icon set (shared by menus / widgets) ----------
+// Icon set — Lucide (ISC license, https://lucide.dev), inlined as 24×24 markup.
 const ICON = {
-  decomp: 'M8 6l-6 6 6 6M16 6l6 6-6 6',
-  disasm: 'M4 6h16M4 12h10M4 18h13',
-  graph:  'M6 3a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM18 15a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM6 9v3a3 3 0 0 0 3 3h6',
-  rename: 'M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z',
-  xref:   'M7 7h10v10M7 17L17 7',
-  type:   'M4 7V4h16v3M9 20h6M12 4v16',
-  bp:     'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z',
-  watch:  'M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z',
-  copy:   'M9 9h11v11H9zM5 15H4V4h11v1',
-  freeze: 'M12 2v20M4 7l16 10M20 7L4 17',
-  trash:  'M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14',
-  scan:   'M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM21 21l-4-4',
-  play:   'M6 4l14 8-14 8z',
-  hex:    'M4 7l8-4 8 4v10l-8 4-8-4z',
-  regs:   'M4 5h16v4H4zM4 13h16v6H4z',
-  chat:   'M4 5h16v11H8l-4 4z',
-  note:   'M6 3h9l3 3v15H6zM14 3v5h5',
-  add:    'M12 5v14M5 12h14',
-  reset:  'M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5',
-  settings:'M4 7h16M4 12h16M4 17h16',
-  strings:'M4 7V4h16v3M9 20h6M12 4v16',
-  fold:   'M6 9l6 6 6-6',
+  decomp: "<path d='m16 18 6-6-6-6' /> <path d='m8 6-6 6 6 6' />",
+  disasm: "<path d='M3 5h.01' /> <path d='M3 12h.01' /> <path d='M3 19h.01' /> <path d='M8 5h13' /> <path d='M8 12h13' /> <path d='M8 19h13' />",
+  graph: "<path d='M15 6a9 9 0 0 0-9 9V3' /> <circle cx='18' cy='6' r='3' /> <circle cx='6' cy='18' r='3' />",
+  rename: "<path d='M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z' /> <path d='m15 5 4 4' />",
+  xref: "<path d='M8 3 4 7l4 4' /> <path d='M4 7h16' /> <path d='m16 21 4-4-4-4' /> <path d='M20 17H4' />",
+  type: "<path d='M12 4v16' /> <path d='M4 7V5a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v2' /> <path d='M9 20h6' />",
+  bp: "<circle cx='12' cy='12' r='1' /> <circle cx='12' cy='12' r='10' />",
+  watch: "<path d='M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0' /> <circle cx='12' cy='12' r='3' />",
+  copy: "<rect width='14' height='14' x='8' y='8' rx='2' ry='2' /> <path d='M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2' />",
+  freeze: "<path d='m10 20-1.25-2.5L6 18' /> <path d='M10 4 8.75 6.5 6 6' /> <path d='m14 20 1.25-2.5L18 18' /> <path d='m14 4 1.25 2.5L18 6' /> <path d='m17 21-3-6h-4' /> <path d='m17 3-3 6 1.5 3' /> <path d='M2 12h6.5L10 9' /> <path d='m20 10-1.5 2 1.5 2' /> <path d='M22 12h-6.5L14 15' /> <path d='m4 10 1.5 2L4 14' /> <path d='m7 21 3-6-1.5-3' /> <path d='m7 3 3 6h4' />",
+  trash: "<path d='M10 11v6' /> <path d='M14 11v6' /> <path d='M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6' /> <path d='M3 6h18' /> <path d='M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2' />",
+  scan: "<path d='m21 21-4.34-4.34' /> <circle cx='11' cy='11' r='8' />",
+  play: "<path d='M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z' />",
+  hex: "<rect x='14' y='14' width='4' height='6' rx='2' /> <rect x='6' y='4' width='4' height='6' rx='2' /> <path d='M6 20h4' /> <path d='M14 10h4' /> <path d='M6 14h2v6' /> <path d='M14 4h2v6' />",
+  regs: "<path d='M12 3v18' /> <rect width='18' height='18' x='3' y='3' rx='2' /> <path d='M3 9h18' /> <path d='M3 15h18' />",
+  chat: "<path d='M22 17a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 21.286V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z' />",
+  note: "<path d='M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z' /> <path d='M14 2v5a1 1 0 0 0 1 1h5' /> <path d='M10 9H8' /> <path d='M16 13H8' /> <path d='M16 17H8' />",
+  add: "<path d='M5 12h14' /> <path d='M12 5v14' />",
+  reset: "<path d='M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8' /> <path d='M3 3v5h5' />",
+  settings: "<path d='M10 5H3' /> <path d='M12 19H3' /> <path d='M14 3v4' /> <path d='M16 17v4' /> <path d='M21 12h-9' /> <path d='M21 19h-5' /> <path d='M21 5h-7' /> <path d='M8 10v4' /> <path d='M8 12H3' />",
+  strings: "<path d='M12 4v16' /> <path d='M4 7V5a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v2' /> <path d='M9 20h6' />",
+  fold: "<path d='m6 9 6 6 6-6' />",
+  x: "<path d='M18 6 6 18' /> <path d='m6 6 12 12' />",
 };
 const svg = (d, cls = 'cxi') =>
-  `<span class="${cls}"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">${
-    d.split(';').map(p => `<path d="${p}"/>`).join('')}</svg></span>`;
+  `<span class="${cls}"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${
+    d.includes('<') ? d : d.split(';').map(p => `<path d="${p}"/>`).join('')}</svg></span>`;
 
 // ---------- toast (feedback for actions) ----------
 let toastEl;

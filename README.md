@@ -69,3 +69,7 @@ cargo tauri dev        # from repo root, or: cd src-tauri && cargo run
 | `ui/bridge.js` | the thin-client seam: Tauri detection + engine calls + graceful fallback |
 | `src-tauri/` | the Rust backend: window + engine bridge commands |
 | `src-tauri/src/lib.rs` | `n0x_run`, `engine_info`, `pick_file` |
+
+## Credits
+
+Icons: [Lucide](https://lucide.dev) (ISC License) — inlined as 24×24 SVG markup in `ui/app.js` (`ICON`).

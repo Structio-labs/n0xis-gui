@@ -210,7 +210,7 @@ export function initDock(deps) {
         tab.className = 'dk-tab' + (i === node.active ? ' on' : ''); tab.title = w.title;
         tab.innerHTML = `<span class="dk-ti">${svg(ICON[w.icon] || ICON.decomp, '')}</span>` +
           (iconOnly ? '' : `<span class="dk-tn">${w.title}</span>`) +
-          `<span class="dk-tx" title="Close">${svg('M7 7l10 10M17 7l-10 10', '')}</span>`;
+          `<span class="dk-tx" title="Close">${svg(ICON.x, '')}</span>`;
         tab.addEventListener('click', e => { if (e.target.closest('.dk-tx')) { closePane(node.id, i); return; } node.active = i; render(); save(); });
         tab.addEventListener('pointerdown', e => { if (e.target.closest('.dk-tx')) return; startDrag(e, { entry, leafId: node.id }); });
         tab.addEventListener('contextmenu', e => { e.preventDefault(); e.stopPropagation(); tabMenu(e, node, i); });
@@ -224,7 +224,7 @@ export function initDock(deps) {
     head.innerHTML =
       `<span class="dk-marker" title="Change what this shows">${svg(ICON[w.icon] || ICON.decomp, '')}</span>` +
       `<span class="dk-title">${w.title}</span><span class="dk-grow"></span>` +
-      `<span class="dk-close" title="Close area">${svg('M6 6l12 12M18 6l-12 12', '')}</span>`;
+      `<span class="dk-close" title="Close area">${svg(ICON.x, '')}</span>`;
     head.querySelector('.dk-marker').addEventListener('click', e => { e.stopPropagation(); paneMenu(e, node); });
     head.querySelector('.dk-close').addEventListener('click', e => { e.stopPropagation(); closePane(node.id, node.active); });
     head.addEventListener('pointerdown', e => { if (e.target.closest('.dk-close,.dk-marker')) return; startDrag(e, { entry: active, leafId: node.id }); });

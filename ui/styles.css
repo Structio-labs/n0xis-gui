@@ -405,7 +405,9 @@ a{ color:var(--acc); }
 .gnode{ cursor:grab; }
 .gnode.dragging{ cursor:grabbing; border-color:var(--acc); box-shadow:0 0 0 1px var(--acc),0 10px 24px rgba(0,0,0,.5); z-index:5; }
 .glegend{ position:absolute; left:12px; bottom:12px; display:flex; gap:12px; align-items:center; background:var(--bg2);
-  border:1px solid var(--bd2); border-radius:8px; padding:6px 11px; font-size:.7rem; color:var(--tx1); box-shadow:0 6px 18px rgba(0,0,0,.4); z-index:3; }
+  border:1px solid var(--bd2); border-radius:8px; padding:6px 11px; font-size:.7rem; color:var(--tx1); box-shadow:0 6px 18px rgba(0,0,0,.4);
+  z-index:3; pointer-events:none; opacity:.8; transition:opacity .15s; }
+.gviewport:hover .glegend{ opacity:.5; }   /* fades out of the way while you work in the graph */
 .glegend .lg{ display:flex; align-items:center; gap:5px; }
 .glegend .ln{ width:16px; height:0; border-top:2px solid var(--bd2); }
 .glegend .ln.t{ border-color:var(--ok); } .glegend .ln.f{ border-color:var(--dgr); } .glegend .ln.loop{ border-top-style:dashed; border-color:var(--live); }
