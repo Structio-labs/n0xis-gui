@@ -148,12 +148,7 @@ function setZoom(z) {
   prefs.zoom = zoom; savePrefs();
 }
 $$('#scale-seg .sg').forEach(b => b.addEventListener('click', () => setZoom(parseFloat(b.dataset.scale))));
-window.addEventListener('keydown', e => {
-  if (!(e.ctrlKey || e.metaKey)) return;
-  if (e.key === '=' || e.key === '+') { e.preventDefault(); setZoom(zoom + 0.1); }
-  else if (e.key === '-') { e.preventDefault(); setZoom(zoom - 0.1); }
-  else if (e.key === '0') { e.preventDefault(); setZoom(1); }
-});
+// (zoom / palette / layout keys are all handled by the data-driven dispatcher below)
 
 // ---------- theme (live preview, persisted) ----------
 function applyTheme(th) {
@@ -167,41 +162,79 @@ $$('#theme-grid .th').forEach(t => t.addEventListener('click', () => applyTheme(
 if (prefs.theme) applyTheme(prefs.theme);
 if (prefs.zoom) setZoom(prefs.zoom);
 
-// ---------- keybindings: single source of truth (menus + Settings read this) ----------
-const KEYMAP = [
-  ['General', [
-    ['Command palette', 'Ctrl+Shift+P'],
-    ['Command palette · quick', 'Ctrl+P'],
-    ['Open file / process', 'Ctrl+O'],
-    ['Go to address / symbol', 'Ctrl+G'],
-    ['Settings', 'Ctrl+,'],
-    ['Zoom in / out / reset', 'Ctrl + = / − / 0'],
-    ['Close window', 'Ctrl+Q'],
-  ]],
-  ['Analysis', [
-    ['Decompile', 'F5'],
-    ['Rename symbol', 'F2'],
-    ['Comment', 'Ctrl+/'],
-    ['Find references (xrefs)', 'Shift+F12'],
-  ]],
-  ['Debug (live target)', [
-    ['Continue', 'F5'],
-    ['Step over', 'F10'],
-    ['Step into', 'F11'],
-    ['Toggle breakpoint', 'F9'],
-  ]],
-  ['Layout', [
-    ['Undo layout change', 'Ctrl+Shift+Z'],
-    ['Redo layout change', 'Ctrl+Shift+X'],
-  ]],
+// ---------- keybindings: data-driven, editable, persisted (prefs.keys) ----------
+// KEYDEFS is the single source of truth: the Settings editor renders it, the
+// runtime dispatcher reads it, and per-command overrides live in prefs.keys.
+if (!prefs.keys) prefs.keys = {};
+const DBG = 'Debug (live target)';
+const KEYDEFS = [
+  { id: 'palette', label: 'Command palette', group: 'General', def: 'Ctrl+Shift+P', scope: 'global', act: () => togglePal() },
+  { id: 'palette2', label: 'Command palette · quick', group: 'General', def: 'Ctrl+P', scope: 'global', act: () => togglePal() },
+  { id: 'open', label: 'Open file / process', group: 'General', def: 'Ctrl+O', scope: 'global', act: () => openFileTarget() },
+  { id: 'goto', label: 'Go to address / symbol', group: 'General', def: 'Ctrl+G', scope: 'target', act: () => doGoto() },
+  { id: 'settings', label: 'Settings', group: 'General', def: 'Ctrl+,', scope: 'global', act: () => openSettings() },
+  { id: 'zoomin', label: 'Zoom in', group: 'General', def: 'Ctrl+=', scope: 'global', act: () => setZoom(zoom + 0.1) },
+  { id: 'zoomout', label: 'Zoom out', group: 'General', def: 'Ctrl+-', scope: 'global', act: () => setZoom(zoom - 0.1) },
+  { id: 'zoomreset', label: 'Reset zoom', group: 'General', def: 'Ctrl+0', scope: 'global', act: () => setZoom(1) },
+  { id: 'closewin', label: 'Close window', group: 'General', def: 'Ctrl+Q', scope: 'global', act: () => winCtl('close') },
+  { id: 'decompile', label: 'Decompile / Continue', group: 'Analysis', def: 'F5', scope: 'target', act: () => { if (isLive()) toast('Continue'); else { setWorkspace('decompile'); toast('Decompiling'); } } },
+  { id: 'rename', label: 'Rename symbol', group: 'Analysis', def: 'F2', scope: 'target', act: () => doRename() },
+  { id: 'comment', label: 'Comment', group: 'Analysis', def: 'Ctrl+/', scope: 'target', act: () => doComment() },
+  { id: 'xrefs', label: 'Find references (xrefs)', group: 'Analysis', def: 'Shift+F12', scope: 'target', act: () => toast('Xrefs') },
+  { id: 'stepover', label: 'Step over', group: DBG, def: 'F10', scope: 'live', act: () => toast('Step over') },
+  { id: 'stepinto', label: 'Step into', group: DBG, def: 'F11', scope: 'live', act: () => toast('Step into') },
+  { id: 'breakpoint', label: 'Toggle breakpoint', group: DBG, def: 'F9', scope: 'target', act: () => toast('Toggle breakpoint') },
+  { id: 'undo', label: 'Undo layout change', group: 'Layout', def: 'Ctrl+Shift+Z', scope: 'global', act: () => dock.undo() },
+  { id: 'redo', label: 'Redo layout change', group: 'Layout', def: 'Ctrl+Shift+X', scope: 'global', act: () => dock.redo() },
 ];
+const keyOf = id => (id in prefs.keys ? prefs.keys[id] : (KEYDEFS.find(d => d.id === id)?.def ?? null));
+function comboOf(e) {                              // normalize an event → "Ctrl+Shift+P" / "F2" / "Ctrl+/"
+  if (['Control', 'Shift', 'Alt', 'Meta'].includes(e.key)) return null;
+  let s = '';
+  if (e.ctrlKey || e.metaKey) s += 'Ctrl+';
+  if (e.shiftKey) s += 'Shift+';
+  if (e.altKey) s += 'Alt+';
+  let k = e.key; if (k.length === 1) k = k.toUpperCase();
+  return s + k;
+}
+let recordingId = null;
+function setKey(id, combo) { prefs.keys[id] = combo; savePrefs(); renderKeybindings(); }
+function clearOverride(id) { delete prefs.keys[id]; savePrefs(); renderKeybindings(); }
+function resetAllKeys() { prefs.keys = {}; savePrefs(); renderKeybindings(); toast('Keybindings reset to defaults'); }
+function startRecording(id) {                      // capture the next chord and bind it
+  recordingId = id; renderKeybindings();
+  const cap = e => {
+    e.preventDefault(); e.stopPropagation();
+    if (e.key === 'Escape') { recordingId = null; window.removeEventListener('keydown', cap, true); renderKeybindings(); return; }
+    if (['Control', 'Shift', 'Alt', 'Meta'].includes(e.key)) return;   // wait for the non-modifier key
+    const combo = comboOf(e); if (!combo) return;
+    recordingId = null; window.removeEventListener('keydown', cap, true); setKey(id, combo);
+  };
+  window.addEventListener('keydown', cap, true);
+}
 function renderKeybindings() {
   const el = $('#keybind-list'); if (!el) return;
-  el.innerHTML = KEYMAP.map(([grp, binds]) =>
-    `<div class="kb-grp">${escH(grp)}</div>` +
-    binds.map(([c, k]) => `<div class="kb-row"><span class="kb-c">${escH(c)}</span><span class="kbd">${escH(k)}</span></div>`).join('')
-  ).join('');
+  const groups = [...new Set(KEYDEFS.map(d => d.group))];
+  el.innerHTML = `<div class="kb-top"><span class="kb-hint">Click a shortcut to rebind</span><button class="sg" data-kb="reset-all">Reset all to defaults</button></div>` +
+    groups.map(g => `<div class="kb-grp">${escH(g)}</div>` + KEYDEFS.filter(d => d.group === g).map(d => {
+      const cur = keyOf(d.id), custom = d.id in prefs.keys, rec = recordingId === d.id;
+      const chip = rec ? `<span class="kbd rec">press keys…</span>`
+        : (cur === null ? `<span class="kbd unbound">unbound</span>` : `<span class="kbd">${escH(cur)}</span>`);
+      return `<div class="kb-row" data-id="${d.id}"><span class="kb-c">${escH(d.label)}</span><span class="kb-keys">${chip}` +
+        `<button class="kb-act" data-kb="edit" title="Rebind">${svg(ICON.rename, '')}</button>` +
+        `<button class="kb-act" data-kb="del" title="Remove binding">${svg(ICON.x, '')}</button>` +
+        `<button class="kb-act${custom ? '' : ' hide'}" data-kb="revert" title="Reset to default">${svg(ICON.reset, '')}</button></span></div>`;
+    }).join('')).join('');
 }
+$('#keybind-list')?.addEventListener('click', e => {
+  if (e.target.closest('[data-kb="reset-all"]')) return resetAllKeys();
+  const row = e.target.closest('.kb-row'); if (!row) return;
+  const id = row.dataset.id, btn = e.target.closest('[data-kb]');
+  const kb = btn ? btn.dataset.kb : (e.target.closest('.kbd') ? 'edit' : null);
+  if (kb === 'edit') startRecording(id);
+  else if (kb === 'del') setKey(id, null);
+  else if (kb === 'revert') clearOverride(id);
+});
 
 // ---------- settings overlay (real pane switching) ----------
 const settings = $('#settings-ov');
@@ -269,9 +302,9 @@ palInput.addEventListener('keydown', e => {
   $$('#pal-list .cmd').forEach((el, i) => el.classList.toggle('on', i === palSel));
   const on = $('#pal-list .cmd.on'); if (on) on.scrollIntoView({ block: 'nearest' });
 });
-window.addEventListener('keydown', e => {
-  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'p') { e.preventDefault(); palOv.classList.contains('on') ? closePal() : openPal(); }
-  else if (e.key === 'Escape') { closePal(); settings.classList.remove('on'); closeCtx(); closeWpal(); }
+function togglePal() { palOv.classList.contains('on') ? closePal() : openPal(); }
+window.addEventListener('keydown', e => {   // Escape is not a bindable command — handled directly
+  if (e.key === 'Escape') { closePal(); settings.classList.remove('on'); closeCtx(); closeWpal(); }
 });
 
 
@@ -734,29 +767,16 @@ $$('.tbar .menu').forEach(btn => btn.addEventListener('click', e => {
 // Ignored inside text fields; the debugger keys need a live target.
 const isEditable = t => !!t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
 const targetOpen = () => $('#launcher')?.classList.contains('hidden');
-window.addEventListener('keydown', e => {
-  if (isEditable(e.target)) return;
-  const mod = e.ctrlKey || e.metaKey;
-  if (mod && !e.altKey) {                                  // Ctrl/Cmd combos
-    const k = e.key.toLowerCase();
-    if (e.shiftKey) return;                                 // Ctrl+Shift+P palette & Z/X layout have own listeners
-    if (k === 'o') { e.preventDefault(); openFileTarget(); }
-    else if (e.key === ',') { e.preventDefault(); openSettings(); }
-    else if (k === 'g') { e.preventDefault(); if (targetOpen()) doGoto(); }
-    else if (k === 'q') { e.preventDefault(); winCtl('close'); }
-    else if (k === '/') { e.preventDefault(); if (targetOpen()) doComment(); }
-    return;                                                 // Ctrl+P / Ctrl+±0 handled elsewhere
-  }
-  if (e.altKey) return;
-  if (!targetOpen()) return;                                // function keys need a target
-  switch (e.key) {
-    case 'F2': e.preventDefault(); doRename(); break;
-    case 'F5': e.preventDefault(); if (isLive()) toast('Continue'); else { setWorkspace('decompile'); toast('Decompiling'); } break;
-    case 'F9': e.preventDefault(); toast('Toggle breakpoint'); break;
-    case 'F10': if (isLive()) { e.preventDefault(); toast('Step over'); } break;
-    case 'F11': if (isLive()) { e.preventDefault(); toast('Step into'); } break;
-    case 'F12': if (e.shiftKey) { e.preventDefault(); toast('Find xrefs'); } break;  // Shift+F12 = references
-    default: return;
+window.addEventListener('keydown', e => {   // data-driven dispatch — reads the (editable) keymap
+  if (recordingId) return;                  // the rebind recorder is capturing this chord
+  if (isEditable(e.target)) return;          // never hijack typing
+  const combo = comboOf(e); if (!combo) return;
+  for (const d of KEYDEFS) {
+    if (keyOf(d.id) !== combo) continue;     // conflicts deferred: first match wins
+    e.preventDefault();
+    if (d.scope === 'target' && !targetOpen()) return;
+    if (d.scope === 'live' && !isLive()) return;
+    d.act(); return;
   }
 });
 
@@ -1111,12 +1131,7 @@ window.addEventListener('pointerdown', e => { if (!e.target.closest('#wpal,#btn-
 // undo / redo — buttons + Ctrl+Shift+Z / Ctrl+Shift+X
 $('#btn-undo')?.addEventListener('click', () => dock.undo());
 $('#btn-redo')?.addEventListener('click', () => dock.redo());
-window.addEventListener('keydown', e => {
-  if (!(e.ctrlKey || e.metaKey) || !e.shiftKey) return;
-  const k = e.key.toLowerCase();
-  if (k === 'z') { e.preventDefault(); dock.undo(); }
-  else if (k === 'x') { e.preventDefault(); dock.redo(); }
-});
+// (Ctrl+Shift+Z / Ctrl+Shift+X handled by the data-driven dispatcher)
 
 /* =====================================================================
    DEEP LINK (?ws=graph / #dynamic) — also handy for screenshots

@@ -510,3 +510,16 @@ a{ color:var(--acc); }
 .kb-row{ display:flex; align-items:center; justify-content:space-between; gap:12px; padding:7px 2px; border-bottom:1px solid var(--bd2); }
 .kb-c{ color:var(--tx0); font-size:.84rem; }
 .kb-row .kbd{ color:var(--tx1); font-size:.72rem; }
+
+/* ---- editable keybindings ---- */
+.kb-top{ display:flex; align-items:center; justify-content:space-between; gap:12px; margin:2px 0 4px; }
+.kb-hint{ font-size:.72rem; color:var(--tx2); }
+.kb-row .kb-keys{ display:flex; align-items:center; gap:6px; }
+.kb-row .kbd{ cursor:pointer; }
+.kb-row .kbd:hover{ border-color:var(--acc); color:var(--tx0); }
+.kbd.rec{ border-color:var(--live); color:var(--live); }
+.kbd.unbound{ color:var(--tx2); font-style:italic; opacity:.7; }
+.kb-act{ width:1.5rem; height:1.5rem; display:flex; align-items:center; justify-content:center; border-radius:5px; color:var(--tx2); }
+.kb-act:hover{ background:var(--bg3); color:var(--tx0); }
+.kb-act svg{ width:13px; height:13px; }
+.kb-act.hide{ visibility:hidden; }
