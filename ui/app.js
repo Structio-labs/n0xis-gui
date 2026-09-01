@@ -32,6 +32,18 @@ const ICON = {
   fold: "<path d='m6 9 6 6 6-6' />",
   x: "<path d='M18 6 6 18' /> <path d='m6 6 12 12' />",
   follow: "<path d='M4 16v-2.38C4 11.5 2.97 10.5 3 8c.03-2.72 1.49-6 4.5-6C9.37 2 10 3.8 10 5.5c0 3.11-2 5.66-2 8.68V16a2 2 0 1 1-4 0Z' /> <path d='M20 20v-2.38c0-2.12 1.03-3.12 1-5.62-.03-2.72-1.49-6-4.5-6C14.63 6 14 7.8 14 9.5c0 3.11 2 5.66 2 8.68V20a2 2 0 1 0 4 0Z' /> <path d='M16 17h4' /> <path d='M4 13h4' />",
+  open: "<path d='m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2' />",
+  comment: "<path d='M22 17a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 21.286V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z' /> <path d='M12 11h.01' /> <path d='M16 11h.01' /> <path d='M8 11h.01' />",
+  bug: "<path d='M12 20v-9' /> <path d='M14 7a4 4 0 0 1 4 4v3a6 6 0 0 1-12 0v-3a4 4 0 0 1 4-4z' /> <path d='M14.12 3.88 16 2' /> <path d='M21 21a4 4 0 0 0-3.81-4' /> <path d='M21 5a4 4 0 0 1-3.55 3.97' /> <path d='M22 13h-4' /> <path d='M3 21a4 4 0 0 1 3.81-4' /> <path d='M3 5a4 4 0 0 0 3.55 3.97' /> <path d='M6 13H2' /> <path d='m8 2 1.88 1.88' /> <path d='M9 7.13V6a3 3 0 1 1 6 0v1.13' />",
+  redo: "<path d='m15 14 5-5-5-5' /> <path d='M20 9H9.5A5.5 5.5 0 0 0 4 14.5A5.5 5.5 0 0 0 9.5 20H13' />",
+  undo: "<path d='M9 14 4 9l5-5' /> <path d='M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5a5.5 5.5 0 0 1-5.5 5.5H11' />",
+  step: "<path d='m6 17 5-5-5-5' /> <path d='m13 17 5-5-5-5' />",
+  min: "<path d='M5 12h14' />",
+  max: "<path d='M15 3h6v6' /> <path d='m21 3-7 7' /> <path d='m3 21 7-7' /> <path d='M9 21H3v-6' />",
+  identify: "<path d='m21.64 3.64-1.28-1.28a1.21 1.21 0 0 0-1.72 0L2.36 18.64a1.21 1.21 0 0 0 0 1.72l1.28 1.28a1.2 1.2 0 0 0 1.72 0L21.64 5.36a1.2 1.2 0 0 0 0-1.72' /> <path d='m14 7 3 3' /> <path d='M5 6v4' /> <path d='M19 14v4' /> <path d='M10 2v2' /> <path d='M7 8H3' /> <path d='M21 16h-4' /> <path d='M11 3H9' />",
+  patch: "<path d='m3 7 3 3 3-3' /> <path d='M6 10V5a2 2 0 0 1 2-2h2' /> <rect x='3' y='14' width='7' height='7' rx='1' />",
+  about: "<circle cx='12' cy='12' r='10' /> <path d='M12 16v-4' /> <path d='M12 8h.01' />",
+  book: "<path d='M12 7v14' /> <path d='M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z' />",
 };
 const svg = (d, cls = 'cxi') =>
   `<span class="${cls}"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${
@@ -514,70 +526,68 @@ function recentItems() {
   if (!r.length) return [{ label: 'No recent targets', disabled: true, act: () => {} }];
   return r.map(rec => item(`${rec.name}  ·  ${fmtAgo(rec.ts)}`, rec.kind === 'dynamic' || rec.kind === 'both' ? 'play' : 'decomp', '', () => reopenRecent(rec)));
 }
+// Menu bar — one clear job per menu (no workspace duplication; workspaces are the tabs).
 function menuItems(name) {
   switch (name) {
-    case 'File': return [
+    case 'File': return [            // target lifecycle
       item('New project', 'add', '', newProject),
-      item('Open file…', 'decomp', 'Ctrl+O', openFileTarget),
+      item('Open file…', 'open', 'Ctrl+O', openFileTarget),
       item('Attach to process…', 'play', '', () => openTarget('dynamic')),
       item('Launch & attach…', 'play', '', () => openTarget('both')),
       sep, lbl('Open recent'), ...recentItems(), sep,
-      item('Reset layout', 'reset', '', () => dock.reset()),
       item('Settings', 'settings', ',', () => settings.classList.add('on')),
       item('Close target', 'x', '', closeTarget),
     ];
-    case 'Edit': return [
-      item('Undo layout', 'reset', 'Ctrl+Shift+Z', () => dock.undo()),
-      item('Redo layout', 'reset', 'Ctrl+Shift+X', () => dock.redo()), sep,
+    case 'Edit': return [            // edits to the analysis database
       item('Rename…', 'rename', 'N', () => toast('Rename')),
-      item('Comment…', 'note', ';', () => toast('Comment')),
-      item('Change type…', 'type', 'Y', () => toast('Change type')), sep,
-      item('Find / command palette', 'scan', 'Ctrl+P', openPal),
+      item('Comment…', 'comment', ';', () => toast('Comment')),
+      item('Change type…', 'type', 'Y', () => toast('Change type')),
+      item('Invert branch logic', 'redo', '', () => toast('Invert branch')),
+      item('Patch → NOP…', 'patch', '', () => toast('Patch')),
+      sep,
+      item('Command palette', 'scan', 'Ctrl+P', openPal),
     ];
-    case 'View': return [
-      lbl('Workspace'),
-      item('Decompile', 'decomp', '', () => setWorkspace('decompile')),
-      item('Static', 'strings', '', () => setWorkspace('static')),
-      item('Graph', 'graph', 'G', () => setWorkspace('graph')),
-      item('Dynamic', 'watch', '', () => setWorkspace('dynamic')), sep,
-      item('Add widget…', 'add', '', () => openWpal($('#btn-addw'))),
-      item('Reset layout', 'reset', '', () => dock.reset()), sep,
+    case 'View': return [            // presentation only
       item('Zoom in', 'add', 'Ctrl +', () => setZoom(zoom + 0.1)),
-      item('Zoom out', 'fold', 'Ctrl −', () => setZoom(zoom - 0.1)),
-      item('Reset zoom', 'reset', 'Ctrl 0', () => setZoom(1)), sep,
+      item('Zoom out', 'min', 'Ctrl −', () => setZoom(zoom - 0.1)),
+      item('Reset zoom', 'reset', 'Ctrl 0', () => setZoom(1)),
+      sep,
       item('Themes & appearance…', 'settings', '', () => settings.classList.add('on')),
     ];
-    case 'Analyze': return [
+    case 'Analyze': return [         // analysis actions
       item('Decompile', 'decomp', 'F5', () => { setWorkspace('decompile'); toast('Decompiling'); }),
-      item('Show CFG graph', 'graph', 'G', () => setWorkspace('graph')), sep,
       item('Apply FLIRT signatures', 'type', '', () => echo('sig apply --flirt zlib-1.3.1.npat', 'named 118 functions')),
-      item('Identify algorithms', 'scan', '', () => toast('Scanning for known algorithms…')),
       item('Find xrefs', 'xref', 'X', () => toast('Xrefs')),
+      item('Identify algorithms', 'identify', '', () => toast('Scanning for known algorithms…')),
       item('Re-run analysis', 'reset', '', () => toast('Re-analyzing…')),
     ];
-    case 'Debug': return [
-      item('Attach to process…', 'play', '', () => openTarget('dynamic')),
-      item('Launch & attach…', 'play', '', () => openTarget('both')), sep,
+    case 'Debug': return [           // control of the running target
       item('Set watchpoint', 'watch', 'W', () => setWorkspace('dynamic')),
-      item('Memory scan…', 'scan', '', () => setWorkspace('dynamic')), sep,
+      item('Find what writes…', 'xref', '', () => setWorkspace('dynamic')),
+      item('Memory scan…', 'scan', '', () => setWorkspace('dynamic')),
+      sep,
       item('Continue', 'play', 'F5', () => toast('Continue'), { disabled: !isLive() }),
-      item('Step', 'decomp', 'F8', () => toast('Step'), { disabled: !isLive() }),
+      item('Step into', 'step', 'F7', () => toast('Step into'), { disabled: !isLive() }),
+      item('Step over', 'step', 'F8', () => toast('Step over'), { disabled: !isLive() }),
     ];
-    case 'Window': return [
-      item('Decompile workspace', 'decomp', '', () => setWorkspace('decompile')),
-      item('Graph workspace', 'graph', '', () => setWorkspace('graph')),
-      item('Dynamic workspace', 'watch', '', () => setWorkspace('dynamic')), sep,
-      item('Reset layout', 'reset', '', () => dock.reset()), sep,
-      item('Minimize', 'fold', '', () => winCtl('min')),
-      item('Maximize', 'add', '', () => winCtl('max')),
+    case 'Window': return [          // window & pane management
+      item('Add widget…', 'add', '', () => openWpal($('#btn-addw'))),
+      sep,
+      item('Undo layout', 'undo', 'Ctrl+Shift+Z', () => dock.undo()),
+      item('Redo layout', 'redo', 'Ctrl+Shift+X', () => dock.redo()),
+      item('Reset layout', 'reset', '', () => dock.reset()),
+      sep,
+      item('Minimize', 'min', '', () => winCtl('min')),
+      item('Maximize', 'max', '', () => winCtl('max')),
       item('Close window', 'x', '', () => winCtl('close'), { danger: true }),
     ];
     case 'Help': return [
-      item('Getting started', 'note', '', () => toast('Getting started')),
+      item('Getting started', 'book', '', () => toast('Getting started')),
       item('Glossary of terms', 'strings', '', () => toast('Glossary of RE terms')),
-      item('Keyboard shortcuts', 'type', '', openPal), sep,
-      item('Documentation', 'decomp', '', () => toast('Docs')),
-      item('About N0xis', 'settings', '', () => toast('N0xis GUI · a thin client over the n0xis engine')),
+      item('Keyboard shortcuts', 'type', '', openPal),
+      sep,
+      item('Documentation', 'book', '', () => toast('Docs')),
+      item('About N0xis', 'about', '', () => toast('N0xis GUI · a thin client over the n0xis engine')),
     ];
     default: return [];
   }
