@@ -338,6 +338,8 @@ function initGraphWidget(root) {
   root.querySelector('.gz-in').addEventListener('click', () => { cam.s = clamp(cam.s * 1.15, 0.3, 2.4); userAdjusted = true; applyCam(); });
   root.querySelector('.gz-out').addEventListener('click', () => { cam.s = clamp(cam.s * 0.87, 0.3, 2.4); userAdjusted = true; applyCam(); });
   root.querySelector('.gz-fit').addEventListener('click', () => { userAdjusted = false; fitGraph(); }); // fit re-enables auto-fit
+  // a small graph is self-explanatory — drop the legend (only large CFGs keep it)
+  if (blocks.length <= 12) root.querySelector('.glegend')?.remove();
   renderGraph();
   requestAnimationFrame(fitGraph);
   setTimeout(fitGraph, 120); // refit once layout settles
