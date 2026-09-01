@@ -250,16 +250,20 @@ function initGraphWidget(root) {
     });
   }
   function drawEdges() {
-    const defs = `<defs><marker id="${mid}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>`;
+    // explicit per-colour markers (context-stroke is unreliable across themes)
+    const M = { n: mid + '-n', t: mid + '-t', f: mid + '-f', loop: mid + '-l' };
+    const mk = (id, c) => `<marker id="${id}" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="${c}"/></marker>`;
+    const defs = `<defs>${mk(M.n, 'var(--bd2)')}${mk(M.t, 'var(--ok)')}${mk(M.f, 'var(--dgr)')}${mk(M.loop, 'var(--live)')}</defs>`;
     const paths = GRAPH.edges.map(e => {
       const a = rectOf[e.f], b = rectOf[e.t]; if (!a || !b) return '';
       const cls = 'gedge' + (e.type ? ' ' + e.type : '');
-      if (e.f === e.t) { // self-loop: out the bottom-right, around, back into the TOP of the same block
-        const lx = a.x + a.w * 0.72, bulge = a.x + a.w + 40;
-        return `<path class="${cls}" marker-end="url(#${mid})" d="M${lx} ${a.y + a.h} C${bulge} ${a.y + a.h + 6},${bulge} ${a.y - 8},${lx} ${a.y - 1}"/>`;
+      const arw = e.type === 't' ? M.t : e.type === 'f' ? M.f : e.type === 'loop' ? M.loop : M.n;
+      if (e.f === e.t) { // self-loop: exit the bottom, bulge right, re-enter the TOP straight down
+        const sx = a.x + a.w * 0.72, bx = a.x + a.w + 46;
+        return `<path class="${cls}" marker-end="url(#${arw})" d="M${sx} ${a.y + a.h} C${bx} ${a.y + a.h * 0.5},${sx} ${a.y - 24},${sx} ${a.y - 1}"/>`;
       }
       const sx = a.x + a.w / 2, sy = a.y + a.h, tx = b.x + b.w / 2, ty = b.y, my = (sy + ty) / 2;
-      return `<path class="${cls}" marker-end="url(#${mid})" d="M${sx} ${sy} C${sx} ${my},${tx} ${my},${tx} ${ty - 2}"/>`;
+      return `<path class="${cls}" marker-end="url(#${arw})" d="M${sx} ${sy} C${sx} ${my},${tx} ${my},${tx} ${ty - 2}"/>`;
     }).join('');
     gs.innerHTML = defs + paths;
   }
