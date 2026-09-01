@@ -94,9 +94,9 @@ $('#dockspace').addEventListener('click', e => {
   // Copilot "Follow AI" toggle — one Copilot, following is a switch
   const foll = e.target.closest('[data-foll]');
   if (foll) { foll.classList.toggle('on'); foll.closest('.cop')?.classList.toggle('following', foll.classList.contains('on')); toast(foll.classList.contains('on') ? 'Follow AI — showing what the model examines' : 'Follow AI off'); return; }
-  // function / string list selection
+  // function / string list selection (single-select within the same list)
   const row = e.target.closest('.frow');
-  if (row) { row.closest('.flist,div')?.querySelectorAll('.frow.on').forEach(r => r.classList.remove('on')); row.classList.add('on'); return; }
+  if (row) { row.parentElement?.querySelectorAll(':scope > .frow.on').forEach(r => r.classList.remove('on')); row.classList.add('on'); return; }
   // cosmetic single-select groups inside a widget
   for (const sel of ['.nt', '.rt', '.pill', '.dt']) {
     const g = e.target.closest(sel);
