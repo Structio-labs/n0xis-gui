@@ -44,6 +44,12 @@ export function listProcesses() {
   return invoke('list_processes', {});
 }
 
+/** Real per-process icons -> {ok,data:{icons:{pid:dataUri}}} | null */
+export function processIcons() {
+  if (!isNative) return Promise.resolve(null);
+  return invoke('process_icons', {});
+}
+
 /** Convenience wrappers over the CLI's verbs. */
 export const engine = {
   guide: (topic) => n0x(topic ? ['guide', topic, '--brief'] : ['guide', '--brief']),

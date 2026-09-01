@@ -111,6 +111,142 @@ fn list_processes() -> Value {
     json!({ "ok": true, "data": { "count": procs.len(), "processes": procs } })
 }
 
+/// Resolve real per-process icons (Linux). Two routes:
+///   • Steam/Proton games: /proc/<pid>/environ carries SteamAppId=<n> → the
+///     freedesktop icon 'steam_icon_<n>' (so a Wine game like Sam2.exe gets its
+///     Steam library icon even though its process name doesn't match a launcher).
+///   • Everything else: match /proc/<pid>/comm to a .desktop's Exec/WMClass/Name.
+/// Returns { pid: "data:image/png;base64,…" } only for processes we could resolve.
+#[tauri::command]
+fn process_icons() -> Value {
+    #[allow(unused_mut)]
+    let mut icons = serde_json::Map::new();
+    #[cfg(target_os = "linux")]
+    {
+        use base64::Engine as _;
+        use std::collections::HashMap;
+        use std::path::Path;
+
+        let home = std::env::var("HOME").unwrap_or_default();
+
+        // ---- build a .desktop index: key (exec-basename / wmclass / name) -> icon name
+        let mut index: HashMap<String, String> = HashMap::new();
+        let app_dirs = [
+            format!("{home}/.local/share/applications"),
+            "/usr/share/applications".to_string(),
+            "/usr/local/share/applications".to_string(),
+        ];
+        for dir in &app_dirs {
+            let rd = match std::fs::read_dir(dir) { Ok(r) => r, Err(_) => continue };
+            for e in rd.flatten() {
+                let p = e.path();
+                if p.extension().and_then(|x| x.to_str()) != Some("desktop") { continue; }
+                let txt = match std::fs::read_to_string(&p) { Ok(t) => t, Err(_) => continue };
+                let (mut icon, mut exec, mut wmclass, mut name) = (None, None, None, None);
+                for line in txt.lines() {
+                    if let Some(v) = line.strip_prefix("Icon=") { if icon.is_none() { icon = Some(v.trim().to_string()); } }
+                    else if let Some(v) = line.strip_prefix("Exec=") { if exec.is_none() { exec = Some(v.trim().to_string()); } }
+                    else if let Some(v) = line.strip_prefix("StartupWMClass=") { if wmclass.is_none() { wmclass = Some(v.trim().to_string()); } }
+                    else if let Some(v) = line.strip_prefix("Name=") { if name.is_none() { name = Some(v.trim().to_string()); } }
+                }
+                let icon = match icon { Some(i) if !i.is_empty() => i, _ => continue };
+                let mut add = |k: String| { let k = k.to_lowercase(); if !k.is_empty() { index.entry(k).or_insert_with(|| icon.clone()); } };
+                if let Some(ex) = exec {
+                    // basename of the first token, stripped of a .exe suffix
+                    if let Some(tok) = ex.split_whitespace().find(|t| !t.starts_with('%')) {
+                        let base = tok.rsplit(['/', '\\']).next().unwrap_or(tok);
+                        add(base.trim_end_matches(".exe").to_string());
+                    }
+                }
+                if let Some(w) = wmclass { add(w); }
+                if let Some(n) = name { add(n); }
+            }
+        }
+
+        // ---- resolve an icon NAME to a data-uri (cached), searching the icon theme
+        let mut cache: HashMap<String, Option<String>> = HashMap::new();
+        let icon_dirs = [
+            format!("{home}/.local/share/icons/hicolor"),
+            "/usr/share/icons/hicolor".to_string(),
+            format!("{home}/.icons"),
+        ];
+        let sizes = ["48x48", "64x64", "96x96", "128x128", "256x256", "32x32", "24x24"];
+        let read_uri = |path: &Path| -> Option<String> {
+            let bytes = std::fs::read(path).ok()?;
+            if bytes.is_empty() || bytes.len() > 262_144 { return None; } // skip huge files
+            let mime = match path.extension().and_then(|x| x.to_str()) {
+                Some("svg") => "image/svg+xml",
+                _ => "image/png",
+            };
+            Some(format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(&bytes)))
+        };
+        let mut resolve = |name: &str| -> Option<String> {
+            if let Some(hit) = cache.get(name) { return hit.clone(); }
+            let mut found = None;
+            if name.starts_with('/') {
+                if Path::new(name).is_file() { found = read_uri(Path::new(name)); }
+            } else {
+                'outer: for base in &icon_dirs {
+                    for sz in &sizes {
+                        let p = format!("{base}/{sz}/apps/{name}.png");
+                        if Path::new(&p).is_file() { found = read_uri(Path::new(&p)); break 'outer; }
+                    }
+                }
+                if found.is_none() {
+                    for base in &icon_dirs {
+                        let p = format!("{base}/scalable/apps/{name}.svg");
+                        if Path::new(&p).is_file() { found = read_uri(Path::new(&p)); break; }
+                    }
+                }
+                if found.is_none() {
+                    for ext in ["png", "svg"] {
+                        let p = format!("/usr/share/pixmaps/{name}.{ext}");
+                        if Path::new(&p).is_file() { found = read_uri(Path::new(&p)); break; }
+                    }
+                }
+            }
+            cache.insert(name.to_string(), found.clone());
+            found
+        };
+
+        // ---- walk processes, pick an icon name, resolve it
+        if let Ok(entries) = std::fs::read_dir("/proc") {
+            for e in entries.flatten() {
+                let s = e.file_name();
+                let s = s.to_string_lossy();
+                let pid: u32 = match s.parse() { Ok(p) => p, Err(_) => continue };
+                let mut icon_name: Option<String> = None;
+                // 1) Steam appid from the environment
+                if let Ok(environ) = std::fs::read(format!("/proc/{pid}/environ")) {
+                    for kv in environ.split(|&b| b == 0) {
+                        if let Ok(kv) = std::str::from_utf8(kv) {
+                            if let Some(id) = kv.strip_prefix("SteamAppId=") {
+                                if !id.is_empty() && id.chars().all(|c| c.is_ascii_digit()) {
+                                    icon_name = Some(format!("steam_icon_{id}"));
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+                // 2) match the process name to a .desktop
+                if icon_name.is_none() {
+                    if let Ok(comm) = std::fs::read_to_string(format!("/proc/{pid}/comm")) {
+                        let key = comm.trim().trim_end_matches(".exe").to_lowercase();
+                        icon_name = index.get(&key).cloned();
+                    }
+                }
+                if let Some(name) = icon_name {
+                    if let Some(uri) = resolve(&name) {
+                        icons.insert(pid.to_string(), Value::String(uri));
+                    }
+                }
+            }
+        }
+    }
+    json!({ "ok": true, "data": { "icons": icons } })
+}
+
 /// Native file picker for choosing a target binary.
 #[tauri::command]
 async fn pick_file(app: tauri::AppHandle, title: String) -> Option<String> {
@@ -135,7 +271,7 @@ async fn pick_file(app: tauri::AppHandle, title: String) -> Option<String> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![n0x_run, engine_info, pick_file, initial_target, list_processes])
+        .invoke_handler(tauri::generate_handler![n0x_run, engine_info, pick_file, initial_target, list_processes, process_icons])
         .run(tauri::generate_context!())
         .expect("error while running N0xis GUI");
 }

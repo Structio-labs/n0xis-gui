@@ -1,5 +1,5 @@
 // N0xis GUI — interactive shell (framework-free; drops into Tauri's webview as-is)
-import { isNative, engineInfo, engine, pickFile, n0x, initialTarget, listProcesses } from './bridge.js';
+import { isNative, engineInfo, engine, pickFile, n0x, initialTarget, listProcesses, processIcons } from './bridge.js';
 import { initDock } from './dock.js';
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -733,7 +733,9 @@ function pickFromList(title, items, opts = {}) {
     const render = q => {
       const s = (q || '').toLowerCase();
       const rows = items.filter(it => !s || (it.label + ' ' + (it.sub || '')).toLowerCase().includes(s)).slice(0, 400);
-      box.innerHTML = rows.map(it => `<div class="lst-row" data-i="${items.indexOf(it)}">${opts.icon ? `<span class="lst-i">${svg(opts.icon, '')}</span>` : ''}<span class="lst-l">${escH(it.label)}</span><span class="lst-s mono">${escH(it.sub || '')}</span></div>`).join('') || '<div class="xr-none">no matches</div>';
+      box.innerHTML = rows.map(it => `<div class="lst-row" data-i="${items.indexOf(it)}">${
+        it.iconUri ? `<img class="lst-img" src="${it.iconUri}" alt="">` : (opts.icon ? `<span class="lst-i">${svg(opts.icon, '')}</span>` : '')
+        }<span class="lst-l">${escH(it.label)}</span><span class="lst-s mono">${escH(it.sub || '')}</span></div>`).join('') || '<div class="xr-none">no matches</div>';
     };
     render('');
     filt.addEventListener('input', () => render(filt.value));
@@ -746,18 +748,21 @@ function pickFromList(title, items, opts = {}) {
 }
 async function pickProcess() {
   let procs;
+  let icons = {};
   if (isNative) {
     toast('Enumerating processes…');
     // prefer the host /proc names (real exe names for Proton/Wine games — the
-    // engine's `process ps` reports 'wine-preloader' for those), fall back to it.
-    const host = await listProcesses();
+    // engine's `process ps` reports 'wine-preloader' for those), and resolve real
+    // per-app icons in parallel (freedesktop + Steam appid).
+    const [host, ic] = await Promise.all([listProcesses(), processIcons()]);
     if (host?.ok && host.data.processes?.length) procs = host.data.processes.slice();
     else { const r = await n0x(['process', 'ps']); if (!r?.ok) { toast('process list failed: ' + (r?.error?.message || '?')); return; } procs = (r.data.processes || []).slice(); }
+    icons = ic?.data?.icons || {};
   } else {   // web preview — demo list so the flow is exercisable
     procs = [{ name: 'game.exe', pid: 8124 }, { name: 'chrome.exe', pid: 4410 }, { name: 'explorer.exe', pid: 1200 }, { name: 'discord.exe', pid: 9931 }, { name: 'steam.exe', pid: 5567 }];
   }
   procs.sort((a, b) => a.name.localeCompare(b.name));
-  const items = procs.map(p => ({ label: p.name, sub: 'pid ' + p.pid, value: p }));
+  const items = procs.map(p => ({ label: p.name, sub: 'pid ' + p.pid, value: p, iconUri: icons[p.pid] }));
   const pick = await pickFromList(`Attach to a process · ${procs.length} running`, items, { placeholder: 'Filter by name…', icon: ICON.chip });
   if (pick) attachProcess(pick.pid, pick.name);
 }

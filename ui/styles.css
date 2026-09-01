@@ -553,3 +553,6 @@ select.scan-type{ background:var(--bg2); color:var(--tx0); border:1px solid var(
 
 /* ---- function row: fixed height for list virtualization ---- */
 .flist .frow{ height:27px; box-sizing:border-box; }
+
+/* real per-app icon in the process picker */
+.lst-img{ width:18px; height:18px; border-radius:4px; object-fit:contain; flex:0 0 auto; }
