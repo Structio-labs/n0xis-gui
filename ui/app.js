@@ -195,22 +195,24 @@ window.addEventListener('keydown', e => {
    ===================================================================== */
 const GRAPH = {
   blocks: [
-    { id: 'block_0', addr: '0x1510', tag: 'entry',        x: 360, y: 24,  w: 210, body: 'if (rsi == 0) return 0;<br>v14 = ~rdi;' },
-    { id: 'block_1', addr: '0x1538', tag: '',             x: 365, y: 150, w: 200, body: 'if (rdx &lt;= 0x2e)' },
-    { id: 'block_2', addr: '0x1580', tag: '',             x: 120, y: 300, w: 180, body: 'rbx = rsi;' },
-    { id: 'block_3', addr: '0x1560', tag: 'align loop ↺', x: 590, y: 300, w: 195, body: 'while (rbx &amp; 7)' },
-    { id: 'block_4', addr: '0x1590', tag: 'by-8 loop ↺',  x: 585, y: 445, w: 205, body: 'for (…; rdx -= 8)' },
-    { id: 'block_5', addr: '0x15fa', tag: 'exit',         x: 350, y: 590, w: 210, body: 'return ~v14;' },
+    { id: 'block_0', addr: '0x1510', tag: 'entry',     x: 355, y: 24,  w: 210, body: 'if (rsi == 0) return 0;<br>v14 = ~rdi;' },
+    { id: 'block_1', addr: '0x1538', tag: '',          x: 360, y: 150, w: 200, body: 'if (rdx &lt;= 0x2e)' },
+    { id: 'block_2', addr: '0x1580', tag: '',          x: 110, y: 300, w: 185, body: 'rbx = rsi;' },
+    { id: 'block_3', addr: '0x1560', tag: 'loop head', x: 600, y: 290, w: 205, body: 'while (rbx &amp; 7)' },
+    { id: 'block_4', addr: '0x156e', tag: 'loop body', x: 600, y: 430, w: 205, body: 'v14 = tbl[v14 ^ *rbx];<br>rdx--;' },
+    { id: 'block_5', addr: '0x1590', tag: '',          x: 355, y: 445, w: 200, body: 'v9 = &amp;crc_table;' },
+    { id: 'block_6', addr: '0x15fa', tag: 'exit',      x: 350, y: 590, w: 210, body: 'return ~v14;' },
   ],
+  // a real loop: header (block_3) enters the body (block_4), which jumps BACK to the header.
   edges: [
     { f: 'block_0', t: 'block_1' },
-    { f: 'block_1', t: 'block_2', type: 't' },
-    { f: 'block_1', t: 'block_3', type: 'f' },
-    { f: 'block_3', t: 'block_3', type: 'loop' },
-    { f: 'block_3', t: 'block_4' },
-    { f: 'block_4', t: 'block_4', type: 'loop' },
-    { f: 'block_4', t: 'block_5' },
-    { f: 'block_2', t: 'block_5' },
+    { f: 'block_1', t: 'block_2', type: 't' },   // rdx small → skip the align loop
+    { f: 'block_1', t: 'block_3', type: 'f' },   // else enter the align loop
+    { f: 'block_3', t: 'block_4', type: 't' },   // condition holds → run the body
+    { f: 'block_3', t: 'block_5', type: 'f' },   // condition fails → leave the loop
+    { f: 'block_4', t: 'block_3', type: 'loop' },// back-edge: body loops back to the header
+    { f: 'block_2', t: 'block_6' },
+    { f: 'block_5', t: 'block_6' },
   ],
 };
 // Self-contained: bound to one graph widget's own elements (many can coexist).
@@ -258,9 +260,9 @@ function initGraphWidget(root) {
       const a = rectOf[e.f], b = rectOf[e.t]; if (!a || !b) return '';
       const cls = 'gedge' + (e.type ? ' ' + e.type : '');
       const arw = e.type === 't' ? M.t : e.type === 'f' ? M.f : e.type === 'loop' ? M.loop : M.n;
-      if (e.f === e.t) { // self-loop: exit the bottom, bulge right, re-enter the TOP straight down
-        const sx = a.x + a.w * 0.72, bx = a.x + a.w + 46;
-        return `<path class="${cls}" marker-end="url(#${arw})" d="M${sx} ${a.y + a.h} C${bx} ${a.y + a.h * 0.5},${sx} ${a.y - 24},${sx} ${a.y - 1}"/>`;
+      if (e.type === 'loop') { // back-edge: out the body's right, up, back into the header's right side
+        const sx = a.x + a.w, sy = a.y + a.h * 0.5, tx2 = b.x + b.w, ty2 = b.y + b.h * 0.5, bx = Math.max(sx, tx2) + 44;
+        return `<path class="${cls}" marker-end="url(#${arw})" d="M${sx} ${sy} C${bx} ${sy},${bx} ${ty2},${tx2} ${ty2}"/>`;
       }
       const sx = a.x + a.w / 2, sy = a.y + a.h, tx = b.x + b.w / 2, ty = b.y, my = (sy + ty) / 2;
       return `<path class="${cls}" marker-end="url(#${arw})" d="M${sx} ${sy} C${sx} ${my},${tx} ${my},${tx} ${ty - 2}"/>`;
