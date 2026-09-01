@@ -540,3 +540,9 @@ a{ color:var(--acc); }
 .lst-s{ color:var(--tx2); font-size:.75rem; flex:0 0 auto; }
 /* scanner type select */
 select.scan-type{ background:var(--bg2); color:var(--tx0); border:1px solid var(--bd2); border-radius:6px; padding:3px 6px; font:inherit; font-size:.78rem; outline:none; }
+
+/* process picker row icon */
+.lst-row{ }
+.lst-i{ display:flex; color:var(--tx1); flex:0 0 auto; }
+.lst-i svg{ width:15px; height:15px; }
+.lst-l{ flex:1; }

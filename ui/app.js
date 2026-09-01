@@ -699,7 +699,7 @@ function pickFromList(title, items, opts = {}) {
     const render = q => {
       const s = (q || '').toLowerCase();
       const rows = items.filter(it => !s || (it.label + ' ' + (it.sub || '')).toLowerCase().includes(s)).slice(0, 400);
-      box.innerHTML = rows.map(it => `<div class="lst-row" data-i="${items.indexOf(it)}"><span class="lst-l">${escH(it.label)}</span><span class="lst-s mono">${escH(it.sub || '')}</span></div>`).join('') || '<div class="xr-none">no matches</div>';
+      box.innerHTML = rows.map(it => `<div class="lst-row" data-i="${items.indexOf(it)}">${opts.icon ? `<span class="lst-i">${svg(opts.icon, '')}</span>` : ''}<span class="lst-l">${escH(it.label)}</span><span class="lst-s mono">${escH(it.sub || '')}</span></div>`).join('') || '<div class="xr-none">no matches</div>';
     };
     render('');
     filt.addEventListener('input', () => render(filt.value));
@@ -722,7 +722,7 @@ async function pickProcess() {
   }
   procs.sort((a, b) => a.name.localeCompare(b.name));
   const items = procs.map(p => ({ label: p.name, sub: 'pid ' + p.pid, value: p }));
-  const pick = await pickFromList(`Attach to a process · ${procs.length} running`, items, { placeholder: 'Filter by name…' });
+  const pick = await pickFromList(`Attach to a process · ${procs.length} running`, items, { placeholder: 'Filter by name…', icon: ICON.chip });
   if (pick) attachProcess(pick.pid, pick.name);
 }
 function attachProcess(pid, name) {
@@ -744,7 +744,7 @@ async function openFileTarget() {
     const p = await pickFile('Choose a binary to analyze'); if (p) openBinary(p);
   } else { $('#launcher').classList.remove('hidden'); toast('Choose a target on the launcher'); }
 }
-function newProject() { $('#launcher').classList.remove('hidden'); toast('New project — pick a target'); }
+function newProject() { if (isNative) openFileTarget(); else { $('#launcher').classList.remove('hidden'); toast('New project — pick a target'); } }
 
 function recentItems() {
   const r = getRecent();
@@ -891,12 +891,28 @@ const FUNCS = [
   ['sub_180002780', '0x2780', 'sub'], ['adler32', '0x7d70', ''], ['uncompress', '0x7850', ''],
   ['sub_180003b40', '0x3b40', 'sub'],
 ];
+// function list is DATA (survives re-render / workspace switch / project change),
+// not a one-off DOM patch. null → the built-in demo list.
+let FUNCLIST = null, FUNCMETA = null;
+const funcRows = () => FUNCLIST || FUNCS.map(([name, addr, tag]) => ({ name, addr, tag }));
+const frowHTML = f => `<div class="frow${f.tag === 'sub' ? ' sub' : ''}"><span class="sym">ƒ</span><span class="nm mono">${escH(f.name)}</span>${f.tag === 'sig' ? '<span class="badge">sig</span>' : ''}<span class="fa mono">${escH(f.addr)}</span></div>`;
+function funcFootHTML() {
+  const rows = funcRows();
+  const total = FUNCMETA ? FUNCMETA.total : rows.length;
+  const named = FUNCMETA ? FUNCMETA.named : 86;
+  const extra = FUNCMETA && FUNCMETA.total > FUNCMETA.shown ? ` · showing ${FUNCMETA.shown}` : '';
+  return `<span class="fcount">${total.toLocaleString()} functions${extra}</span><span class="grow"></span><span class="fnamed" style="color:var(--ok)">${named}% named</span>`;
+}
+function paintFunctions() {   // repaint every mounted function list from the data model
+  $$('#dockspace .flist').forEach(fl => { fl.innerHTML = funcRows().map(frowHTML).join(''); });
+  $$('#dockspace .pfoot').forEach(pf => { pf.innerHTML = funcFootHTML(); });
+}
 const WIDGETS = {
   functions: { title: 'Functions', icon: 'strings', body: () => `<div class="wfill">
     <div class="navtabs"><button class="nt on">Functions</button><button class="nt">Imports</button><button class="nt">Strings</button><button class="nt">Types</button></div>
     <div class="search">${svg(ICON.scan,'')}<input class="ffilter" placeholder="Filter functions…" spellcheck="false"></div>
-    <div class="flist">${FUNCS.map(([n,a,b])=>`<div class="frow${n==='crc32_z'?' on':''}${b==='sub'?' sub':''}"><span class="sym">ƒ</span><span class="nm mono">${n}</span>${b==='sig'?'<span class="badge">sig</span>':''}<span class="fa mono">${a}</span></div>`).join('')}</div>
-    <div class="pfoot"><span class="fcount">2,318 functions</span><span class="grow"></span><span class="fnamed" style="color:var(--ok)">86% named</span></div></div>` },
+    <div class="flist">${funcRows().map(frowHTML).join('')}</div>
+    <div class="pfoot">${funcFootHTML()}</div></div>` },
 
   decompiler: { title: 'Decompiler', icon: 'decomp', body: () => `<div class="wfill">
     <div class="dockhead"><button class="pill on" data-style="structured">structured</button><button class="pill" data-style="ssa">ssa</button><button class="pill" data-style="goto">goto</button><div class="grow"></div><button class="dt" data-ws="graph">CFG ↗</button></div>
@@ -1320,39 +1336,42 @@ async function hydrateFromEngine() {
 }
 
 // One path opens a target everywhere (launcher card, File menu, CLI arg).
+// Opening a project fully RESETS state — no stale merge from the previous one.
 async function openBinary(path) {
   if (!path) return;
   const name = path.split(/[\\/]/).pop();
+  curPid = 0; curPidName = '';                 // leave any live session
+  selAddr = ''; selName = ''; FUNCLIST = null; FUNCMETA = null;
+  paintFunctions();                            // clear the old list immediately
+  paintDecompMsg('analyzing ' + name + '…'); paintTriage();
   openTarget('static');
   $('#target-name').textContent = name;
   setWorkspace('static');
   toast('Analyzing <span class="mono">' + escH(name) + '</span>…');
-  setTarget(path);                       // → Triage via profile
+  setTarget(path);                             // → Triage via profile
   const res = await engine.functions(path);
+  if (path !== curPath) return;                // a newer open superseded this one
   renderRealFunctions(res);
 }
 function renderRealFunctions(res) {
   const list = res?.data?.functions || res?.data?.symbols || res?.data?.items;
-  const fl = $('#dockspace .flist');
-  if (!fl) { toast('Open the Functions widget to list them'); return; }
   if (!Array.isArray(list) || !list.length) {
+    FUNCLIST = []; FUNCMETA = { total: 0, shown: 0, named: 0 }; paintFunctions();
     const msg = res && res.ok === false ? (res.error?.message || 'analysis failed') : 'no functions found';
-    fl.innerHTML = `<div class="fl-empty">${escH(msg)}</div>`;
-    toast('Engine: ' + msg);
-    return;
+    $$('#dockspace .flist').forEach(fl => { fl.innerHTML = `<div class="fl-empty">${escH(msg)}</div>`; });
+    toast('Engine: ' + msg); return;
   }
   const shown = list.slice(0, 500);
-  fl.innerHTML = shown.map(f => {
+  FUNCLIST = shown.map(f => {
     const addr = f.addr || f.address || f.va || '';
-    const name = f.name || f.symbol || f.label || 'sub_' + String(addr).replace(/^0x/, '');
-    return `<div class="frow"><span class="sym">ƒ</span><span class="nm mono">${escH(name)}</span><span class="fa mono">${escH(addr)}</span></div>`;
-  }).join('');
+    return { addr, name: f.name || f.symbol || f.label || 'sub_' + String(addr).replace(/^0x/, ''), tag: '' };
+  });
   const total = res?.meta?.total ?? list.length;
-  const foot = $('#dockspace .pfoot .fcount'); if (foot) foot.textContent = `${total.toLocaleString()} functions` + (total > shown.length ? ` · showing ${shown.length}` : '');
-  const named = shown.filter(f => { const n = f.name || f.symbol || f.label || ''; return n && !/^sub_/i.test(n); }).length;
-  const fn = $('#dockspace .pfoot .fnamed'); if (fn) fn.textContent = Math.round(named / shown.length * 100) + '% named';
-  toast('Loaded ' + list.length + ' functions');
-  fl.querySelector('.frow')?.click();     // select the first → hydrate decompiler/xrefs/disasm
+  const named = Math.round(FUNCLIST.filter(f => !/^sub_/i.test(f.name)).length / FUNCLIST.length * 100);
+  FUNCMETA = { total, shown: shown.length, named };
+  paintFunctions();
+  toast('Loaded ' + total.toLocaleString() + ' functions');
+  $('#dockspace .flist .frow')?.click();       // select the first → hydrate decompiler/xrefs/disasm
 }
 
 deepLink();
