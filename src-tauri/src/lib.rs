@@ -76,6 +76,15 @@ fn engine_info() -> Value {
     json!({ "ok": true, "version": version, "commandCount": count, "bin": bin })
 }
 
+/// A target path passed on the command line (`n0xis-gui /path/to/bin`), if any.
+/// Lets the app open straight from a terminal or file manager.
+#[tauri::command]
+fn initial_target() -> Option<String> {
+    std::env::args().nth(1).filter(|a| {
+        !a.starts_with('-') && std::path::Path::new(a).is_file()
+    })
+}
+
 /// Native file picker for choosing a target binary.
 #[tauri::command]
 async fn pick_file(app: tauri::AppHandle, title: String) -> Option<String> {
@@ -100,7 +109,7 @@ async fn pick_file(app: tauri::AppHandle, title: String) -> Option<String> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![n0x_run, engine_info, pick_file])
+        .invoke_handler(tauri::generate_handler![n0x_run, engine_info, pick_file, initial_target])
         .run(tauri::generate_context!())
         .expect("error while running N0xis GUI");
 }

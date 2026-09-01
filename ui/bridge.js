@@ -32,6 +32,12 @@ export function pickFile(title) {
   return invoke('pick_file', { title: title || 'Choose a target' });
 }
 
+/** A path passed on the command line (n0xis-gui /path) -> path | null */
+export function initialTarget() {
+  if (!isNative) return Promise.resolve(null);
+  return invoke('initial_target', {});
+}
+
 /** Convenience wrappers over the CLI's verbs. */
 export const engine = {
   guide: (topic) => n0x(topic ? ['guide', topic, '--brief'] : ['guide', '--brief']),
@@ -42,4 +48,6 @@ export const engine = {
     n0x(['function', 'discover', '--file', path, '--limit', String(limit), '--offset', String(offset)]),
   decompile: (path, addr, style = 'structured') =>
     n0x(['decomp', 'pseudo', '--file', path, '--addr', addr, '--style', style]),
+  disasm: (path, addr, count = 40) =>
+    n0x(['disasm', '--file', path, '--addr', addr, '--count', String(count)]),
 };

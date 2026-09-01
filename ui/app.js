@@ -1,5 +1,5 @@
 // N0xis GUI — interactive shell (framework-free; drops into Tauri's webview as-is)
-import { isNative, engineInfo, engine, pickFile, n0x } from './bridge.js';
+import { isNative, engineInfo, engine, pickFile, n0x, initialTarget } from './bridge.js';
 import { initDock } from './dock.js';
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -670,8 +670,7 @@ function closeTarget() { $('#launcher').classList.remove('hidden'); $('#sb-dot')
 function reopenRecent(rec) { $('#target-name').textContent = rec.name; openTarget(rec.kind === 'dynamic' || rec.kind === 'both' ? 'dynamic' : 'static'); }
 async function openFileTarget() {
   if (isNative) {
-    const p = await pickFile('Choose a binary to analyze'); if (!p) return;
-    $('#target-name').textContent = p.split(/[\\/]/).pop(); openTarget('static'); setTarget(p); engine.functions(p).then(renderRealFunctions);
+    const p = await pickFile('Choose a binary to analyze'); if (p) openBinary(p);
   } else { $('#launcher').classList.remove('hidden'); toast('Choose a target on the launcher'); }
 }
 function newProject() { $('#launcher').classList.remove('hidden'); toast('New project — pick a target'); }
@@ -825,7 +824,7 @@ const WIDGETS = {
     <div class="navtabs"><button class="nt on">Functions</button><button class="nt">Imports</button><button class="nt">Strings</button><button class="nt">Types</button></div>
     <div class="search">${svg(ICON.scan,'')}Filter functions…</div>
     <div class="flist">${FUNCS.map(([n,a,b])=>`<div class="frow${n==='crc32_z'?' on':''}${b==='sub'?' sub':''}"><span class="sym">ƒ</span><span class="nm mono">${n}</span>${b==='sig'?'<span class="badge">sig</span>':''}<span class="fa mono">${a}</span></div>`).join('')}</div>
-    <div class="pfoot">2,318 functions<span class="grow"></span><span style="color:var(--ok)">86% named</span></div></div>` },
+    <div class="pfoot"><span class="fcount">2,318 functions</span><span class="grow"></span><span class="fnamed" style="color:var(--ok)">86% named</span></div></div>` },
 
   decompiler: { title: 'Decompiler', icon: 'decomp', body: () => `<div class="wfill">
     <div class="dockhead"><button class="pill on">structured</button><button class="pill">ssa</button><button class="pill">goto</button><div class="grow"></div><button class="dt" data-ws="graph">CFG ↗</button></div>
@@ -965,7 +964,11 @@ function setTarget(path) { curPath = path || ''; loadProfile(); }
 async function loadProfile() {
   if (!isNative || !curPath) return;
   const r = await engine.profile(curPath);
-  if (r && r.ok && r.data) { TRIAGE = { ...r.data, source: r.meta?.source || curPath.split(/[\\/]/).pop() }; paintTriage(); toast('Profiled ' + TRIAGE.source); }
+  if (r && r.ok && r.data) {
+    TRIAGE = { ...r.data, source: r.meta?.source || curPath.split(/[\\/]/).pop() }; paintTriage();
+    const m = $('#sb-mode'); if (m && TRIAGE.image?.machine) m.textContent = `static · PE ${TRIAGE.image.machine}`;
+    toast('Profiled ' + TRIAGE.source);
+  }
   else if (r && !r.ok) toast('Profile failed: ' + (r.error?.message || 'unknown'));
 }
 
@@ -1058,9 +1061,25 @@ async function loadDecomp() {
   const r = await n0x(['decomp', 'pseudo', '--file', curPath, '--addr', selAddr]);
   if (r?.ok && Array.isArray(r.data.pseudo)) { paintDecomp(r.data.pseudo); VARS = parseVars(r.data.signature, r.data.pseudo); paintVars(); }
 }
+function paintDisasm(insns) {
+  const html = insns.map(i => {
+    const op = (i.text || '').slice((i.mnemonic || '').length).trim();
+    return `<div class="drow" data-ctx="drow" data-addr="${escH(i.va || '')}"><span class="daddr">${escH(i.va || '')}</span><span class="dbytes">${escH(i.bytes || '')}</span><span class="dmn">${escH(i.mnemonic || '')}</span><span>${escH(op)}</span></div>`;
+  }).join('');
+  $$('.disasm').forEach(d => { d.innerHTML = html; });
+}
+async function loadDisasm() {
+  if (!isNative || !curPath) return;
+  const r = await engine.disasm(curPath, selAddr);
+  if (r?.ok && Array.isArray(r.data.insns)) paintDisasm(r.data.insns);
+}
 
 // one place that refreshes every symbol-following widget when the selection moves
-function onSymbolSelect() { paintXrefs(); loadXrefs(); loadDecomp(); }
+function onSymbolSelect() {
+  const a = $('#sb-addr'); if (a) a.textContent = selAddr;
+  const n = $('#sb-name'); if (n) n.textContent = selName || '—';
+  paintXrefs(); loadXrefs(); loadDecomp(); loadDisasm();
+}
 
 /* ---- switchable Code view (Pseudo-C / Disassembly / Graph in one pane) ---- */
 function initCodeView(root) {
@@ -1174,29 +1193,48 @@ async function hydrateFromEngine() {
     analyzeCard.addEventListener('click', async ev => {
       ev.stopImmediatePropagation();
       const path = await pickFile('Choose a binary to analyze');
-      if (!path) return;
-      openTarget('static');
-      $('#target-name').textContent = path.split(/[\\/]/).pop();
-      setTarget(path);
-      const res = await engine.functions(path);
-      renderRealFunctions(res);
+      if (path) openBinary(path);
     }, true);
   }
+  // opened from a terminal / file manager: n0xis-gui /path/to/binary
+  const initPath = await initialTarget();
+  if (initPath) openBinary(initPath);
+}
+
+// One path opens a target everywhere (launcher card, File menu, CLI arg).
+async function openBinary(path) {
+  if (!path) return;
+  const name = path.split(/[\\/]/).pop();
+  openTarget('static');
+  $('#target-name').textContent = name;
+  setWorkspace('static');
+  toast('Analyzing <span class="mono">' + escH(name) + '</span>…');
+  setTarget(path);                       // → Triage via profile
+  const res = await engine.functions(path);
+  renderRealFunctions(res);
 }
 function renderRealFunctions(res) {
   const list = res?.data?.functions || res?.data?.symbols || res?.data?.items;
-  if (!Array.isArray(list) || !list.length) { toast('Engine returned no functions — keeping demo'); return; }
-  const fl = $('#dockspace .flist'); if (!fl) { toast('Open the Functions widget to list them'); return; }
-  fl.innerHTML = '';
-  list.slice(0, 400).forEach(f => {
-    const name = f.name || f.symbol || f.label || 'sub_' + (f.addr || f.address || '');
+  const fl = $('#dockspace .flist');
+  if (!fl) { toast('Open the Functions widget to list them'); return; }
+  if (!Array.isArray(list) || !list.length) {
+    const msg = res && res.ok === false ? (res.error?.message || 'analysis failed') : 'no functions found';
+    fl.innerHTML = `<div class="fl-empty">${escH(msg)}</div>`;
+    toast('Engine: ' + msg);
+    return;
+  }
+  const shown = list.slice(0, 500);
+  fl.innerHTML = shown.map(f => {
     const addr = f.addr || f.address || f.va || '';
-    const row = document.createElement('div');
-    row.className = 'frow';
-    row.innerHTML = `<span class="sym">ƒ</span><span class="nm mono">${name}</span><span class="fa mono">${addr}</span>`;
-    fl.appendChild(row);
-  });
-  toast('Loaded ' + list.length + ' functions from the engine');
+    const name = f.name || f.symbol || f.label || 'sub_' + String(addr).replace(/^0x/, '');
+    return `<div class="frow"><span class="sym">ƒ</span><span class="nm mono">${escH(name)}</span><span class="fa mono">${escH(addr)}</span></div>`;
+  }).join('');
+  const total = res?.meta?.total ?? list.length;
+  const foot = $('#dockspace .pfoot .fcount'); if (foot) foot.textContent = `${total.toLocaleString()} functions` + (total > shown.length ? ` · showing ${shown.length}` : '');
+  const named = shown.filter(f => { const n = f.name || f.symbol || f.label || ''; return n && !/^sub_/i.test(n); }).length;
+  const fn = $('#dockspace .pfoot .fnamed'); if (fn) fn.textContent = Math.round(named / shown.length * 100) + '% named';
+  toast('Loaded ' + list.length + ' functions');
+  fl.querySelector('.frow')?.click();     // select the first → hydrate decompiler/xrefs/disasm
 }
 
 deepLink();

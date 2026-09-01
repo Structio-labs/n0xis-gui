@@ -523,3 +523,6 @@ a{ color:var(--acc); }
 .kb-act:hover{ background:var(--bg3); color:var(--tx0); }
 .kb-act svg{ width:13px; height:13px; }
 .kb-act.hide{ visibility:hidden; }
+
+/* ---- empty / loading states ---- */
+.fl-empty{ padding:16px 12px; color:var(--tx2); font-size:.8rem; line-height:1.5; }
