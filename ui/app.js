@@ -67,7 +67,7 @@ function echo(cmd, ok) {
 function setWorkspace(ws) {
   $$('.wsview').forEach(v => v.classList.toggle('on', v.id === 'view-' + ws));
   $$('#wsbar .ws').forEach(t => t.classList.toggle('on', t.dataset.ws === ws));
-  document.documentElement.dataset.ws = ws;
+  document.documentElement.dataset.workspace = ws; // state attr — NOT data-ws (that selects jump buttons)
   dock.setWorkspace(ws); // the workspace IS a dock layout of widgets
 }
 $$('#wsbar .ws[data-ws]').forEach(t => t.addEventListener('click', () => setWorkspace(t.dataset.ws)));
@@ -91,6 +91,9 @@ $('#dockspace').addEventListener('click', e => {
   // workspace jump buttons (e.g. the decompiler's "CFG ↗")
   const jump = e.target.closest('[data-ws]');
   if (jump) { setWorkspace(jump.dataset.ws); return; }
+  // Copilot "Follow AI" toggle — one Copilot, following is a switch
+  const foll = e.target.closest('[data-foll]');
+  if (foll) { foll.classList.toggle('on'); foll.closest('.cop')?.classList.toggle('following', foll.classList.contains('on')); toast(foll.classList.contains('on') ? 'Follow AI — showing what the model examines' : 'Follow AI off'); return; }
   // function / string list selection
   const row = e.target.closest('.frow');
   if (row) { row.closest('.flist,div')?.querySelectorAll('.frow.on').forEach(r => r.classList.remove('on')); row.classList.add('on'); return; }
@@ -206,16 +209,16 @@ const GRAPH = {
     { id: 'block_5', addr: '0x1590', tag: '',          x: 420, y: 450, w: 200, body: 'v9 = &amp;crc_table;' },
     { id: 'block_6', addr: '0x15fa', tag: 'exit',      x: 300, y: 600, w: 210, body: 'return ~v14;' },
   ],
-  // a real loop: header (block_3) enters the body (block_4), which jumps BACK to the header.
+  // edge types (Binary-Ninja convention): t=true(green) · f=false(red) · u=unconditional(blue) · loop=back-edge(amber)
   edges: [
-    { f: 'block_0', t: 'block_1' },
+    { f: 'block_0', t: 'block_1', type: 'u' },   // single successor → unconditional
     { f: 'block_1', t: 'block_2', type: 't' },   // rdx small → skip the align loop
     { f: 'block_1', t: 'block_3', type: 'f' },   // else enter the align loop
     { f: 'block_3', t: 'block_4', type: 't' },   // condition holds → run the body
     { f: 'block_3', t: 'block_5', type: 'f' },   // condition fails → leave the loop
     { f: 'block_4', t: 'block_3', type: 'loop' },// back-edge: body loops back to the header
-    { f: 'block_2', t: 'block_6' },
-    { f: 'block_5', t: 'block_6' },
+    { f: 'block_2', t: 'block_6', type: 'u' },
+    { f: 'block_5', t: 'block_6', type: 'u' },
   ],
 };
 // Self-contained: bound to one graph widget's own elements (many can coexist).
@@ -298,13 +301,13 @@ function initGraphWidget(root) {
   }
   function drawEdges() {
     // explicit per-colour markers (context-stroke is unreliable across themes)
-    const M = { n: mid + '-n', t: mid + '-t', f: mid + '-f', loop: mid + '-l' };
+    const M = { n: mid + '-n', t: mid + '-t', f: mid + '-f', loop: mid + '-l', u: mid + '-u' };
     const mk = (id, c) => `<marker id="${id}" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="${c}"/></marker>`;
-    const defs = `<defs>${mk(M.n, 'var(--bd2)')}${mk(M.t, 'var(--ok)')}${mk(M.f, 'var(--dgr)')}${mk(M.loop, 'var(--live)')}</defs>`;
+    const defs = `<defs>${mk(M.n, 'var(--bd2)')}${mk(M.t, 'var(--ok)')}${mk(M.f, 'var(--dgr)')}${mk(M.loop, 'var(--live)')}${mk(M.u, 'var(--fn)')}</defs>`;
     const paths = GRAPH.edges.map(e => {
       const a = rectOf[e.f], b = rectOf[e.t]; if (!a || !b) return '';
       const cls = 'gedge' + (e.type ? ' ' + e.type : '');
-      const arw = e.type === 't' ? M.t : e.type === 'f' ? M.f : e.type === 'loop' ? M.loop : M.n;
+      const arw = e.type === 't' ? M.t : e.type === 'f' ? M.f : e.type === 'loop' ? M.loop : e.type === 'u' ? M.u : M.n;
       if (e.type === 'loop') { // back-edge: out the body's right, up, back into the header's right side
         const sx = a.x + a.w, sy = a.y + a.h * 0.5, tx2 = b.x + b.w, ty2 = b.y + b.h * 0.5, bx = Math.max(sx, tx2) + 44;
         return `<path class="${cls}" marker-end="url(#${arw})" d="M${sx} ${sy} C${bx} ${sy},${bx} ${ty2},${tx2} ${ty2}"/>`;
@@ -417,9 +420,14 @@ function menuFor(el, tgt) {
     ];
     case 'gnode': return [
       lbl(tgt.dataset.id || 'block'),
-      item('Focus block', 'graph', '', () => { fitGraph(); toast('Focus ' + tgt.dataset.id); }),
       item('Decompile block', 'decomp', '', () => { setWorkspace('decompile'); toast('Decompile ' + tgt.dataset.id); }),
+      item('Rename label…', 'rename', 'N', () => toast('Rename ' + tgt.dataset.id)),
+      item('Invert branch logic', 'reset', '', () => toast('Inverted branch of ' + tgt.dataset.id)),
       item('Set breakpoint', 'bp', 'F9', () => toast('Breakpoint @ ' + tgt.dataset.addr)),
+      sep,
+      item('Find xrefs to block', 'xref', 'X', () => toast('Xrefs → ' + tgt.dataset.addr)),
+      item('Open in new tab', 'add', '', () => toast('Open ' + tgt.dataset.id + ' in a new pane')),
+      item('Comment…', 'note', ';', () => toast('Comment on ' + tgt.dataset.id)),
       sep,
       item('Copy block address', 'copy', '', () => copy(tgt.dataset.addr || '')),
     ];
@@ -515,13 +523,17 @@ const WIDGETS = {
   graph: { title: 'CFG · crc32_z', icon: 'graph', body: () => `<div class="graphwrap" style="height:100%">
     <div class="gviewport"><div class="gcanvas"><svg class="gsvg" width="920" height="700"></svg></div>
     <div class="gzoom"><button class="gz-in">+</button><div class="gzl">100%</div><button class="gz-out">−</button><button class="gz-fit">${svg('M4 9V5a1 1 0 0 1 1-1h4;M20 9V5a1 1 0 0 0-1-1h-4;M4 15v4a1 1 0 0 0 1 1h4;M20 15v4a1 1 0 0 1-1 1h-4','')}</button></div>
-    <div class="glegend"><span class="lg"><span class="ln t"></span>true</span><span class="lg"><span class="ln f"></span>false</span><span class="lg"><span class="ln loop"></span>loop (back-edge)</span><span class="lg" style="color:var(--tx2)">drag blocks · scroll = zoom</span></div></div></div>`,
+    <div class="glegend"><span class="lg"><span class="ln t"></span>true</span><span class="lg"><span class="ln f"></span>false</span><span class="lg"><span class="ln u"></span>uncond</span><span class="lg"><span class="ln loop"></span>loop</span><span class="lg" style="color:var(--tx2)">drag blocks · scroll = zoom</span></div></div></div>`,
     init: root => initGraphWidget(root) },
 
-  copilot: { title: 'Copilot', icon: 'chat', body: () => `<div class="wfill">
-    <div class="chat" style="flex:1"><div class="msg"><div class="av me">ME</div><div class="bub mine">What does <span class="mono" style="color:var(--acc)">crc32_z</span> do?</div></div>
+  copilot: { title: 'Copilot', icon: 'chat', body: () => `<div class="wfill cop">
+    <div class="coptop"><span class="provsel">Claude · cloud</span><span class="grow"></span><span class="foll-t">Follow AI</span><span class="tog" data-foll title="Highlight what the AI is examining"><div class="knob"></div></span></div>
+    <div class="chat cop-chat" style="flex:1"><div class="msg"><div class="av me">ME</div><div class="bub mine">What does <span class="mono" style="color:var(--acc)">crc32_z</span> do?</div></div>
     <div class="msg"><div class="av ai">AI</div><div><div class="bub">This is the <b>zlib CRC-32</b> checksum core. It folds each input byte through a 256-entry table (<span class="mono" style="color:var(--st)">crc_table</span>) — byte-by-byte until 8-aligned, then 8 bytes per pass.<div style="margin-top:6px;color:var(--tx1)">• <span class="mono">rsi</span> = buffer, <span class="mono">rdx</span> = length, <span class="mono">rdi</span> = seed.</div></div>
     <div class="sug"><span class="sugb">Find callers</span><span class="sugb">Explain “SSA”</span><span class="sugb">Rename vars</span></div></div></div></div>
+    <div class="cop-trace" style="flex:1"><div class="cop-tracehd" style="color:var(--vio)">${svg(ICON.follow,'')}Following — live trace</div>
+    <div style="padding:0 11px 11px;font-size:.82rem;line-height:1.5;overflow:auto">Found it. <span class="mono" style="color:var(--live)">7FF6C21A40</span> is <b>health</b> — I set a write-watchpoint and traced the writer to <span class="mono" style="color:var(--acc)">HealthComponent::TakeDamage</span>.
+    <div style="margin-top:8px;color:var(--vio);font-size:.72rem"><div>→ scan 87 (4-byte)</div><div>→ watch write 7FF6C21A40</div><div>→ provenance → decompile</div></div></div></div>
     <div class="ask"><span class="provsel">Claude · cloud</span>Ask, or “guide me through…”<span class="grow"></span><span style="color:var(--acc)">↵</span></div></div>` },
 
   details: { title: 'Details · Provenance', icon: 'note', body: () => `<div class="det selectable" style="height:100%">
@@ -557,11 +569,6 @@ const WIDGETS = {
       ['health','87','on'],['max_health','100','on'],['ammo','42',''],['gold','10000','']
     ].map(([n,v,f])=>`<div class="wlrow" data-ctx="wlrow"><span class="frz ${f}"></span><span class="wname">${n}</span><span class="wval">${v}</span></div>`).join('')}</div>` },
 
-  copilotFollow: { title: 'Copilot · trace', icon: 'follow', body: () => `<div class="wfill">
-    <div style="padding:11px;font-size:.82rem;line-height:1.5;flex:1;overflow:auto">Found it. <span class="mono" style="color:var(--live)">7FF6C21A40</span> is <b>health</b> — I set a write-watchpoint and traced the writer to <span class="mono" style="color:var(--acc)">HealthComponent::TakeDamage</span>.
-    <div style="margin-top:8px;color:var(--vio);font-size:.72rem"><div>→ scan 87 (4-byte)</div><div>→ watch write 7FF6C21A40</div><div>→ provenance → decompile</div></div></div>
-    <div class="ask" style="margin:0 10px 10px"><span class="provsel">Local · Ollama</span>Ask…<span class="grow"></span><span style="color:var(--vio)">↵</span></div></div>` },
-
   strings: { title: 'Strings', icon: 'strings', body: () => `<div style="overflow:auto;height:100%;padding:6px 0">${['HealthComponent','TakeDamage','crc_table','zlib 1.3.1','deflate','Assertion failed'].map(s=>`<div class="frow"><span class="nm mono selectable">"${s}"</span></div>`).join('')}</div>` },
 
   notes: { title: 'Notes', icon: 'note', body: () => `<textarea class="selectable" style="width:100%;height:100%;background:transparent;border:none;color:var(--tx0);padding:11px;font:inherit;resize:none;outline:none;box-sizing:border-box" placeholder="Session notes…"></textarea>` },
@@ -582,7 +589,7 @@ const DEFAULT_LAYOUTS = {
   graph: L('graph'),
   dynamic: R(0.34, C(0.4, L('registers'), 0.6, L('watchpoints')),
     0.66, R(0.5, C(0.55, L('scanner'), 0.45, L('livemem')),
-               0.5, C(0.5, L('watchlist'), 0.5, L('copilotFollow')))),
+               0.5, C(0.5, L('watchlist'), 0.5, L('copilot')))),
 };
 
 // tiling dock instance (Blender/AreaKit-style: split · tabs · resize · undo)
@@ -684,6 +691,6 @@ function renderRealFunctions(res) {
 }
 
 deepLink();
-dock.setWorkspace(document.documentElement.dataset.ws || 'decompile'); // seed/restore the workspace layout
+dock.setWorkspace(document.documentElement.dataset.workspace || 'decompile'); // seed/restore the workspace layout
 hydrateFromEngine();
 console.log('N0xis GUI ready · graph, context menus, dock widgets, palette (Ctrl+P), themes, zoom');

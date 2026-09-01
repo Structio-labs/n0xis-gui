@@ -169,6 +169,7 @@ button{ font:inherit; color:inherit; background:none; border:none; cursor:pointe
 .gedge{ fill:none; stroke:var(--bd2); stroke-width:1.6; }
 .gedge.t{ stroke:var(--ok); }        /* true branch  */
 .gedge.f{ stroke:var(--dgr); opacity:.75; } /* false branch */
+.gedge.u{ stroke:var(--fn); }         /* unconditional */
 .gedge.loop{ stroke:var(--live); stroke-dasharray:4 3; opacity:.85; }
 .gnode{ position:absolute; background:linear-gradient(180deg,var(--bg2),var(--bg1)); border:1px solid var(--bd2);
   border-radius:9px; padding:9px 11px; font-family:'JetBrains Mono',monospace; font-size:.72rem; color:var(--tx1);
@@ -410,4 +411,14 @@ a{ color:var(--acc); }
 .gviewport:hover .glegend{ opacity:.5; }   /* fades out of the way while you work in the graph */
 .glegend .lg{ display:flex; align-items:center; gap:5px; }
 .glegend .ln{ width:16px; height:0; border-top:2px solid var(--bd2); }
-.glegend .ln.t{ border-color:var(--ok); } .glegend .ln.f{ border-color:var(--dgr); } .glegend .ln.loop{ border-top-style:dashed; border-color:var(--live); }
+.glegend .ln.t{ border-color:var(--ok); } .glegend .ln.f{ border-color:var(--dgr); } .glegend .ln.u{ border-color:var(--fn); } .glegend .ln.loop{ border-top-style:dashed; border-color:var(--live); }
+
+/* Copilot — one widget; "Follow AI" is a switch between chat and live trace */
+.coptop{ display:flex; align-items:center; gap:8px; padding:7px 11px; border-bottom:1px solid var(--bd); flex:0 0 auto; }
+.foll-t{ font-size:.74rem; color:var(--tx1); }
+.cop-trace{ display:none; flex-direction:column; min-height:0; }
+.cop.following .cop-chat{ display:none; }
+.cop.following .cop-trace{ display:flex; }
+.cop.following{ box-shadow:inset 0 0 0 1px rgba(167,139,250,.35); }
+.cop-tracehd{ display:flex; align-items:center; gap:7px; padding:10px 11px 6px; font-size:.72rem; font-weight:600; text-transform:uppercase; letter-spacing:.04em; flex:0 0 auto; }
+.cop-tracehd svg{ width:14px; height:14px; }
