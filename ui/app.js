@@ -171,12 +171,12 @@ $$('.snav .sni').forEach(n => n.addEventListener('click', () => {
 const COMMANDS = [
   ['Decompile · pseudocode', 'SSA-recovered C for the selected function', 'F5', () => setWorkspace('decompile')],
   ['Disassembly listing', 'Annotated instruction listing', 'Space', () => setWorkspace('decompile')],
-  ['Show CFG graph', 'Control-flow graph, blocks & edges', 'G', () => setWorkspace('graph')],
+  ['Show CFG graph', 'Control-flow graph, blocks & edges', '', () => setWorkspace('graph')],
   ['Add widget to canvas…', 'Blender-style dockable panels', '', () => openWpal($('#btn-addw'))],
   ['Reset workspace layout', 'Clear floating widgets', '', () => resetDock()],
   ['Set decompile style…', 'structured · ssa · goto', '', () => toast('Decompile style')],
-  ['Find xrefs to / from', 'Who calls this · what it calls', 'X', () => toast('Xrefs')],
-  ['Set watchpoint (R / W / X)', 'Break when this address is touched', 'W', () => setWorkspace('dynamic')],
+  ['Find xrefs to / from', 'Who calls this · what it calls', 'Shift+F12', () => toast('Xrefs')],
+  ['Set watchpoint (R / W / X)', 'Break when this address is touched', '', () => setWorkspace('dynamic')],
   ['Find what accesses this address', 'Cheat-Engine-style hit counter', '', () => setWorkspace('dynamic')],
   ['Memory scan…', 'Hunt a value in a live process', '', () => setWorkspace('dynamic')],
   ['Attach to a process', 'Bind a live process to this session', '', () => setWorkspace('dynamic')],
@@ -392,11 +392,11 @@ function menuFor(el, tgt) {
     case 'frow': return [
       lbl(name || 'function'),
       item('Decompile', 'decomp', 'F5', () => { tgt.click(); setWorkspace('decompile'); toast('Decompiling ' + name); }),
-      item('Show disassembly', 'disasm', 'Space', () => { tgt.click(); setWorkspace('decompile'); }),
-      item('Show CFG graph', 'graph', 'G', () => setWorkspace('graph')),
+      item('Show disassembly', 'disasm', '', () => { tgt.click(); setWorkspace('decompile'); }),
+      item('Show CFG graph', 'graph', '', () => setWorkspace('graph')),
       sep,
-      item('Rename…', 'rename', 'N', () => toast('Rename ' + name)),
-      item('Find xrefs to', 'xref', 'X', () => toast('Xrefs to ' + name)),
+      item('Rename…', 'rename', 'F2', () => toast('Rename ' + name)),
+      item('Find xrefs to', 'xref', 'Shift+F12', () => toast('Xrefs to ' + name)),
       item('Find xrefs from', 'xref', '', () => toast('Xrefs from ' + name)),
       item('Apply signature', 'type', '', () => echo('sig apply --func ' + name, 'matched 1')),
       sep,
@@ -405,17 +405,17 @@ function menuFor(el, tgt) {
     ];
     case 'cl': return [
       item('Copy line', 'copy', 'Ctrl+C', () => copy(tgt.textContent.replace(/^\d+/, '').trim())),
-      item('Rename variable…', 'rename', 'N', () => toast('Rename variable')),
-      item('Change type…', 'type', 'Y', () => toast('Change type')),
+      item('Rename variable…', 'rename', 'F2', () => toast('Rename variable')),
+      item('Change type…', 'type', '', () => toast('Change type')),
       sep,
       item('Toggle breakpoint', 'bp', 'F9', () => { tgt.classList.toggle('hot'); toast('Breakpoint toggled'); }),
-      item('Add watchpoint', 'watch', 'W', () => { setWorkspace('dynamic'); toast('Watchpoint added'); }),
-      item('Comment…', 'note', ';', () => toast('Comment')),
+      item('Add watchpoint', 'watch', '', () => { setWorkspace('dynamic'); toast('Watchpoint added'); }),
+      item('Comment…', 'note', 'Ctrl+/', () => toast('Comment')),
     ];
     case 'drow': return [
       item('Copy instruction', 'copy', '', () => copy(tgt.textContent.trim())),
       item('Toggle breakpoint', 'bp', 'F9', () => { tgt.classList.toggle('hot'); toast('Breakpoint @ ' + (tgt.querySelector('.daddr')?.textContent || '')); }),
-      item('Set watchpoint', 'watch', 'W', () => setWorkspace('dynamic')),
+      item('Set watchpoint', 'watch', '', () => setWorkspace('dynamic')),
       item('Follow in dump', 'hex', '', () => setWorkspace('dynamic')),
       sep,
       item('Copy address', 'copy', '', () => copy(tgt.querySelector('.daddr')?.textContent || '')),
@@ -449,13 +449,13 @@ function menuFor(el, tgt) {
     case 'gnode': return [
       lbl(tgt.dataset.id || 'block'),
       item('Decompile block', 'decomp', '', () => { setWorkspace('decompile'); toast('Decompile ' + tgt.dataset.id); }),
-      item('Rename label…', 'rename', 'N', () => toast('Rename ' + tgt.dataset.id)),
+      item('Rename label…', 'rename', 'F2', () => toast('Rename ' + tgt.dataset.id)),
       item('Invert branch logic', 'reset', '', () => toast('Inverted branch of ' + tgt.dataset.id)),
       item('Set breakpoint', 'bp', 'F9', () => toast('Breakpoint @ ' + tgt.dataset.addr)),
       sep,
-      item('Find xrefs to block', 'xref', 'X', () => toast('Xrefs → ' + tgt.dataset.addr)),
+      item('Find xrefs to block', 'xref', 'Shift+F12', () => toast('Xrefs → ' + tgt.dataset.addr)),
       item('Open in new tab', 'add', '', () => toast('Open ' + tgt.dataset.id + ' in a new pane')),
-      item('Comment…', 'note', ';', () => toast('Comment on ' + tgt.dataset.id)),
+      item('Comment…', 'note', 'Ctrl+/', () => toast('Comment on ' + tgt.dataset.id)),
       sep,
       item('Copy block address', 'copy', '', () => copy(tgt.dataset.addr || '')),
     ];
@@ -539,13 +539,13 @@ function menuItems(name) {
       item('Close target', 'x', '', closeTarget),
     ];
     case 'Edit': return [            // edits to the analysis database
-      item('Rename…', 'rename', 'N', () => toast('Rename')),
-      item('Comment…', 'comment', ';', () => toast('Comment')),
-      item('Change type…', 'type', 'Y', () => toast('Change type')),
+      item('Rename…', 'rename', 'F2', () => toast('Rename')),
+      item('Comment…', 'comment', 'Ctrl+/', () => toast('Comment')),
+      item('Change type…', 'type', '', () => toast('Change type')),
       item('Invert branch logic', 'redo', '', () => toast('Invert branch')),
       item('Patch → NOP…', 'patch', '', () => toast('Patch')),
       sep,
-      item('Command palette', 'scan', 'Ctrl+P', openPal),
+      item('Command palette', 'scan', 'Ctrl+Shift+P', openPal),
     ];
     case 'View': return [            // presentation only
       item('Zoom in', 'add', 'Ctrl +', () => setZoom(zoom + 0.1)),
@@ -557,18 +557,19 @@ function menuItems(name) {
     case 'Analyze': return [         // analysis actions
       item('Decompile', 'decomp', 'F5', () => { setWorkspace('decompile'); toast('Decompiling'); }),
       item('Apply FLIRT signatures', 'type', '', () => echo('sig apply --flirt zlib-1.3.1.npat', 'named 118 functions')),
-      item('Find xrefs', 'xref', 'X', () => toast('Xrefs')),
+      item('Find xrefs', 'xref', 'Shift+F12', () => toast('Xrefs')),
       item('Identify algorithms', 'identify', '', () => toast('Scanning for known algorithms…')),
       item('Re-run analysis', 'reset', '', () => toast('Re-analyzing…')),
     ];
     case 'Debug': return [           // control of the running target
-      item('Set watchpoint', 'watch', 'W', () => setWorkspace('dynamic')),
+      item('Set watchpoint', 'watch', '', () => setWorkspace('dynamic')),
       item('Find what writes…', 'xref', '', () => setWorkspace('dynamic')),
       item('Memory scan…', 'scan', '', () => setWorkspace('dynamic')),
       sep,
       item('Continue', 'play', 'F5', () => toast('Continue'), { disabled: !isLive() }),
-      item('Step into', 'step', 'F7', () => toast('Step into'), { disabled: !isLive() }),
-      item('Step over', 'step', 'F8', () => toast('Step over'), { disabled: !isLive() }),
+      item('Step over', 'step', 'F10', () => toast('Step over'), { disabled: !isLive() }),
+      item('Step into', 'step', 'F11', () => toast('Step into'), { disabled: !isLive() }),
+      item('Toggle breakpoint', 'bp', 'F9', () => toast('Toggle breakpoint')),
     ];
     case 'Window': return [          // window & pane management
       item('Add widget…', 'add', '', () => openWpal($('#btn-addw'))),
@@ -598,34 +599,32 @@ $$('.tbar .menu').forEach(btn => btn.addEventListener('click', e => {
   openCtx(r.left, r.bottom + 3, menuItems(btn.textContent.trim()));
 }));
 
-// ---------- global keyboard accelerators (mirror the menu-bar hints) ----------
-// Only the shortcuts we actually advertise in the menus. Bare-key ones stay out
-// of text fields and off the launcher; modifier combos with their own handlers
-// (Ctrl+P palette, Ctrl+±0 zoom, Ctrl+Shift+Z/X layout) are left untouched here.
+// ---------- global keyboard accelerators (VS Code-style) ----------
+// Mainstream editor muscle-memory: F2 rename, Ctrl+/ comment, F5 run/continue,
+// F10/F11 step, Shift+F12 references, Ctrl+Shift+P palette, Ctrl+O/Ctrl+,.
+// Ignored inside text fields; the debugger keys need a live target.
 const isEditable = t => !!t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
 const targetOpen = () => $('#launcher')?.classList.contains('hidden');
 window.addEventListener('keydown', e => {
   if (isEditable(e.target)) return;
   const mod = e.ctrlKey || e.metaKey;
-  if (mod && !e.shiftKey && !e.altKey) {                 // advertised Ctrl combos
+  if (mod && !e.altKey) {                                  // Ctrl/Cmd combos
     const k = e.key.toLowerCase();
+    if (e.shiftKey) return;                                 // Ctrl+Shift+P palette & Z/X layout have own listeners
     if (k === 'o') { e.preventDefault(); openFileTarget(); }
     else if (e.key === ',') { e.preventDefault(); settings.classList.add('on'); }
-    return;                                              // Ctrl+P/zoom handled elsewhere
+    else if (k === '/') { e.preventDefault(); if (targetOpen()) toast('Comment'); }
+    return;                                                 // Ctrl+P / Ctrl+±0 handled elsewhere
   }
-  if (mod || e.altKey) return;                           // leave other combos alone
-  // bare-key accelerators — only once a target is open
-  if (!targetOpen()) return;
+  if (e.altKey) return;
+  if (!targetOpen()) return;                                // function keys need a target
   switch (e.key) {
+    case 'F2': e.preventDefault(); toast('Rename'); break;
     case 'F5': e.preventDefault(); if (isLive()) toast('Continue'); else { setWorkspace('decompile'); toast('Decompiling'); } break;
-    case 'F7': if (isLive()) { e.preventDefault(); toast('Step into'); } break;
-    case 'F8': if (isLive()) { e.preventDefault(); toast('Step over'); } break;
-    case 'g': case 'G': setWorkspace('graph'); break;
-    case 'n': case 'N': toast('Rename'); break;
-    case 'x': case 'X': toast('Find xrefs'); break;
-    case 'y': case 'Y': toast('Change type'); break;
-    case 'w': case 'W': setWorkspace('dynamic'); toast('Set watchpoint'); break;
-    case ';': toast('Comment'); break;
+    case 'F9': e.preventDefault(); toast('Toggle breakpoint'); break;
+    case 'F10': if (isLive()) { e.preventDefault(); toast('Step over'); } break;
+    case 'F11': if (isLive()) { e.preventDefault(); toast('Step into'); } break;
+    case 'F12': if (e.shiftKey) { e.preventDefault(); toast('Find xrefs'); } break;  // Shift+F12 = references
     default: return;
   }
 });

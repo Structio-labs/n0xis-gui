@@ -36,7 +36,29 @@ export function initDock(deps) {
   let onChange = () => {};
   function save() { try { localStorage.setItem(SKEY, JSON.stringify(trees)); } catch {} onChange(); }
   function load() {
-    try { const raw = localStorage.getItem(SKEY); if (raw) { const o = JSON.parse(raw); for (const k in o) { trees[k] = o[k]; hist[k] = []; fut[k] = []; } } } catch {}
+    try {
+      const raw = localStorage.getItem(SKEY); if (!raw) return;
+      const o = JSON.parse(raw);
+      // 1) advance the id counter past every persisted id, so freshly-minted
+      //    ids can never collide with restored ones (the reload-collision bug:
+      //    same id on two leaves → wrong self-drop CANCEL; same inst on two
+      //    tabs → one pooled DOM shared → "clone" + empty sibling).
+      let max = 0;
+      const readNum = s => { const m = /^n(\d+)$/.exec(s || ''); if (m) max = Math.max(max, +m[1]); };
+      const scan = n => { if (!n) return; if (n.t === 'leaf') { readNum(n.id); (n.tabs || []).forEach(t => readNum(t.inst)); } else { scan(n.kids && n.kids[0]); scan(n.kids && n.kids[1]); } };
+      for (const k in o) scan(o[k]);
+      uid = Math.max(uid, max + 1);
+      // 2) heal any already-duplicated ids from layouts saved before this fix.
+      const seenLeaf = new Set(), seenInst = new Set();
+      const heal = n => {
+        if (!n) return;
+        if (n.t === 'leaf') {
+          if (!n.id || seenLeaf.has(n.id)) n.id = nid(); seenLeaf.add(n.id);
+          (n.tabs || []).forEach(t => { if (!t.inst || seenInst.has(t.inst)) t.inst = nid(); seenInst.add(t.inst); });
+        } else { heal(n.kids && n.kids[0]); heal(n.kids && n.kids[1]); }
+      };
+      for (const k in o) { heal(o[k]); trees[k] = o[k]; hist[k] = []; fut[k] = []; }
+    } catch {}
   }
 
   // ---- undo/redo ----
@@ -201,7 +223,7 @@ export function initDock(deps) {
     const multi = node.tabs.length > 1;
 
     let strip = null;
-    if (multi || node.tabSide !== 'top') {
+    if (multi) {   // a lone widget shows no tab strip (the chosen side is kept for when it's multi again)
       strip = document.createElement('div');
       strip.className = 'dk-tabs ' + (vertical ? 'v' : 'h');
       node.tabs.forEach((entry, i) => {
