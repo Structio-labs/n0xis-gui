@@ -240,16 +240,18 @@ function initGraphWidget(root) {
     cam.x = (vw - maxX * cam.s) / 2; cam.y = Math.max(16, (vh - maxY * cam.s) / 2); applyCam();
   }
   let pan = null;
+  let userAdjusted = false;                       // once the user pans/zooms, stop auto-fitting
   gv.addEventListener('pointerdown', e => { if (e.target.closest('.gzoom')) return; pan = { x: e.clientX, y: e.clientY, cx: cam.x, cy: cam.y }; gv.classList.add('panning'); gv.setPointerCapture(e.pointerId); });
-  gv.addEventListener('pointermove', e => { if (!pan) return; cam.x = pan.cx + (e.clientX - pan.x); cam.y = pan.cy + (e.clientY - pan.y); applyCam(); });
+  gv.addEventListener('pointermove', e => { if (!pan) return; cam.x = pan.cx + (e.clientX - pan.x); cam.y = pan.cy + (e.clientY - pan.y); userAdjusted = true; applyCam(); });
   gv.addEventListener('pointerup', () => { pan = null; gv.classList.remove('panning'); });
-  gv.addEventListener('wheel', e => { e.preventDefault(); const r = gv.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top; const ns = clamp(cam.s * (e.deltaY < 0 ? 1.12 : 0.89), 0.3, 2.4); cam.x = mx - (mx - cam.x) * (ns / cam.s); cam.y = my - (my - cam.y) * (ns / cam.s); cam.s = ns; applyCam(); }, { passive: false });
-  root.querySelector('.gz-in').addEventListener('click', () => { cam.s = clamp(cam.s * 1.15, 0.3, 2.4); applyCam(); });
-  root.querySelector('.gz-out').addEventListener('click', () => { cam.s = clamp(cam.s * 0.87, 0.3, 2.4); applyCam(); });
-  root.querySelector('.gz-fit').addEventListener('click', fitGraph);
+  gv.addEventListener('wheel', e => { e.preventDefault(); const r = gv.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top; const ns = clamp(cam.s * (e.deltaY < 0 ? 1.12 : 0.89), 0.3, 2.4); cam.x = mx - (mx - cam.x) * (ns / cam.s); cam.y = my - (my - cam.y) * (ns / cam.s); cam.s = ns; userAdjusted = true; applyCam(); }, { passive: false });
+  root.querySelector('.gz-in').addEventListener('click', () => { cam.s = clamp(cam.s * 1.15, 0.3, 2.4); userAdjusted = true; applyCam(); });
+  root.querySelector('.gz-out').addEventListener('click', () => { cam.s = clamp(cam.s * 0.87, 0.3, 2.4); userAdjusted = true; applyCam(); });
+  root.querySelector('.gz-fit').addEventListener('click', () => { userAdjusted = false; fitGraph(); }); // fit re-enables auto-fit
   renderGraph();
   requestAnimationFrame(fitGraph);
   setTimeout(fitGraph, 120); // refit once layout settles
+  try { new ResizeObserver(() => { if (!userAdjusted) fitGraph(); }).observe(gv); } catch {} // refit when the area is resized, until the user takes over
 }
 
 /* =====================================================================

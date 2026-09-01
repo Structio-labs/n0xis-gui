@@ -54,7 +54,7 @@ export function initDock(deps) {
   }
   function replaceNode(oldLeafId, newNode) {
     const p = parentOfLeaf(trees[ws], oldLeafId);
-    if (!p) trees[ws] = newNode; else p.parent.kids[p.side] = newNode;
+    if (!p || !p.parent) trees[ws] = newNode; else p.parent.kids[p.side] = newNode;
   }
   function parentOfLeaf(node, id, parent = null, side = -1) {
     if (!node) return null;
@@ -68,10 +68,10 @@ export function initDock(deps) {
   }
   function removeLeaf(id) {
     const p = parentOfLeaf(trees[ws], id);
-    if (!p) { collectInsts(trees[ws]).forEach(dropInst); trees[ws] = null; return; }
+    if (!p || !p.parent) { trees[ws] = null; return; } // was the root leaf → empty workspace
     const sibling = p.parent.kids[1 - p.side];
     const gp = parentOfNode(trees[ws], p.parent);
-    if (!gp) trees[ws] = sibling; else gp.parent.kids[gp.side] = sibling;
+    if (!gp || !gp.parent) trees[ws] = sibling; else gp.parent.kids[gp.side] = sibling;
   }
   function collectInsts(node, out = []) {
     if (!node) return out;
@@ -121,10 +121,10 @@ export function initDock(deps) {
     const p = parentOfLeaf(trees[ws], id);
     const node = findLeaf(trees[ws], id)?.node;
     if (node) node.tabs.forEach(t => { if (t.inst !== keepInst) dropInst(t.inst); });
-    if (!p) { trees[ws] = null; return; }
+    if (!p || !p.parent) { trees[ws] = null; return; } // was the root leaf
     const sibling = p.parent.kids[1 - p.side];
     const gp = parentOfNode(trees[ws], p.parent);
-    if (!gp) trees[ws] = sibling; else gp.parent.kids[gp.side] = sibling;
+    if (!gp || !gp.parent) trees[ws] = sibling; else gp.parent.kids[gp.side] = sibling;
   }
   function closePane(leafId, tabIndex) {
     snapshot();
@@ -157,12 +157,21 @@ export function initDock(deps) {
   function render() {
     ensure(ws);
     const root = trees[ws];
-    container.style.pointerEvents = root ? 'auto' : 'none';
     container.classList.toggle('dk-has', !!root);
     // detach all pooled bodies so we can re-place the active ones
     pool.forEach(r => r.el.remove());
     container.innerHTML = '';
-    if (!root) { garbageCollect(); return; }
+    if (!root) {
+      garbageCollect();
+      container.style.pointerEvents = 'auto';
+      const e = document.createElement('div'); e.className = 'dk-empty';
+      e.innerHTML = `<div class="dk-empty-t">This workspace is empty</div><div class="dk-empty-s">Add a widget, or restore the default layout.</div><div class="dk-empty-a"><button data-a="add">+ Add widget</button><button data-a="reset">Reset to default</button></div>`;
+      e.querySelector('[data-a="add"]').addEventListener('click', () => document.getElementById('btn-addw')?.click());
+      e.querySelector('[data-a="reset"]').addEventListener('click', () => reset());
+      container.appendChild(e);
+      return;
+    }
+    container.style.pointerEvents = 'auto';
     const wrap = document.createElement('div'); wrap.className = 'dk-root';
     wrap.appendChild(renderNode(root));
     container.appendChild(wrap);

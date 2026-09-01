@@ -145,7 +145,8 @@ button{ font:inherit; color:inherit; background:none; border:none; cursor:pointe
 .dot.live{ background:var(--live); box-shadow:0 0 6px var(--live); }
 
 /* dynamic workspace bits */
-.regs{ padding:8px 10px; display:grid; grid-template-columns:1fr 1fr; gap:5px 14px; overflow:auto; }
+.regs{ padding:10px; display:grid; grid-template-columns:1fr 1fr; gap:8px 16px; align-content:start; overflow:auto; }
+.reg .rn{ font-weight:500; }
 .reg{ display:flex; gap:8px; font-family:'JetBrains Mono',monospace; font-size:.76rem; }
 .reg .rn{ color:var(--acc); width:2.2rem; } .reg .rv{ color:var(--tx1); } .reg .rv.ch{ color:var(--live); }
 .wprow{ display:flex; align-items:center; gap:9px; padding:6px 10px; border-bottom:1px solid var(--bd); font-size:.82rem; }
@@ -316,18 +317,19 @@ a{ color:var(--acc); }
    TILING DOCK (Blender/AreaKit-style) — split · tabs · resize
    ===================================================================== */
 .dockspace.dk-has{ pointer-events:auto; background:var(--bg0); }
-.dk-root{ position:absolute; inset:6px; display:flex; }
+.dk-root{ position:absolute; inset:8px; display:flex; }
 .dk-split{ display:flex; flex:1; min-width:0; min-height:0; }
 .dk-split.row{ flex-direction:row; }
 .dk-split.col{ flex-direction:column; }
+/* the gutter is just the gap between areas — no line at rest, a faint accent on hover */
 .dk-gutter{ flex:0 0 auto; position:relative; z-index:2; }
-.dk-gutter.row{ width:7px; cursor:col-resize; }
-.dk-gutter.col{ height:7px; cursor:row-resize; }
-.dk-gutter::after{ content:""; position:absolute; background:var(--bd); border-radius:2px; transition:background .1s; }
-.dk-gutter.row::after{ left:2px; top:10px; bottom:10px; width:2px; }
-.dk-gutter.col::after{ top:2px; left:10px; right:10px; height:2px; }
+.dk-gutter.row{ width:8px; cursor:col-resize; }
+.dk-gutter.col{ height:8px; cursor:row-resize; }
+.dk-gutter::after{ content:""; position:absolute; background:transparent; border-radius:2px; transition:background .12s; }
+.dk-gutter.row::after{ left:3px; top:14px; bottom:14px; width:2px; }
+.dk-gutter.col::after{ top:3px; left:14px; right:14px; height:2px; }
 .dk-gutter:hover::after,.dk-gutter.drag::after{ background:var(--acc); }
-.dk-area{ flex:1; min-width:0; min-height:0; display:flex; flex-direction:column; margin:2px;
+.dk-area{ flex:1; min-width:0; min-height:0; display:flex; flex-direction:column;
   background:var(--bg1); border:1px solid var(--bd); border-radius:9px; overflow:hidden; }
 .dk-vrow{ flex:1; display:flex; min-height:0; }
 .dk-col{ flex:1; display:flex; flex-direction:column; min-width:0; min-height:0; }
@@ -380,3 +382,13 @@ a{ color:var(--acc); }
 .wfill{ display:flex; flex-direction:column; height:100%; min-height:0; }
 .wfill > .flist, .wfill > .code, .wfill > .chat, .wfill > .disasm{ flex:1; min-height:0; }
 .dk-body .dockhead{ border-radius:0; }
+
+/* empty-workspace state */
+.dk-empty{ position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:5px; color:var(--tx2); }
+.dk-empty-t{ font-size:1.05rem; color:var(--tx1); font-weight:600; }
+.dk-empty-s{ font-size:.85rem; }
+.dk-empty-a{ display:flex; gap:10px; margin-top:14px; }
+.dk-empty-a button{ padding:9px 15px; border-radius:8px; border:1px solid var(--bd2); background:var(--bg2); color:var(--tx0); font-size:.85rem; }
+.dk-empty-a button:hover{ border-color:var(--acc); color:var(--acc); }
+.dk-empty-a button[data-a="add"]{ background:linear-gradient(135deg,var(--acc),var(--accd)); color:#042; border:none; font-weight:600; }
+.dk-empty-a button[data-a="add"]:hover{ color:#042; }
