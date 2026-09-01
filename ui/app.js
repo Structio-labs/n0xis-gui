@@ -100,7 +100,17 @@ $('#dockspace').addEventListener('click', e => {
     const g = e.target.closest(sel);
     if (g && !g.hasAttribute('data-ws')) { g.parentElement.querySelectorAll(sel).forEach(x => x.classList.remove('on')); g.classList.add('on'); return; }
   }
+  // give every other actionable control feedback (Copilot suggestions, scanner buttons, dropdowns…)
+  const act = e.target.closest('.sugb, .b, .selbox, .cbtn, .provsel');
+  if (act) { const t = act.textContent.trim(); if (act.classList.contains('b')) echo('scan ' + t.toLowerCase(), 'ok · 3 candidates'); else toast(t); return; }
+  // freeze toggle in the watchlist
+  const frz = e.target.closest('.frz'); if (frz) { frz.classList.toggle('on'); return; }
 });
+
+// ---------- shell buttons (launcher links, new-workspace, target chip) ----------
+$$('#launcher a').forEach(a => a.addEventListener('click', () => toast(a.textContent.trim())));
+$('#wsbar .ws[style]')?.addEventListener('click', () => toast('New workspace — build your own from + Widget')); // the "+" tab
+$('#target-chip')?.addEventListener('click', e => { const r = $('#target-chip').getBoundingClientRect(); openCtx(r.left, r.bottom + 4, menuItems('File')); });
 
 // ---------- lightweight prefs persistence ----------
 const PREF = 'n0xis.prefs.v1';
