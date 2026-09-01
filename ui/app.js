@@ -91,9 +91,6 @@ $('#dockspace').addEventListener('click', e => {
   // workspace jump buttons (e.g. the decompiler's "CFG ↗")
   const jump = e.target.closest('[data-ws]');
   if (jump) { setWorkspace(jump.dataset.ws); return; }
-  // Copilot "Follow AI" toggle — one Copilot, following is a switch
-  const foll = e.target.closest('[data-foll]');
-  if (foll) { foll.classList.toggle('on'); foll.closest('.cop')?.classList.toggle('following', foll.classList.contains('on')); toast(foll.classList.contains('on') ? 'Follow AI — showing what the model examines' : 'Follow AI off'); return; }
   // function / string list selection (single-select within the same list)
   const row = e.target.closest('.frow');
   if (row) { row.parentElement?.querySelectorAll(':scope > .frow.on').forEach(r => r.classList.remove('on')); row.classList.add('on'); return; }
@@ -526,14 +523,10 @@ const WIDGETS = {
     <div class="glegend"><span class="lg"><span class="ln t"></span>true</span><span class="lg"><span class="ln f"></span>false</span><span class="lg"><span class="ln u"></span>uncond</span><span class="lg"><span class="ln loop"></span>loop</span><span class="lg" style="color:var(--tx2)">drag blocks · scroll = zoom</span></div></div></div>`,
     init: root => initGraphWidget(root) },
 
-  copilot: { title: 'Copilot', icon: 'chat', body: () => `<div class="wfill cop">
-    <div class="coptop"><span class="provsel">Claude · cloud</span><span class="grow"></span><span class="foll-t">Follow AI</span><span class="tog" data-foll title="Highlight what the AI is examining"><div class="knob"></div></span></div>
-    <div class="chat cop-chat" style="flex:1"><div class="msg"><div class="av me">ME</div><div class="bub mine">What does <span class="mono" style="color:var(--acc)">crc32_z</span> do?</div></div>
+  copilot: { title: 'Copilot', icon: 'chat', body: () => `<div class="wfill">
+    <div class="chat" style="flex:1"><div class="msg"><div class="av me">ME</div><div class="bub mine">What does <span class="mono" style="color:var(--acc)">crc32_z</span> do?</div></div>
     <div class="msg"><div class="av ai">AI</div><div><div class="bub">This is the <b>zlib CRC-32</b> checksum core. It folds each input byte through a 256-entry table (<span class="mono" style="color:var(--st)">crc_table</span>) — byte-by-byte until 8-aligned, then 8 bytes per pass.<div style="margin-top:6px;color:var(--tx1)">• <span class="mono">rsi</span> = buffer, <span class="mono">rdx</span> = length, <span class="mono">rdi</span> = seed.</div></div>
     <div class="sug"><span class="sugb">Find callers</span><span class="sugb">Explain “SSA”</span><span class="sugb">Rename vars</span></div></div></div></div>
-    <div class="cop-trace" style="flex:1"><div class="cop-tracehd" style="color:var(--vio)">${svg(ICON.follow,'')}Following — live trace</div>
-    <div style="padding:0 11px 11px;font-size:.82rem;line-height:1.5;overflow:auto">Found it. <span class="mono" style="color:var(--live)">7FF6C21A40</span> is <b>health</b> — I set a write-watchpoint and traced the writer to <span class="mono" style="color:var(--acc)">HealthComponent::TakeDamage</span>.
-    <div style="margin-top:8px;color:var(--vio);font-size:.72rem"><div>→ scan 87 (4-byte)</div><div>→ watch write 7FF6C21A40</div><div>→ provenance → decompile</div></div></div></div>
     <div class="ask"><span class="provsel">Claude · cloud</span>Ask, or “guide me through…”<span class="grow"></span><span style="color:var(--acc)">↵</span></div></div>` },
 
   details: { title: 'Details · Provenance', icon: 'note', body: () => `<div class="det selectable" style="height:100%">
