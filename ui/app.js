@@ -718,6 +718,14 @@ const CODE_LINES = [
   '&nbsp;&nbsp;<span class="k">return</span> ~v14;',
   '}',
 ];
+// shared render pieces (used by the decompiler/disassembly widgets AND the switchable Code view)
+const DISASM = [
+  ['0x1000015c8', '48 89 d8', 'mov', 'rax, rbx', ''], ['0x1000015cb', '83 e0 07', 'and', 'eax, 0x7', ''],
+  ['0x1000015ce', '74 2a', 'je', '0x1000015fa', 'hot'], ['0x1000015d0', '0f b6 03', 'movzx', 'eax, byte [rbx]', ''],
+  ['0x1000015d3', '31 f0', 'xor', 'eax, esi', ''], ['0x1000015d8', '8b 04 87', 'mov', 'eax, [rdi + rax*4]', ''],
+];
+const pseudoInner = () => `<div class="code selectable" style="flex:1;min-height:0">${CODE_LINES.map((l, i) => `<div class="cl${i === 7 ? ' hot' : ''}"><span class="gut">${i + 1}</span><span>${l}</span></div>`).join('')}</div>`;
+const disasmInner = () => `<div class="disasm selectable" style="flex:1;min-height:0;height:auto">${DISASM.map(([a, b, m, o, h]) => `<div class="drow${h ? ' hot' : ''}" data-ctx="drow"><span class="daddr">${a}</span><span class="dbytes">${b}</span><span class="dmn"${h ? ' style="color:var(--live)"' : ''}>${m}</span><span>${o}</span></div>`).join('')}</div>`;
 const FUNCS = [
   ['main', '0x401060', ''], ['crc32_z', '0x1510', 'sig'], ['crc32', '0x19d0', ''],
   ['compress', '0x14d0', 'sig'], ['deflate', '0x4650', ''], ['inflate_table', '0x2a10', ''],
@@ -733,13 +741,16 @@ const WIDGETS = {
 
   decompiler: { title: 'Decompiler', icon: 'decomp', body: () => `<div class="wfill">
     <div class="dockhead"><button class="pill on">structured</button><button class="pill">ssa</button><button class="pill">goto</button><div class="grow"></div><button class="dt" data-ws="graph">CFG ↗</button></div>
-    <div class="code selectable" style="flex:1">${CODE_LINES.map((l,i)=>`<div class="cl${i===7?' hot':''}"><span class="gut">${i+1}</span><span>${l}</span></div>`).join('')}</div></div>` },
+    ${pseudoInner()}</div>` },
 
-  disassembly: { title: 'Disassembly · x86-64', icon: 'disasm', body: () => `<div class="disasm selectable" style="height:100%;">${[
-      ['0x1000015c8','48 89 d8','mov','rax, rbx',''],['0x1000015cb','83 e0 07','and','eax, 0x7',''],
-      ['0x1000015ce','74 2a','je','0x1000015fa','hot'],['0x1000015d0','0f b6 03','movzx','eax, byte [rbx]',''],
-      ['0x1000015d3','31 f0','xor','eax, esi',''],['0x1000015d8','8b 04 87','mov','eax, [rdi + rax*4]',''],
-    ].map(([a,b,m,o,h])=>`<div class="drow${h?' hot':''}" data-ctx="drow"><span class="daddr">${a}</span><span class="dbytes">${b}</span><span class="dmn"${h?' style="color:var(--live)"':''}>${m}</span><span>${o}</span></div>`).join('')}</div>` },
+  disassembly: { title: 'Disassembly · x86-64', icon: 'disasm', body: () => `<div style="height:100%;display:flex;flex-direction:column">${disasmInner()}</div>` },
+
+  // Switchable Code view (Binary Ninja-style): one pane, one dropdown, three
+  // representations of the SAME function — Pseudo-C / Disassembly / Graph.
+  // (Side-by-side dual view = split this pane in the tiling dock and pick another.)
+  codeview: { title: 'Code', icon: 'decomp', body: () => `<div class="wfill cvw">
+    <div class="dockhead cv-head"><button class="cv-sel">Pseudo-C ▾</button><div class="grow"></div><button class="dt" data-ws="graph">CFG ↗</button></div>
+    <div class="cv-body" style="flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden"></div></div>`, init: root => initCodeView(root) },
 
   hex: { title: 'Hex', icon: 'hex', body: () => `<div class="hex selectable" style="height:100%"><div class="hx"><span class="hxa">7FF6C21A40</span><span class="hxb"><span class="hb-hi">57 00 00 00</span> 2a 00 00 00 5c 21 c2 f6</span><span class="hxc">W....*...\\!</span></div><div class="hx"><span class="hxa">7FF6C21A50</span><span class="hxb">64 00 00 00 00 00 80 3f 00 00 80 3f</span><span class="hxc">d......?...?</span></div></div>` },
 
@@ -962,6 +973,30 @@ async function loadDecomp() {
 
 // one place that refreshes every symbol-following widget when the selection moves
 function onSymbolSelect() { paintXrefs(); loadXrefs(); loadDecomp(); }
+
+/* ---- switchable Code view (Pseudo-C / Disassembly / Graph in one pane) ---- */
+function initCodeView(root) {
+  const body = root.querySelector('.cv-body'), sel = root.querySelector('.cv-sel');
+  if (!root.dataset.cvmode) root.dataset.cvmode = 'pseudo';
+  const label = { pseudo: 'Pseudo-C', disasm: 'Disassembly', graph: 'Graph' };
+  const draw = () => {
+    const m = root.dataset.cvmode;
+    sel.textContent = (label[m] || 'Pseudo-C') + ' ▾';
+    if (m === 'graph') { body.innerHTML = WIDGETS.graph.body(); try { WIDGETS.graph.init(body); } catch (e) { console.warn('graph init', e); } }
+    else if (m === 'disasm') { body.innerHTML = disasmInner(); }
+    else { body.innerHTML = pseudoInner(); if (isNative && curPath) loadDecomp(); }
+  };
+  draw();
+  sel.addEventListener('click', e => {
+    e.stopPropagation();
+    const r = sel.getBoundingClientRect();
+    openCtx(r.left, r.bottom + 4, [
+      { label: 'Pseudo-C', icon: ICON.decomp, act: () => { root.dataset.cvmode = 'pseudo'; draw(); } },
+      { label: 'Disassembly', icon: ICON.disasm, act: () => { root.dataset.cvmode = 'disasm'; draw(); } },
+      { label: 'Graph', icon: ICON.graph, act: () => { root.dataset.cvmode = 'graph'; draw(); } },
+    ]);
+  });
+}
 
 // Default workspace layouts — trees over the same widget catalog.
 const L = (...tabs) => ({ t: 'leaf', tabs });

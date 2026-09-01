@@ -496,3 +496,9 @@ a{ color:var(--acc); }
 .stk-r{ display:flex; align-items:center; gap:10px; padding:2px 11px; font-size:.77rem; }
 .stk-r:hover{ background:var(--bg2); }
 .stk-o{ color:var(--tx2); width:3.4rem; }
+
+/* ---- switchable Code view dropdown ---- */
+.cv-head{ gap:6px; }
+.cv-sel{ padding:5px 11px; border:1px solid var(--bd2); border-radius:6px; color:var(--tx0); font-size:.82rem; background:var(--bg2); }
+.cv-sel:hover{ border-color:var(--accd); color:var(--acc); }
+.cv-body .graphwrap{ height:100%; }
