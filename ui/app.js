@@ -81,6 +81,7 @@ function openTarget(kind) {
   $('#sb-dot').classList.toggle('live', live);
   $('#sb-mode').textContent = live ? 'live · pid 8124 · running' : 'static · PE x86-64';
   setWorkspace(live ? 'dynamic' : 'decompile');
+  recordRecent($('#target-name')?.textContent, kind); // remember for Open Recent
 }
 // ---------- launcher ----------
 $$('#launcher .card').forEach(card => card.addEventListener('click', () => openTarget(card.dataset.open)));
@@ -335,8 +336,14 @@ function initGraphWidget(root) {
   gv.addEventListener('pointermove', e => { if (!pan) return; cam.x = pan.cx + (e.clientX - pan.x); cam.y = pan.cy + (e.clientY - pan.y); userAdjusted = true; applyCam(); });
   gv.addEventListener('pointerup', () => { pan = null; gv.classList.remove('panning'); });
   gv.addEventListener('wheel', e => { e.preventDefault(); const r = gv.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top; const ns = clamp(cam.s * (e.deltaY < 0 ? 1.12 : 0.89), 0.3, 2.4); cam.x = mx - (mx - cam.x) * (ns / cam.s); cam.y = my - (my - cam.y) * (ns / cam.s); cam.s = ns; userAdjusted = true; applyCam(); }, { passive: false });
-  root.querySelector('.gz-in').addEventListener('click', () => { cam.s = clamp(cam.s * 1.15, 0.3, 2.4); userAdjusted = true; applyCam(); });
-  root.querySelector('.gz-out').addEventListener('click', () => { cam.s = clamp(cam.s * 0.87, 0.3, 2.4); userAdjusted = true; applyCam(); });
+  function zoomBy(factor) { // zoom about the centre of the viewport, not the corner
+    const r = gv.getBoundingClientRect(), cx = r.width / 2, cy = r.height / 2;
+    const ns = clamp(cam.s * factor, 0.3, 2.4);
+    cam.x = cx - (cx - cam.x) * (ns / cam.s); cam.y = cy - (cy - cam.y) * (ns / cam.s);
+    cam.s = ns; userAdjusted = true; applyCam();
+  }
+  root.querySelector('.gz-in').addEventListener('click', () => zoomBy(1.15));
+  root.querySelector('.gz-out').addEventListener('click', () => zoomBy(0.87));
   root.querySelector('.gz-fit').addEventListener('click', () => { userAdjusted = false; fitGraph(); }); // fit re-enables auto-fit
   // a small graph is self-explanatory — drop the legend (only large CFGs keep it)
   if (blocks.length <= 12) root.querySelector('.glegend')?.remove();
@@ -467,6 +474,109 @@ window.addEventListener('contextmenu', e => {
 window.addEventListener('pointerdown', e => { if (!e.target.closest('#ctxmenu')) closeCtx(); }, true);
 window.addEventListener('blur', closeCtx);
 window.addEventListener('scroll', closeCtx, true);
+
+/* =====================================================================
+   PROJECTS / RECENT TARGETS + the top menu bar
+   ===================================================================== */
+const RECENT_KEY = 'n0xis.recent.v1';
+function getRecent() { try { return JSON.parse(localStorage.getItem(RECENT_KEY)) || []; } catch { return []; } }
+function recordRecent(name, kind) {
+  if (!name) return;
+  let r = getRecent().filter(x => x.name !== name);
+  r.unshift({ name, kind, ts: Date.now() });
+  try { localStorage.setItem(RECENT_KEY, JSON.stringify(r.slice(0, 8))); } catch {}
+}
+function fmtAgo(ts) { const s = (Date.now() - ts) / 1000; if (s < 60) return 'just now'; if (s < 3600) return Math.floor(s / 60) + 'm ago'; if (s < 86400) return Math.floor(s / 3600) + 'h ago'; return Math.floor(s / 86400) + 'd ago'; }
+const isLive = () => $('#target-state')?.textContent === 'live';
+const winCtl = a => $(`[data-win="${a}"]`)?.click();
+function closeTarget() { $('#launcher').classList.remove('hidden'); $('#sb-dot').classList.remove('live'); toast('Target closed'); }
+function reopenRecent(rec) { $('#target-name').textContent = rec.name; openTarget(rec.kind === 'dynamic' || rec.kind === 'both' ? 'dynamic' : 'static'); }
+async function openFileTarget() {
+  if (isNative) {
+    const p = await pickFile('Choose a binary to analyze'); if (!p) return;
+    $('#target-name').textContent = p.split(/[\\/]/).pop(); openTarget('static'); engine.functions(p).then(renderRealFunctions);
+  } else { $('#launcher').classList.remove('hidden'); toast('Choose a target on the launcher'); }
+}
+function newProject() { $('#launcher').classList.remove('hidden'); toast('New project — pick a target'); }
+
+function recentItems() {
+  const r = getRecent();
+  if (!r.length) return [{ label: 'No recent targets', disabled: true, act: () => {} }];
+  return r.map(rec => item(`${rec.name}  ·  ${fmtAgo(rec.ts)}`, rec.kind === 'dynamic' || rec.kind === 'both' ? 'play' : 'decomp', '', () => reopenRecent(rec)));
+}
+function menuItems(name) {
+  switch (name) {
+    case 'File': return [
+      item('New project', 'add', '', newProject),
+      item('Open file…', 'decomp', 'Ctrl+O', openFileTarget),
+      item('Attach to process…', 'play', '', () => openTarget('dynamic')),
+      item('Launch & attach…', 'play', '', () => openTarget('both')),
+      sep, lbl('Open recent'), ...recentItems(), sep,
+      item('Reset layout', 'reset', '', () => dock.reset()),
+      item('Settings', 'settings', ',', () => settings.classList.add('on')),
+      item('Close target', 'x', '', closeTarget),
+    ];
+    case 'Edit': return [
+      item('Undo layout', 'reset', 'Ctrl+Shift+Z', () => dock.undo()),
+      item('Redo layout', 'reset', 'Ctrl+Shift+X', () => dock.redo()), sep,
+      item('Rename…', 'rename', 'N', () => toast('Rename')),
+      item('Comment…', 'note', ';', () => toast('Comment')),
+      item('Change type…', 'type', 'Y', () => toast('Change type')), sep,
+      item('Find / command palette', 'scan', 'Ctrl+P', openPal),
+    ];
+    case 'View': return [
+      lbl('Workspace'),
+      item('Decompile', 'decomp', '', () => setWorkspace('decompile')),
+      item('Static', 'strings', '', () => setWorkspace('static')),
+      item('Graph', 'graph', 'G', () => setWorkspace('graph')),
+      item('Dynamic', 'watch', '', () => setWorkspace('dynamic')), sep,
+      item('Add widget…', 'add', '', () => openWpal($('#btn-addw'))),
+      item('Reset layout', 'reset', '', () => dock.reset()), sep,
+      item('Zoom in', 'add', 'Ctrl +', () => setZoom(zoom + 0.1)),
+      item('Zoom out', 'fold', 'Ctrl −', () => setZoom(zoom - 0.1)),
+      item('Reset zoom', 'reset', 'Ctrl 0', () => setZoom(1)), sep,
+      item('Themes & appearance…', 'settings', '', () => settings.classList.add('on')),
+    ];
+    case 'Analyze': return [
+      item('Decompile', 'decomp', 'F5', () => { setWorkspace('decompile'); toast('Decompiling'); }),
+      item('Show CFG graph', 'graph', 'G', () => setWorkspace('graph')), sep,
+      item('Apply FLIRT signatures', 'type', '', () => echo('sig apply --flirt zlib-1.3.1.npat', 'named 118 functions')),
+      item('Identify algorithms', 'scan', '', () => toast('Scanning for known algorithms…')),
+      item('Find xrefs', 'xref', 'X', () => toast('Xrefs')),
+      item('Re-run analysis', 'reset', '', () => toast('Re-analyzing…')),
+    ];
+    case 'Debug': return [
+      item('Attach to process…', 'play', '', () => openTarget('dynamic')),
+      item('Launch & attach…', 'play', '', () => openTarget('both')), sep,
+      item('Set watchpoint', 'watch', 'W', () => setWorkspace('dynamic')),
+      item('Memory scan…', 'scan', '', () => setWorkspace('dynamic')), sep,
+      item('Continue', 'play', 'F5', () => toast('Continue'), { disabled: !isLive() }),
+      item('Step', 'decomp', 'F8', () => toast('Step'), { disabled: !isLive() }),
+    ];
+    case 'Window': return [
+      item('Decompile workspace', 'decomp', '', () => setWorkspace('decompile')),
+      item('Graph workspace', 'graph', '', () => setWorkspace('graph')),
+      item('Dynamic workspace', 'watch', '', () => setWorkspace('dynamic')), sep,
+      item('Reset layout', 'reset', '', () => dock.reset()), sep,
+      item('Minimize', 'fold', '', () => winCtl('min')),
+      item('Maximize', 'add', '', () => winCtl('max')),
+      item('Close window', 'x', '', () => winCtl('close'), { danger: true }),
+    ];
+    case 'Help': return [
+      item('Getting started', 'note', '', () => toast('Getting started')),
+      item('Glossary of terms', 'strings', '', () => toast('Glossary of RE terms')),
+      item('Keyboard shortcuts', 'type', '', openPal), sep,
+      item('Documentation', 'decomp', '', () => toast('Docs')),
+      item('About N0xis', 'settings', '', () => toast('N0xis GUI · a thin client over the n0xis engine')),
+    ];
+    default: return [];
+  }
+}
+$$('.tbar .menu').forEach(btn => btn.addEventListener('click', e => {
+  e.stopPropagation();
+  const r = btn.getBoundingClientRect();
+  openCtx(r.left, r.bottom + 3, menuItems(btn.textContent.trim()));
+}));
 
 /* =====================================================================
    WIDGET CATALOG + TILING DOCK (Blender/AreaKit-style)
