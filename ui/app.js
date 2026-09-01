@@ -113,7 +113,7 @@ $('#dockspace').addEventListener('click', e => {
   if (row) {
     row.parentElement?.querySelectorAll(':scope > .frow.on').forEach(r => r.classList.remove('on')); row.classList.add('on');
     const a = row.querySelector('.fa')?.textContent, n = row.querySelector('.nm')?.textContent;
-    if (a) { selAddr = a.trim(); selName = (n || '').trim(); }   // track the current symbol for Edit actions
+    if (a) { selAddr = a.trim(); selName = (n || '').trim(); onSymbolSelect(); }   // track + follow the current symbol
     return;
   }
   // cosmetic single-select groups inside a widget
@@ -799,6 +799,17 @@ const WIDGETS = {
   // Console — the process seam made interactive: run ANY n0xis command, see the
   // {ok,data,meta} envelope pretty-printed (bounded so a huge result can't flood).
   console: { title: 'Console · n0xis', icon: 'term', body: () => `<div class="nxc"><div class="nxc-log selectable"></div><div class="nxc-inp"><span class="nxc-ps mono">n0xis›</span><input class="nxc-in mono" spellcheck="false" placeholder="profile · guide scan · xref to --addr … · function discover"></div></div>`, init: root => initConsole(root) },
+
+  // Cross-references — `xref to` (who reaches this address) + `xref from` (where
+  // it goes). Follows the selected symbol; refreshes on demand.
+  xrefs: { title: 'Cross-references', icon: 'xref', body: () => `<div class="xrefs" style="height:100%;display:flex;flex-direction:column"><div class="xr-hd"><span class="dk-mk">${svg(ICON.xref, '')}</span><span class="xr-addr mono">${escH(selAddr)}</span><span class="dk-grow" style="flex:1"></span><button class="xr-refresh" title="Refresh">${svg(ICON.reset, '')}</button></div><div class="xr-cols selectable"><div class="xr-col"><div class="xr-t">referenced by</div><div class="xr-to"></div></div><div class="xr-col"><div class="xr-t">refers to</div><div class="xr-from"></div></div></div></div>`, init: root => initXrefs(root) },
+
+  // Variables — typed locals/params recovered by the decompiler for the selection.
+  variables: { title: 'Variables', icon: 'type', body: () => `<div class="vars selectable" style="height:100%;overflow:auto"></div>`, init: root => { paintVars(root.querySelector('.vars')); } },
+
+  // Stack — a call frame view. Live backtrace (`stack backtrace --pid`) once a
+  // process is attached; a static frame sketch until then.
+  stack: { title: 'Stack', icon: 'regs', body: () => `<div class="stk selectable" style="height:100%;overflow:auto"></div>`, init: root => { paintStack(root.querySelector('.stk')); } },
 };
 
 /* ---- Triage: render the `profile` envelope (demo data until a real target) ---- */
@@ -897,6 +908,61 @@ function initConsole(root) {
   });
 }
 
+/* ---- Xrefs / Variables / Stack + live decompiler (engine-backed) ---- */
+let XREF = {
+  to: [{ from: '0x14e6', to: '0x1510', kind: 'call', text: 'call crc32_z' }, { from: '0x1a70', to: '0x1510', kind: 'call', text: 'call crc32_z' }],
+  from: [{ from: '0x1510', to: '0x1002a', kind: 'call', text: 'call sub_1002A' }, { from: '0x1510', to: '0x1560', kind: 'cond_jmp', text: 'je short 0x1560' }],
+};
+const xrefRow = (r, dir) => { const a = dir === 'to' ? r.from : r.to; return `<div class="xr-r" data-ctx="frow" data-addr="${escH(a)}"><span class="xr-k">${escH(r.kind || '')}</span><span class="fnc mono">${escH(a)}</span><span class="xr-tx mono">${escH(r.text || '')}</span></div>`; };
+function paintXrefs(scope) {                         // scope: one widget root, or all mounted
+  const roots = scope ? [scope] : $$('.xrefs');
+  roots.forEach(r => {
+    const addr = r.querySelector('.xr-addr'), to = r.querySelector('.xr-to'), from = r.querySelector('.xr-from');
+    if (addr) addr.textContent = selAddr;
+    if (to) to.innerHTML = XREF.to.length ? XREF.to.map(x => xrefRow(x, 'to')).join('') : '<div class="xr-none">no references</div>';
+    if (from) from.innerHTML = XREF.from.length ? XREF.from.map(x => xrefRow(x, 'from')).join('') : '<div class="xr-none">no references</div>';
+  });
+}
+function initXrefs(root) { paintXrefs(root.querySelector('.xrefs') || root); root.querySelector('.xr-refresh')?.addEventListener('click', loadXrefs); }
+async function loadXrefs() {
+  if (!isNative || !curPath) { paintXrefs(); return; }
+  const [t, f] = await Promise.all([n0x(['xref', 'to', '--file', curPath, '--addr', selAddr]), n0x(['xref', 'from', '--file', curPath, '--addr', selAddr])]);
+  if (t?.ok) XREF.to = t.data.refs || []; if (f?.ok) XREF.from = f.data.refs || [];
+  paintXrefs();
+}
+
+let VARS = [{ n: 'rdi', t: 'uint64_t', k: 'param' }, { n: 'rsi', t: 'void*', k: 'param' }, { n: 'rdx', t: 'uint64_t', k: 'param' }, { n: 'v14', t: '—', k: 'local' }, { n: 'v9', t: '—', k: 'local' }];
+function paintVars(el) {
+  if (!el) { $$('.vars').forEach(paintVars); return; }
+  el.innerHTML = VARS.length ? VARS.map(v => `<div class="var-r"><span class="var-k ${v.k}">${v.k[0].toUpperCase()}</span><span class="ty mono">${escH(v.t)}</span><span class="fnc mono">${escH(v.n)}</span></div>`).join('') : '<div class="xr-none">no variables</div>';
+}
+function parseVars(sig, pseudo) {
+  const out = [], seen = new Set();
+  const m = /\(([^)]*)\)/.exec(sig || '');
+  if (m && m[1].trim()) m[1].split(',').forEach(p => { const parts = p.trim().split(/\s+/); const n = parts.pop(); const t = parts.join(' ') || '?'; if (n && !seen.has(n)) { seen.add(n); out.push({ n, t, k: 'param' }); } });
+  (pseudo || []).join('\n').replace(/\b(var_[0-9a-fA-F]+|v\d+)\b/g, x => { if (!seen.has(x)) { seen.add(x); out.push({ n: x, t: '—', k: 'local' }); } return x; });
+  return out;
+}
+
+let STACK = [{ off: '-0x08', t: 'void*', n: '__return_addr' }, { off: '-0x18', t: 'uint64_t', n: '__saved_rbx' }, { off: '-0x40', t: 'char[32]', n: 'var_40' }, { off: '-0x48', t: 'uint64_t', n: 'v14' }];
+function paintStack(el) {
+  if (!el) { $$('.stk').forEach(paintStack); return; }
+  el.innerHTML = `<div class="stk-note">${isLive() ? 'live backtrace' : 'static frame · attach a process for a live backtrace'}</div>` +
+    STACK.map(s => `<div class="stk-r"><span class="stk-o mono">${escH(s.off)}</span><span class="ty mono">${escH(s.t)}</span><span class="fnc mono">${escH(s.n)}</span></div>`).join('');
+}
+
+function paintDecomp(lines) {
+  $$('.code').forEach(code => { if (!code.querySelector('.gut')) return; code.innerHTML = lines.map((l, i) => `<div class="cl"><span class="gut">${i + 1}</span><span class="mono">${escH(l)}</span></div>`).join(''); });
+}
+async function loadDecomp() {
+  if (!isNative || !curPath) return;                 // keep the demo pseudo in the web preview
+  const r = await n0x(['decomp', 'pseudo', '--file', curPath, '--addr', selAddr]);
+  if (r?.ok && Array.isArray(r.data.pseudo)) { paintDecomp(r.data.pseudo); VARS = parseVars(r.data.signature, r.data.pseudo); paintVars(); }
+}
+
+// one place that refreshes every symbol-following widget when the selection moves
+function onSymbolSelect() { paintXrefs(); loadXrefs(); loadDecomp(); }
+
 // Default workspace layouts — trees over the same widget catalog.
 const L = (...tabs) => ({ t: 'leaf', tabs });
 const R = (ra, a, rb, b) => ({ t: 'split', dir: 'row', ratio: [ra, rb], kids: [a, b] });
@@ -905,13 +971,13 @@ const DEFAULT_LAYOUTS = {
   decompile: C(0.82,
     R(0.2, L('functions'),
       0.8, R(0.66, C(0.68, L('decompiler'), 0.32, L('disassembly')),
-                 0.34, C(0.58, L('copilot'), 0.42, L('details')))),
+                 0.34, C(0.58, L('copilot'), 0.42, L('details', 'variables', 'xrefs')))),
     0.18, L('output', 'console')),
   static: R(0.22, L('functions'),
     0.78, R(0.6, C(0.7, L('decompiler'), 0.3, L('disassembly')),
       0.4, C(0.5, L('triage'), 0.5, L('strings')))),
   graph: L('graph'),
-  dynamic: R(0.34, C(0.4, L('registers'), 0.6, L('watchpoints')),
+  dynamic: R(0.34, C(0.4, L('registers', 'stack'), 0.6, L('watchpoints')),
     0.66, R(0.5, C(0.55, L('scanner'), 0.45, L('livemem')),
                0.5, C(0.5, L('watchlist'), 0.5, L('copilot')))),
 };
