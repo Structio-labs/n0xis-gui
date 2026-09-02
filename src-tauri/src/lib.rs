@@ -306,20 +306,103 @@ fn kill_session(slot: &mut Option<EngineSess>) {
     }
 }
 
+/// A stable per-target project directory (`…/projects/<hash>/`) holding the
+/// engine's `.n0x/` for this binary. Running the session with this as its working
+/// directory makes the engine's on-disk caches — the content-addressed IR cache
+/// and the reverse-xref index — persist PER TARGET and survive across sessions,
+/// so `xref to` (and decompilation) stay fast the next time this binary is opened.
+fn session_project_dir(path: &str) -> Option<std::path::PathBuf> {
+    let home = std::env::var_os("HOME")?;
+    let dir = std::path::Path::new(&home)
+        .join(".local/share/pro.n0xis.gui/projects")
+        .join(format!("{:x}", md5ish(path)));
+    std::fs::create_dir_all(dir.join(".n0x")).ok()?;
+    Some(dir)
+}
+
+/// Resolve the project directory (the one holding `.n0x/`) for a target, honoring
+/// the user's cache-location choice: `project` is either an explicit directory
+/// (the "beside the binary" or "custom folder" modes — its `.n0x/` is created
+/// here) or `None` for the default central store under the app data dir.
+fn resolve_proj(path: &str, project: Option<&str>) -> Option<std::path::PathBuf> {
+    match project.filter(|p| !p.is_empty()) {
+        Some(dir) => {
+            let d = std::path::PathBuf::from(dir);
+            std::fs::create_dir_all(d.join(".n0x")).ok()?;
+            Some(d)
+        }
+        None => session_project_dir(path),
+    }
+}
+
+/// Bytes + human size of the DERIVED analysis cache (IR cache + xref index) for a
+/// target — the stuff that's safe to delete because it recomputes. Annotations /
+/// patches / tables (the user's real work) are deliberately not counted.
+#[tauri::command]
+async fn cache_info(path: String, project: Option<String>) -> Value {
+    let Some(dir) = resolve_proj(&path, project.as_deref()) else {
+        return json!({ "ok": false });
+    };
+    let n0x = dir.join(".n0x");
+    let dir_size = |sub: &str| -> u64 {
+        let mut b = 0u64;
+        if let Ok(rd) = std::fs::read_dir(n0x.join(sub)) {
+            for e in rd.flatten() {
+                if let Ok(m) = e.metadata() {
+                    if m.is_file() {
+                        b += m.len();
+                    }
+                }
+            }
+        }
+        b
+    };
+    let ir = dir_size("ir-cache");
+    let xref = dir_size("xref-index");
+    json!({ "ok": true, "bytes": ir + xref, "ir_cache": ir, "xref_index": xref, "dir": n0x.to_string_lossy() })
+}
+
+/// Delete the DERIVED analysis cache (IR cache + xref index) for a target. Never
+/// touches annotations/patches/tables. Returns how many bytes were freed.
+#[tauri::command]
+async fn clear_cache(path: String, project: Option<String>) -> Value {
+    let Some(dir) = resolve_proj(&path, project.as_deref()) else {
+        return json!({ "ok": false, "error": { "message": "no project dir" } });
+    };
+    let n0x = dir.join(".n0x");
+    let mut freed = 0u64;
+    for sub in ["ir-cache", "xref-index"] {
+        let d = n0x.join(sub);
+        if let Ok(rd) = std::fs::read_dir(&d) {
+            for e in rd.flatten() {
+                if let Ok(m) = e.metadata() {
+                    freed += m.len();
+                }
+            }
+        }
+        let _ = std::fs::remove_dir_all(&d);
+    }
+    json!({ "ok": true, "freed": freed })
+}
+
 /// Open (or replace) the persistent session for `path`. Returns the engine's
 /// `ready` envelope. On any spawn/IO failure the GUI silently falls back to
 /// one-shot calls.
 #[tauri::command]
-async fn session_open(path: String) -> Value {
+async fn session_open(path: String, project: Option<String>) -> Value {
     use std::io::BufRead;
     let bin = engine_bin();
-    let mut child = match std::process::Command::new(&bin)
-        .args(["serve", "--file", &path])
+    let mut cmd = std::process::Command::new(&bin);
+    cmd.args(["serve", "--file", &path])
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-    {
+        .stderr(std::process::Stdio::null());
+    // Persist the engine's per-target analysis caches (IR cache, xref index) in
+    // the user's chosen location (central / beside the binary / custom).
+    if let Some(dir) = resolve_proj(&path, project.as_deref()) {
+        cmd.current_dir(dir);
+    }
+    let mut child = match cmd.spawn() {
         Ok(c) => c,
         Err(e) => return json!({ "ok": false, "error": { "message": format!("spawn {bin}: {e}") } }),
     };
@@ -368,6 +451,103 @@ async fn session_close() {
     kill_session(&mut slot);
 }
 
+/// Latest state of the background `analyze` pass — polled by the GUI status bar.
+/// One analysis at a time (the app opens one binary); `{phase,done,total,running}`
+/// while running, then `{running:false, result}` with the final envelope.
+static ANALYSIS: std::sync::Mutex<Option<Value>> = std::sync::Mutex::new(None);
+
+/// Kick off `n0xis analyze` for `path` in its per-target project dir as a
+/// separate process, streaming its `[n0x] {phase,done,total}` stderr into
+/// `ANALYSIS` for the GUI to poll. Runs the same on-disk caches the session
+/// uses, so afterwards `xref`/`decomp` are fast. `cfg_limit` bounds the IR-cache
+/// warm-up phase (0 = every function).
+#[tauri::command]
+async fn analyze_start(path: String, limit: Option<u64>, project: Option<String>) -> Value {
+    use std::io::{BufRead, Read};
+    {
+        let mut a = ANALYSIS.lock().unwrap_or_else(|e| e.into_inner());
+        *a = Some(json!({ "running": true, "phase": "starting", "done": 0, "total": 0 }));
+    }
+    let bin = engine_bin();
+    let mut cmd = std::process::Command::new(&bin);
+    cmd.arg("analyze").arg("--file").arg(&path);
+    match limit {
+        Some(0) => {}                                   // 0 = warm every function
+        Some(n) => { cmd.arg("--limit").arg(n.to_string()); }
+        None => { cmd.arg("--no-cfg"); }               // default: skip the slow warm
+    }
+    cmd.stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
+    if let Some(dir) = resolve_proj(&path, project.as_deref()) {
+        cmd.current_dir(dir);
+    }
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            let mut a = ANALYSIS.lock().unwrap_or_else(|e| e.into_inner());
+            *a = Some(json!({ "running": false, "error": format!("spawn {bin}: {e}") }));
+            return json!({ "ok": false, "error": { "message": format!("spawn {bin}: {e}") } });
+        }
+    };
+    let stderr = child.stderr.take();
+    let stdout = child.stdout.take();
+    std::thread::spawn(move || {
+        if let Some(err) = stderr {
+            for line in std::io::BufReader::new(err).lines().map_while(Result::ok) {
+                if let Some(js) = line.strip_prefix("[n0x] ") {
+                    if let Ok(mut v) = serde_json::from_str::<Value>(js) {
+                        if let Some(obj) = v.as_object_mut() {
+                            obj.insert("running".into(), json!(true));
+                        }
+                        let mut a = ANALYSIS.lock().unwrap_or_else(|e| e.into_inner());
+                        *a = Some(v);
+                    }
+                }
+            }
+        }
+        let mut result = None;
+        if let Some(mut out) = stdout {
+            let mut s = String::new();
+            let _ = out.read_to_string(&mut s);
+            result = serde_json::from_str::<Value>(s.trim()).ok();
+        }
+        let _ = child.wait();
+        let mut a = ANALYSIS.lock().unwrap_or_else(|e| e.into_inner());
+        *a = Some(json!({ "running": false, "phase": "done", "result": result }));
+    });
+    json!({ "ok": true })
+}
+
+/// Poll the background analysis state.
+#[tauri::command]
+async fn analyze_status() -> Value {
+    ANALYSIS
+        .lock()
+        .map(|a| a.clone().unwrap_or_else(|| json!({ "running": false })))
+        .unwrap_or_else(|_| json!({ "running": false }))
+}
+
+/// Native folder picker — for choosing a custom cache/project location.
+#[tauri::command]
+async fn pick_folder(app: tauri::AppHandle, title: String) -> Option<String> {
+    use tauri_plugin_dialog::DialogExt;
+    let (tx, rx) = std::sync::mpsc::channel();
+    app.dialog().file().set_title(&title).pick_folder(move |f| {
+        let _ = tx.send(f);
+    });
+    rx.recv().ok().flatten().and_then(|f| f.into_path().ok()).map(|p| p.to_string_lossy().into_owned())
+}
+
+/// Set the "discard the derived cache when the window closes" flag + which target
+/// it applies to. Read by the window-close handler in `run()`. Off by default —
+/// caches persist unless the user opts out (keeps the "don't scatter cache" case).
+static DISCARD_ON_CLOSE: std::sync::Mutex<Option<(String, Option<String>)>> = std::sync::Mutex::new(None);
+
+#[tauri::command]
+async fn set_discard_on_close(path: Option<String>, project: Option<String>) {
+    let mut g = DISCARD_ON_CLOSE.lock().unwrap_or_else(|e| e.into_inner());
+    *g = path.map(|p| (p, project));
+}
+
 /// Native file picker for choosing a target binary.
 #[tauri::command]
 async fn pick_file(app: tauri::AppHandle, title: String) -> Option<String> {
@@ -392,7 +572,21 @@ async fn pick_file(app: tauri::AppHandle, title: String) -> Option<String> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![n0x_run, engine_info, pick_file, initial_target, list_processes, process_icons, fncache_get, fncache_put, session_open, session_query, session_close])
+        .invoke_handler(tauri::generate_handler![n0x_run, engine_info, pick_file, pick_folder, initial_target, list_processes, process_icons, fncache_get, fncache_put, session_open, session_query, session_close, analyze_start, analyze_status, cache_info, clear_cache, set_discard_on_close])
+        .on_window_event(|_window, event| {
+            // On close, if the user opted out of keeping the cache, delete the
+            // DERIVED cache (IR + xref index) for the open target — never names.
+            if let tauri::WindowEvent::CloseRequested { .. } = event {
+                let target = DISCARD_ON_CLOSE.lock().ok().and_then(|g| g.clone());
+                if let Some((path, project)) = target {
+                    if let Some(dir) = resolve_proj(&path, project.as_deref()) {
+                        let n0x = dir.join(".n0x");
+                        let _ = std::fs::remove_dir_all(n0x.join("ir-cache"));
+                        let _ = std::fs::remove_dir_all(n0x.join("xref-index"));
+                    }
+                }
+            }
+        })
         .run(tauri::generate_context!())
         .expect("error while running N0xis GUI");
 }

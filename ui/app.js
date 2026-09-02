@@ -1,5 +1,5 @@
 // N0xis GUI — interactive shell (framework-free; drops into Tauri's webview as-is)
-import { isNative, engineInfo, engine, pickFile, n0x, initialTarget, listProcesses, processIcons, fncacheGet, fncachePut, sessionOpen, sessionQuery, sessionClose } from './bridge.js';
+import { isNative, engineInfo, engine, pickFile, pickFolder, n0x, initialTarget, listProcesses, processIcons, fncacheGet, fncachePut, sessionOpen, sessionQuery, sessionClose, analyzeStart, analyzeStatus, cacheInfo, clearCache, setDiscardOnClose } from './bridge.js';
 import { initDock } from './dock.js';
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -183,6 +183,7 @@ const DBG = 'Debug (live target)';
 const KEYDEFS = [
   { id: 'palette', label: 'Command palette', group: 'General', def: 'Ctrl+Shift+P', scope: 'global', act: () => togglePal() },
   { id: 'palette2', label: 'Command palette · quick', group: 'General', def: 'Ctrl+P', scope: 'global', act: () => togglePal() },
+  { id: 'palette3', label: 'Command palette · F1', group: 'General', def: 'F1', scope: 'global', act: () => openPal() },
   { id: 'open', label: 'Open file / process', group: 'General', def: 'Ctrl+O', scope: 'global', act: () => openFileTarget() },
   { id: 'goto', label: 'Go to address / symbol', group: 'General', def: 'Ctrl+G', scope: 'target', act: () => doGoto() },
   { id: 'settings', label: 'Settings', group: 'General', def: 'Ctrl+,', scope: 'global', act: () => openSettings() },
@@ -290,11 +291,74 @@ const COMMANDS = [
   ['Change theme…', 'Switch the colour palette', '', () => settings.classList.add('on')],
   ['Open settings', 'Preferences and providers', ',', () => settings.classList.add('on')],
 ];
+
+/* ---- settings registry: every option is a searchable palette entry (F1) ----
+   getSet/setSet persist to localStorage; the command palette lists each setting
+   with its current value and toggles/cycles it, so any preference is findable by
+   typing — the VS Code F1 model. Docs live in docs/SETTINGS.md for AI/user. */
+const SETTINGS = [
+  { id: 'cache.mode', label: 'Cache location', desc: 'Where analysis caches (IR + xref index) are stored', def: 'central',
+    choices: [['central', 'Central (~/.local/share)'], ['project', 'Beside the binary'], ['custom', 'Custom folder…']] },
+  { id: 'cache.keepOnClose', label: 'Keep cache on close', desc: 'Off = delete the derived cache when the window closes (names are always kept)', def: true, toggle: true },
+  { id: 'analyze.autorun', label: 'Auto-analyze on open', desc: 'Run discover + RTTI + xref index in the background when a binary opens', def: true, toggle: true },
+  { id: 'analyze.warmCfg', label: 'Warm decompilation cache', desc: 'Also pre-decode every function (more disk + time; first decompile view is instant)', def: false, toggle: true },
+];
+function getSet(id, def) { try { const v = localStorage.getItem('n0x.set.' + id); return v === null ? def : JSON.parse(v); } catch { return def; } }
+function setSet(id, val) { try { localStorage.setItem('n0x.set.' + id, JSON.stringify(val)); } catch {} }
+function settingById(id) { return SETTINGS.find(s => s.id === id); }
+function settingValueLabel(s) {
+  const v = getSet(s.id, s.def);
+  if (s.toggle) return v ? 'On' : 'Off';
+  return (s.choices.find(c => c[0] === v) || [, v])[1];
+}
+async function runSetting(s) {
+  if (s.toggle) { setSet(s.id, !getSet(s.id, s.def)); }
+  else {
+    const vals = s.choices.map(c => c[0]);
+    const next = vals[(vals.indexOf(getSet(s.id, s.def)) + 1) % vals.length];
+    if (next === 'custom') { const p = await pickFolder('Choose a cache folder'); if (!p) return; setSet('cache.custom', p); }
+    setSet(s.id, next);
+  }
+  applySetting(s.id);
+  toast(s.label + ': ' + settingValueLabel(s));
+}
+// where the derived cache lives for `path`, honoring cache.mode (null = central)
+function projectDir(path) {
+  const mode = getSet('cache.mode', 'central');
+  if (mode === 'project') return path.replace(/[\/\\][^\/\\]*$/, '') || null;
+  if (mode === 'custom') return getSet('cache.custom', '') || null;
+  return null;
+}
+function applySetting(id) {
+  if (id === 'cache.keepOnClose' && curPath) setDiscardOnClose(getSet('cache.keepOnClose', true) ? null : curPath, projectDir(curPath));
+}
+// one-shot actions (not stateful settings)
+const SET_ACTIONS = [
+  ['Clear analysis cache', 'Delete the IR + xref-index cache for this binary (keeps names)', '', async () => {
+    if (!curPath) return toast('Open a binary first');
+    const r = await clearCache(curPath, projectDir(curPath));
+    toast(r?.ok ? 'Cache cleared · freed ' + fmtBytes(r.freed || 0) : 'Clear failed');
+  }],
+  ['Show cache size', 'How much disk the analysis cache uses for this binary', '', async () => {
+    if (!curPath) return toast('Open a binary first');
+    const r = await cacheInfo(curPath, projectDir(curPath));
+    toast(r?.ok ? 'Cache: ' + fmtBytes(r.bytes || 0) : 'No cache');
+  }],
+  ['Re-run analysis', 'Discover + RTTI + xref index again (resumes from cache)', '', () => { if (curPath) startAnalysis(curPath); }],
+];
+function fmtBytes(n) { if (n < 1024) return n + ' B'; if (n < 1048576) return (n / 1024).toFixed(0) + ' KB'; if (n < 1073741824) return (n / 1048576).toFixed(1) + ' MB'; return (n / 1073741824).toFixed(2) + ' GB'; }
+// the full palette list = static commands + settings (with live value) + actions
+function palEntries() {
+  const setCmds = SETTINGS.map(s => [`${s.label}: ${settingValueLabel(s)}`, s.desc, 'setting', () => runSetting(s)]);
+  const actCmds = SET_ACTIONS.map(a => [a[0], a[1], a[2] || 'action', a[3]]);
+  return COMMANDS.concat(setCmds, actCmds);
+}
+
 const palOv = $('#palette-ov'), palInput = $('#pal-input'), palList = $('#pal-list');
 let palSel = 0, palShown = [];
 function renderPal(q = '') {
   const s = q.toLowerCase();
-  palShown = COMMANDS.filter(c => (c[0] + ' ' + c[1]).toLowerCase().includes(s));
+  palShown = palEntries().filter(c => (c[0] + ' ' + c[1]).toLowerCase().includes(s));
   palSel = 0;
   palList.innerHTML = palShown.map((c, i) =>
     `<div class="cmd ${i === 0 ? 'on' : ''}" data-i="${i}">${svg(ICON.decomp, 'ci')}<div><div class="cn">${c[0]}</div><div class="cdesc">${c[1]}</div></div>${c[2] ? `<span class="csc kbd">${c[2]}</span>` : ''}</div>`
@@ -353,6 +417,8 @@ function initGraphWidget(root) {
   const gv = root.querySelector('.gviewport'), gc = root.querySelector('.gcanvas'), gs = root.querySelector('.gsvg');
   if (!gv || !gc || !gs) return;
   const mid = 'arrow-' + (graphSeq++);            // unique marker id per graph instance
+  // edge style: 'ortho' (default — hard 90° right angles) | 'curved' (beta — rounded corners)
+  let edgeMode = (() => { try { return localStorage.getItem('n0x.graph.edges') || 'ortho'; } catch { return 'ortho'; } })();
   const cam = { x: 40, y: 20, s: 1 };
   let blocks = GRAPH.blocks.map(b => ({ ...b }));  // local, independently draggable positions
   const rectOf = {};
@@ -376,7 +442,19 @@ function initGraphWidget(root) {
     const rows = {}; blocks.forEach(b => (rows[rankOf[b.id]] ||= []).push(b));
     const ranks = Object.keys(rows).map(Number).sort((a, c) => a - c);
     const CX = 470, GAPX = 46, PITCH = 158;
-    blocks.forEach(b => b.y = 24 + rankOf[b.id] * PITCH);
+    // A block that many edges converge on gets extra headroom ABOVE its row, so the
+    // incoming arrows fan out in the band and turn DOWN into its top — instead of
+    // cramming into its side at a shallow angle. Extra ≈ one lane-gap per extra parent.
+    const inCount = {}; GRAPH.edges.forEach(e => { inCount[e.t] = (inCount[e.t] || 0) + 1; });
+    const rowY = {}; let yAcc = 24;
+    ranks.forEach((r, idx) => {
+      let maxIn = 0; rows[r].forEach(b => maxIn = Math.max(maxIn, inCount[b.id] || 0));
+      const extra = Math.min(96, Math.max(0, maxIn - 2) * 16);   // headroom for a heavily-targeted row
+      if (idx > 0) yAcc += PITCH;
+      yAcc += extra;
+      rowY[r] = yAcc;
+    });
+    blocks.forEach(b => b.y = rowY[rankOf[b.id]]);
     ranks.forEach(r => {
       const row = rows[r];
       if (r === 0) { const tot = row.reduce((s, b) => s + b.w, 0) + GAPX * (row.length - 1); let x = CX - tot / 2; row.forEach(b => { b.x = Math.round(x); x += b.w + GAPX; }); return; }
@@ -426,28 +504,182 @@ function initGraphWidget(root) {
       });
     });
   }
+  // ---- orthogonal edge routing (Binary-Ninja-style) ----------------------
+  // A polyline through `pts`; radius>0 rounds every 90° corner (the beta mode),
+  // radius=0 keeps hard right angles (the default). No diagonals either way.
+  function polyPath(pts, radius) {
+    // drop consecutive duplicates so a zero-length segment can't break the round
+    const p = pts.filter((q, i) => i === 0 || q[0] !== pts[i - 1][0] || q[1] !== pts[i - 1][1]);
+    if (p.length < 2) return '';
+    if (radius <= 0 || p.length < 3) return 'M' + p.map(q => q[0] + ' ' + q[1]).join(' L');
+    const dist = (a, b) => Math.hypot(b[0] - a[0], b[1] - a[1]);
+    let d = `M${p[0][0]} ${p[0][1]}`;
+    for (let i = 1; i < p.length - 1; i++) {
+      const p0 = p[i - 1], p1 = p[i], p2 = p[i + 1];
+      const r = Math.min(radius, dist(p0, p1) / 2, dist(p1, p2) / 2);
+      const u1 = [(p1[0] - p0[0]) / (dist(p0, p1) || 1), (p1[1] - p0[1]) / (dist(p0, p1) || 1)];
+      const u2 = [(p2[0] - p1[0]) / (dist(p1, p2) || 1), (p2[1] - p1[1]) / (dist(p1, p2) || 1)];
+      d += ` L${(p1[0] - u1[0] * r).toFixed(1)} ${(p1[1] - u1[1] * r).toFixed(1)}`;
+      d += ` Q${p1[0]} ${p1[1]} ${(p1[0] + u2[0] * r).toFixed(1)} ${(p1[1] + u2[1] * r).toFixed(1)}`;
+    }
+    const last = p[p.length - 1];
+    return d + ` L${last[0]} ${last[1]}`;
+  }
+  // spread N ports evenly across a block edge span [lo..hi] so incoming arrows
+  // land in a row (never stacked at the centre); a lone port sits at the middle.
+  function portAt(lo, hi, idx, count) {
+    if (count <= 1) return (lo + hi) / 2;
+    const m = Math.min(20, (hi - lo) / (count + 1));
+    return lo + m + ((hi - lo) - 2 * m) * (idx / (count - 1));
+  }
+
+  // Greedy track allocator: pack non-overlapping intervals on the same track,
+  // push overlapping ones onto the next — so parallel runs keep a fixed gap and
+  // never merge, but two runs that only touch at a point may share a line.
+  function allocTracks(items, gap) {
+    items.sort((a, b) => a.lo - b.lo);
+    const end = [];
+    items.forEach(it => { let t = 0; while (t < end.length && end[t] > it.lo - gap) t++; it.track = t; end[t] = it.hi; it.tracks = end; });
+    return end.length;
+  }
   function drawEdges() {
     // explicit per-colour markers (context-stroke is unreliable across themes)
     const M = { n: mid + '-n', t: mid + '-t', f: mid + '-f', loop: mid + '-l', u: mid + '-u' };
     const mk = (id, c) => `<marker id="${id}" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="${c}"/></marker>`;
     const defs = `<defs>${mk(M.n, 'var(--bd2)')}${mk(M.t, 'var(--ok)')}${mk(M.f, 'var(--dgr)')}${mk(M.loop, 'var(--live)')}${mk(M.u, 'var(--fn)')}</defs>`;
-    const paths = GRAPH.edges.map(e => {
-      const a = rectOf[e.f], b = rectOf[e.t]; if (!a || !b) return '';
-      const cls = 'gedge' + (e.type ? ' ' + e.type : '');
+    const round = edgeMode === 'curved' ? 8 : 0;
+
+    // Rows & bands: horizontal runs live ONLY in the empty y-bands between block
+    // rows; vertical runs live ONLY in gutters — so no segment ever crosses a block.
+    const rowsByRank = {};
+    blocks.forEach(b => { const r = rectOf[b.id]; if (r) (rowsByRank[rankOf[b.id]] ||= []).push(r); });
+    const ranks = Object.keys(rowsByRank).map(Number).sort((a, c) => a - c);
+    const rTop = {}, rBot = {};
+    ranks.forEach(rk => { rTop[rk] = Math.min(...rowsByRank[rk].map(r => r.y)); rBot[rk] = Math.max(...rowsByRank[rk].map(r => r.y + r.h)); });
+    const bandBelow = rk => { const i = ranks.indexOf(rk), n = ranks[i + 1]; return n == null ? rBot[rk] + 42 : (rBot[rk] + rTop[n]) / 2; };
+    const bandAbove = rk => { const i = ranks.indexOf(rk), p = ranks[i - 1]; return p == null ? rTop[rk] - 42 : (rBot[p] + rTop[rk]) / 2; };
+
+    let minBX = Infinity, maxBX = -Infinity;
+    blocks.forEach(b => { const r = rectOf[b.id]; if (r) { minBX = Math.min(minBX, r.x); maxBX = Math.max(maxBX, r.x + r.w); } });
+    if (!isFinite(minBX)) { minBX = 0; maxBX = 0; }
+    const midX = (minBX + maxBX) / 2;
+    // Is the vertical column at x (over [y0..y1]) free of blocks? — lets an edge drop
+    // straight down the target's own column instead of detouring out to a gutter.
+    const vClear = (x, y0, y1, ids) => {
+      const lo = Math.min(y0, y1), hi = Math.max(y0, y1);
+      return !blocks.some(bl => { const r = rectOf[bl.id]; return r && !ids.includes(bl.id) && x > r.x - 8 && x < r.x + r.w + 8 && r.y < hi - 3 && r.y + r.h > lo + 3; });
+    };
+    // Pre-classify (port-independent) so ports can be ordered by TRUE approach.
+    // 'gut' = must detour to a side gutter; otherwise the edge drops the target column.
+    const meta = GRAPH.edges.map((e, i) => {
+      const a = rectOf[e.f], b = rectOf[e.t]; if (!a || !b) return null;
+      const rf = rankOf[e.f], rt = rankOf[e.t];
+      const fc = a.x + a.w / 2, tc = b.x + b.w / 2;
+      const side = (fc + tc) / 2 <= midX ? 'L' : 'R';
+      let gut;
+      if (rt === rf + 1) gut = false;                      // adjacent — always a clean drop
+      else if (rt <= rf) gut = true;                       // back-edge / same rank — round the side
+      else gut = !vClear(tc, a.y + a.h - 2, b.y + 2, [e.f, e.t]);  // forward: drop only if column clear
+      return { e, i, a, b, rf, rt, fc, tc, side, gut };
+    });
+    const metaByI = {}; meta.forEach(m => { if (m) metaByI[m.i] = m; });
+
+    // Ports: exits spread across each block's bottom, entries across its top. Order by
+    // APPROACH so arrows don't cross needlessly — a gutter edge takes the far port on
+    // its side; a direct edge sorts by the neighbour's centre (this is the swap that
+    // keeps a left-source on the left port and a right-source on the right).
+    const BIG = 1e9;
+    const outG = {}, inG = {};
+    meta.forEach(m => { if (!m) return; (outG[m.e.f] ||= []).push(m.i); (inG[m.e.t] ||= []).push(m.i); });
+    const outPort = {}, inPort = {};
+    const exitKey = i => { const m = metaByI[i]; return m.gut ? (m.side === 'L' ? -BIG : BIG) : m.tc; };
+    const entryKey = i => { const m = metaByI[i]; return m.gut ? (m.side === 'L' ? -BIG : BIG) : m.fc; };
+    for (const id in outG) { const r = rectOf[id]; const a = outG[id]; a.sort((i, j) => exitKey(i) - exitKey(j)); a.forEach((ei, k) => outPort[ei] = portAt(r.x, r.x + r.w, k, a.length)); }
+    for (const id in inG) { const r = rectOf[id]; const a = inG[id]; a.sort((i, j) => entryKey(i) - entryKey(j)); a.forEach((ei, k) => inPort[ei] = portAt(r.x, r.x + r.w, k, a.length)); }
+
+    // Pass 1 — skeleton. 'zig' = drop the target column (across the band below the
+    // source, then straight down); 'gut' = detour out to a side gutter.
+    const bandRuns = {};                 // rounded band-y → [hrun]
+    const gutRuns = { L: [], R: [] };    // gutter side → [route]
+    const routes = meta.map(m => {
+      if (!m) return null;
+      const e = m.e, i = m.i, a = m.a, b = m.b;
+      const sx = outPort[i], sBot = a.y + a.h, tx = inPort[i], tTop = b.y - 1;
+      const R = { e, i, sx, sBot, tx, tTop };
+      if (!m.gut) {
+        R.kind = 'zig';
+        const base = bandBelow(m.rf);
+        R.h1 = { lo: Math.min(sx, tx), hi: Math.max(sx, tx), base, r: R };
+        (bandRuns[Math.round(base)] ||= []).push(R.h1);
+      } else {
+        R.kind = 'gut';
+        R.side = m.side;
+        R.b1 = bandBelow(m.rf); R.b2 = bandAbove(m.rt);
+        gutRuns[R.side].push(R);
+      }
+      return R;
+    });
+    // Pass 2a — gutter columns. Route each edge (loops, back-edges, blocked spans)
+    // through the NEAREST clear vertical corridor beside its OWN blocks — a tight loop
+    // hugging the block — instead of swinging out to the global margin. Then give runs
+    // that share a corridor and overlap in y separate tracks so none of them merge.
+    // A gutter lane keeps a fixed GAP from every block — the SAME gap it keeps from
+    // other lanes — so an arrow can never touch or cross a block it isn't attached to.
+    const GAP = 14;
+    const clearAt = (x, lo, hi, ids) => !blocks.some(bl => { const r = rectOf[bl.id]; return r && !ids.includes(bl.id) && r.y < hi - 3 && r.y + r.h > lo + 3 && x > r.x - GAP && x < r.x + r.w + GAP; });
+    const nearestGut = (side, x0, y0, y1, ids) => {
+      let x = x0; const lo = Math.min(y0, y1), hi = Math.max(y0, y1);
+      for (let guard = 0; guard < 400; guard++) {
+        if (clearAt(x, lo, hi, ids)) return x;
+        let nx = side === 'R' ? x + 8 : x - 8;
+        blocks.forEach(bl => { const r = rectOf[bl.id]; if (!r || ids.includes(bl.id)) return;
+          if (r.y < hi - 3 && r.y + r.h > lo + 3 && x > r.x - GAP && x < r.x + r.w + GAP) nx = side === 'R' ? Math.max(nx, r.x + r.w + GAP) : Math.min(nx, r.x - GAP); });
+        x = nx;
+      }
+      return x;
+    };
+    for (const side of ['L', 'R']) {
+      const rs = gutRuns[side], dir = side === 'R' ? 1 : -1;
+      rs.forEach(R => {
+        const a = rectOf[R.e.f], b = rectOf[R.e.t];
+        const x0 = side === 'R' ? Math.max(a.x + a.w, b.x + b.w) + GAP : Math.min(a.x, b.x) - GAP;
+        R.baseX = nearestGut(side, x0, R.b1, R.b2, [R.e.f, R.e.t]);
+      });
+      const byCorr = {};                              // separate tracks only WITHIN a shared corridor
+      rs.forEach(R => (byCorr[Math.round(R.baseX / GAP)] ||= []).push(R));
+      for (const k in byCorr) {
+        const items = byCorr[k].map(R => ({ lo: Math.min(R.b1, R.b2), hi: Math.max(R.b1, R.b2), R }));
+        allocTracks(items, 4);
+        // each successive track is GAP further out, then snapped clear of any block it meets
+        items.forEach(it => { it.R.laneX = nearestGut(side, it.R.baseX + dir * it.track * GAP, it.R.b1, it.R.b2, [it.R.e.f, it.R.e.t]); });
+      }
+      gutRuns[side].forEach(R => {
+        R.h1 = { lo: Math.min(R.sx, R.laneX), hi: Math.max(R.sx, R.laneX), base: R.b1, r: R, isB1: true };
+        R.h2 = { lo: Math.min(R.tx, R.laneX), hi: Math.max(R.tx, R.laneX), base: R.b2, r: R, isB1: false };
+        (bandRuns[Math.round(R.b1)] ||= []).push(R.h1);
+        (bandRuns[Math.round(R.b2)] ||= []).push(R.h2);
+      });
+    }
+    // Pass 2b — band tracks: horizontal runs sharing a band get parallel y-lines.
+    for (const k in bandRuns) {
+      const g = bandRuns[k];
+      const n = allocTracks(g, 4);
+      g.forEach(h => { h.y = h.base + (h.track - (n - 1) / 2) * 7; });
+    }
+
+    const paths = routes.map(R => {
+      if (!R) return '';
+      const e = R.e, cls = 'gedge' + (e.type ? ' ' + e.type : '');
       const arw = e.type === 't' ? M.t : e.type === 'f' ? M.f : e.type === 'loop' ? M.loop : e.type === 'u' ? M.u : M.n;
-      if (e.type === 'loop') { // back-edge: out the body's right, up, back into the header's right side
-        const sx = a.x + a.w, sy = a.y + a.h * 0.5, tx2 = b.x + b.w, ty2 = b.y + b.h * 0.5, bx = Math.max(sx, tx2) + 44;
-        return `<path class="${cls}" marker-end="url(#${arw})" d="M${sx} ${sy} C${bx} ${sy},${bx} ${ty2},${tx2} ${ty2}"/>`;
+      let pts;
+      if (R.kind === 'zig') {
+        const my = R.h1.y;
+        pts = [[R.sx, R.sBot], [R.sx, my], [R.tx, my], [R.tx, R.tTop]];
+      } else {                            // gutter: down into band, across, up/down the gutter, across, into top
+        const y1 = R.h1.y, y2 = R.h2.y, lx = R.laneX;
+        pts = [[R.sx, R.sBot], [R.sx, y1], [lx, y1], [lx, y2], [R.tx, y2], [R.tx, R.tTop]];
       }
-      const sx = a.x + a.w / 2, sy = a.y + a.h, tx = b.x + b.w / 2, ty = b.y, my = (sy + ty) / 2;
-      const gap = (rankOf[e.t] ?? 0) - (rankOf[e.f] ?? 0);
-      // adaptive: only bow around when the straight corridor is actually blocked by a block
-      if (gap > 1 && corridorBlocked(sx, tx, rankOf[e.f], rankOf[e.t], [e.f, e.t])) {
-        const leftOff = Math.min(sx, tx) - 130, rightOff = Math.max(sx, tx) + 130;
-        const off = !corridorBlocked(leftOff, leftOff, rankOf[e.f], rankOf[e.t], [e.f, e.t]) ? leftOff : rightOff;
-        return `<path class="${cls}" marker-end="url(#${arw})" d="M${sx} ${sy} C${off} ${sy + 40},${off} ${ty - 40},${tx} ${ty - 2}"/>`;
-      }
-      return `<path class="${cls}" marker-end="url(#${arw})" d="M${sx} ${sy} C${sx} ${my},${tx} ${my},${tx} ${ty - 2}"/>`;
+      return `<path class="${cls}" marker-end="url(#${arw})" d="${polyPath(pts, round)}"/>`;
     }).join('');
     gs.innerHTML = defs + paths;
   }
@@ -473,7 +705,7 @@ function initGraphWidget(root) {
     cam.x = (vw - maxX * cam.s) / 2; cam.y = Math.max(16, (vh - maxY * cam.s) / 2); applyCam();
   }
   let pan = null, userAdjusted = false;           // once the user pans/zooms, stop auto-fitting
-  gv.addEventListener('pointerdown', e => { if (e.target.closest('.gzoom, .gnode, .glegend')) return; pan = { x: e.clientX, y: e.clientY, cx: cam.x, cy: cam.y }; gv.classList.add('panning'); gv.setPointerCapture(e.pointerId); });
+  gv.addEventListener('pointerdown', e => { if (e.target.closest('.gzoom, .gctl, .gnode, .glegend')) return; legend?.classList.remove('on'); legBtn?.classList.remove('on'); pan = { x: e.clientX, y: e.clientY, cx: cam.x, cy: cam.y }; gv.classList.add('panning'); gv.setPointerCapture(e.pointerId); });
   gv.addEventListener('pointermove', e => { if (!pan) return; cam.x = pan.cx + (e.clientX - pan.x); cam.y = pan.cy + (e.clientY - pan.y); userAdjusted = true; applyCam(); });
   gv.addEventListener('pointerup', () => { pan = null; gv.classList.remove('panning'); });
   gv.addEventListener('wheel', e => { e.preventDefault(); const r = gv.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top; const ns = clamp(cam.s * (e.deltaY < 0 ? 1.12 : 0.89), 0.3, 2.4); cam.x = mx - (mx - cam.x) * (ns / cam.s); cam.y = my - (my - cam.y) * (ns / cam.s); cam.s = ns; userAdjusted = true; applyCam(); }, { passive: false });
@@ -486,8 +718,19 @@ function initGraphWidget(root) {
   root.querySelector('.gz-in').addEventListener('click', () => zoomBy(1.15));
   root.querySelector('.gz-out').addEventListener('click', () => zoomBy(0.87));
   root.querySelector('.gz-fit').addEventListener('click', () => { userAdjusted = false; fitGraph(); }); // fit re-enables auto-fit
-  function trimLegend() { if (blocks.length <= 12) root.querySelector('.glegend')?.remove(); }
-  trimLegend();
+  // edge-style toggle (beta): ortho ⇄ curved, persisted; re-draws in place
+  const curveBtn = root.querySelector('.gc-curve');
+  const syncCurve = () => { curveBtn?.classList.toggle('on', edgeMode === 'curved'); };
+  syncCurve();
+  curveBtn?.addEventListener('click', () => {
+    edgeMode = edgeMode === 'curved' ? 'ortho' : 'curved';
+    try { localStorage.setItem('n0x.graph.edges', edgeMode); } catch {}
+    syncCurve(); drawEdges();
+    toast(edgeMode === 'curved' ? 'Rounded edges (beta)' : 'Orthogonal edges');
+  });
+  // legend popover — opened on demand from its button (hidden by default)
+  const legend = root.querySelector('.glegend'), legBtn = root.querySelector('.gc-legend');
+  legBtn?.addEventListener('click', e => { e.stopPropagation(); legend?.classList.toggle('on'); legBtn.classList.toggle('on', legend?.classList.contains('on')); });
   renderGraph();
   requestAnimationFrame(fitGraph);
   setTimeout(fitGraph, 120); // refit once layout settles
@@ -651,9 +894,25 @@ function askInput(title, value = '', placeholder = '') {
 async function runAnnotate(kind, addr, val, okverb) {
   if (!isNative) { toast(`${okverb} <span class="mono">${escH(addr)}</span> → ${escH(val || '(cleared)')} · demo`); return; }
   const args = ['annotate', kind, '--addr', addr]; if (val !== '') args.push('--value', val);
-  const r = await n0x(args);
-  toast(r?.ok ? `${okverb} <span class="mono">${escH(addr)}</span> → ${escH(val || 'cleared')}`
-              : `annotate failed: ${escH(r?.error?.message || '?')}`);
+  // Route through the session so the write lands in THIS target's `.n0x/` (the
+  // serve process runs in the project dir); a bare `n0x()` would walk up from the
+  // GUI's own cwd and scribble names into an unrelated global `.n0x/`.
+  const r = await eng(args);
+  if (!r?.ok) { toast(`annotate failed: ${escH(r?.error?.message || '?')}`); return; }
+  toast(`${okverb} <span class="mono">${escH(addr)}</span> → ${escH(val || 'cleared')}`);
+  // Decomp/disasm/xref are cached by address and now carry the old name — drop the
+  // cache so the views re-fetch. The engine's IR cache invalidates itself (the
+  // symbol fingerprint changed), so the re-fetch renders the new name.
+  engCache.clear();
+  if (kind === 'name') {
+    const key = (addr || '').toLowerCase();
+    const shown = val || ('sub_' + (addr || '').replace(/^0x/i, '').toUpperCase());
+    funcByAddr.set(key, shown);
+    if (Array.isArray(FUNCLIST)) { const f = FUNCLIST.find(f => (f.addr || '').toLowerCase() === key); if (f) f.name = shown; }
+    if ((selAddr || '').toLowerCase() === key) selName = val || selName;
+    try { paintFunctions(); } catch {}
+  }
+  onSymbolSelect();   // re-run every open view (decomp/disasm/xref/graph/linear) so the edit shows live
 }
 async function doRename(addr = selAddr, cur = selName) {
   const v = await askInput(`Rename ${cur || addr}`, cur || '', 'new function/variable name');
@@ -1018,15 +1277,21 @@ const WIDGETS = {
 
   graph: { title: 'Control-flow graph', icon: 'graph', body: () => `<div class="graphwrap" style="height:100%">
     <div class="gviewport"><div class="gcanvas"><svg class="gsvg" width="920" height="700"></svg></div>
-    <div class="gzoom"><button class="gz-in">+</button><div class="gzl">100%</div><button class="gz-out">−</button><button class="gz-fit">${svg('M4 9V5a1 1 0 0 1 1-1h4;M20 9V5a1 1 0 0 0-1-1h-4;M4 15v4a1 1 0 0 0 1 1h4;M20 15v4a1 1 0 0 1-1 1h-4','')}</button></div>
-    <div class="glegend"><span class="lg"><span class="ln t"></span>true</span><span class="lg"><span class="ln f"></span>false</span><span class="lg"><span class="ln u"></span>uncond</span><span class="lg"><span class="ln loop"></span>loop</span><span class="lg" style="color:var(--tx2)">drag blocks · scroll = zoom</span></div></div></div>`,
+    <div class="glegend"><div class="lg-h">Legend</div><span class="lg"><span class="ln t"></span>true branch</span><span class="lg"><span class="ln f"></span>false branch</span><span class="lg"><span class="ln u"></span>unconditional</span><span class="lg"><span class="ln loop"></span>loop back-edge</span><span class="lg" style="color:var(--tx2)">drag blocks · scroll = zoom</span></div>
+    <div class="gctl">
+      <button class="gc-legend" title="Legend">${svg('M8 6h13;M8 12h13;M8 18h13;M3 6h.01;M3 12h.01;M3 18h.01','')}</button>
+      <button class="gc-curve" title="Rounded edges (beta)">${svg('M4 19 C 9 5, 15 5, 20 19','')}<span class="gc-beta">β</span></button>
+    </div>
+    <div class="gzoom"><button class="gz-in">+</button><div class="gzl">100%</div><button class="gz-out">−</button><button class="gz-fit">${svg('M4 9V5a1 1 0 0 1 1-1h4;M20 9V5a1 1 0 0 0-1-1h-4;M4 15v4a1 1 0 0 0 1 1h4;M20 15v4a1 1 0 0 1-1 1h-4','')}</button></div></div></div>`,
     init: root => initGraphWidget(root) },
 
   copilot: { title: 'Copilot', icon: 'chat', body: () => `<div class="wfill">
     <div class="chat" style="flex:1"><div class="msg"><div class="av me">ME</div><div class="bub mine">What does <span class="mono" style="color:var(--acc)">crc32_z</span> do?</div></div>
     <div class="msg"><div class="av ai">AI</div><div><div class="bub">This is the <b>zlib CRC-32</b> checksum core. It folds each input byte through a 256-entry table (<span class="mono" style="color:var(--st)">crc_table</span>) — byte-by-byte until 8-aligned, then 8 bytes per pass.<div style="margin-top:6px;color:var(--tx1)">• <span class="mono">rsi</span> = buffer, <span class="mono">rdx</span> = length, <span class="mono">rdi</span> = seed.</div></div>
     <div class="sug"><span class="sugb">Find callers</span><span class="sugb">Explain “SSA”</span><span class="sugb">Rename vars</span></div></div></div></div>
-    <div class="ask"><span class="provsel">Claude · cloud</span>Ask, or “guide me through…”<span class="grow"></span><span style="color:var(--acc)">↵</span></div></div>` },
+    <div class="ai-scopebar" title="What the AI can see: the selected function, or the lines you select in the Linear view">${svg('M12 2a10 10 0 1 0 0 20a10 10 0 0 0 0-20;M12 8v4;M12 16h.01','')}<span class="ai-scope">whole binary</span></div>
+    <div class="ask"><span class="provsel">Claude · cloud</span>Ask, or “guide me through…”<span class="grow"></span><span style="color:var(--acc)">↵</span></div></div>`,
+    init: () => refreshAiScope() },
 
   details: { title: 'Details · Provenance', icon: 'note', body: () => `<div class="det selectable" style="height:100%">
     <div><div class="dk">Signature</div><span class="mono">uint64_t crc32_z(uint64_t, void*, uint64_t)</span></div>
@@ -1192,7 +1457,7 @@ let XREF = {
   to: [{ from: '0x14e6', to: '0x1510', kind: 'call', text: 'call crc32_z' }, { from: '0x1a70', to: '0x1510', kind: 'call', text: 'call crc32_z' }],
   from: [{ from: '0x1510', to: '0x1002a', kind: 'call', text: 'call sub_1002A' }, { from: '0x1510', to: '0x1560', kind: 'cond_jmp', text: 'je short 0x1560' }],
 };
-const xrefRow = (r, dir) => { const a = dir === 'to' ? r.from : r.to; return `<div class="xr-r" data-ctx="frow" data-addr="${escH(a)}"><span class="xr-k">${escH(r.kind || '')}</span><span class="fnc mono">${escH(a)}</span><span class="xr-tx mono">${escH(r.text || '')}</span></div>`; };
+const xrefRow = (r, dir) => { const a = dir === 'to' ? r.from : r.to; const nm = (dir === 'from' && r.sym) ? ` <span class="dsym" style="color:var(--acc)">${escH(r.sym)}</span>` : ''; return `<div class="xr-r" data-ctx="frow" data-addr="${escH(a)}"><span class="xr-k">${escH(r.kind || '')}</span><span class="fnc mono">${escH(a)}${nm}</span><span class="xr-tx mono">${escH(r.text || '')}</span></div>`; };
 function paintXrefs(scope) {                         // scope: one widget root, or all mounted
   const roots = scope ? [scope] : $$('.xrefs');
   roots.forEach(r => {
@@ -1215,15 +1480,27 @@ async function loadXrefs(seq) {
 }
 
 let VARS = [{ n: 'rdi', t: 'uint64_t', k: 'param' }, { n: 'rsi', t: 'void*', k: 'param' }, { n: 'rdx', t: 'uint64_t', k: 'param' }, { n: 'v14', t: '—', k: 'local' }, { n: 'v9', t: '—', k: 'local' }];
+const VAR_BADGE = { arg: 'A', stack: 'S', reg: 'R' };   // Argument · Stack · Register (Binary-Ninja taxonomy)
 function paintVars(el) {
   if (!el) { $$('.vars').forEach(paintVars); return; }
-  el.innerHTML = VARS.length ? VARS.map(v => `<div class="var-r"><span class="var-k ${v.k}">${v.k[0].toUpperCase()}</span><span class="ty mono">${escH(v.t)}</span><span class="fnc mono">${escH(v.n)}</span></div>`).join('') : '<div class="xr-none">no variables</div>';
+  const n = { arg: 0, stack: 0, reg: 0 }; VARS.forEach(v => n[v.k] = (n[v.k] || 0) + 1);
+  const head = VARS.length ? `<div class="vars-h">${n.arg} args · ${n.stack} stack · ${n.reg} reg</div>` : '';
+  el.innerHTML = head + (VARS.length ? VARS.map(v => `<div class="var-r" data-ctx="drow" data-addr="${escH(selAddr)}"><span class="var-k ${v.k}" title="${v.k}">${VAR_BADGE[v.k] || '?'}</span><span class="ty mono">${escH(v.t)}</span><span class="fnc mono">${escH(v.n)}</span></div>`).join('') : '<div class="xr-none">no variables</div>');
 }
+// Classify variables the way BN does: Arguments (signature), Stack (var_XXXX =
+// frame offsets), Register (vN / rax_N = SSA temporaries), with types lifted from
+// the pseudocode declarations where the engine emits them.
 function parseVars(sig, pseudo) {
-  const out = [], seen = new Set();
+  const out = [], at = new Map();          // name → index in out
+  const text = (pseudo || []).join('\n');
+  const add = (n, t, k) => { if (at.has(n)) { const v = out[at.get(n)]; if ((v.t === '—' || v.t === '?') && t && t !== '—') v.t = t; } else { at.set(n, out.length); out.push({ n, t: t || '—', k }); } };
   const m = /\(([^)]*)\)/.exec(sig || '');
-  if (m && m[1].trim()) m[1].split(',').forEach(p => { const parts = p.trim().split(/\s+/); const n = parts.pop(); const t = parts.join(' ') || '?'; if (n && !seen.has(n)) { seen.add(n); out.push({ n, t, k: 'param' }); } });
-  (pseudo || []).join('\n').replace(/\b(var_[0-9a-fA-F]+|v\d+)\b/g, x => { if (!seen.has(x)) { seen.add(x); out.push({ n: x, t: '—', k: 'local' }); } return x; });
+  if (m && m[1].trim() && !/^\s*void\s*$/.test(m[1])) m[1].split(',').forEach(p => { const parts = p.trim().split(/\s+/); const nm = parts.pop(); const t = parts.join(' ') || '?'; if (nm) add(nm.replace(/^[*&]+/, ''), t, 'arg'); });
+  // typed declarations: "int32_t var_10c8", "int64_t* rsi = …", "char var_1004_1"
+  const typeRe = /\b((?:u?int(?:8|16|32|64|128)_t|void|char|bool|float|double|long|short|int)(?:\s*\*+)?)\s+(var_[0-9a-fA-F]+(?:_\d+)?|[a-z][a-z0-9]*_\d+|v\d+)\b/g;
+  let g; while ((g = typeRe.exec(text))) { const t = g[1].replace(/\s+/g, ''), n = g[2]; add(n, t, /^var_/.test(n) ? 'stack' : 'reg'); }
+  // remaining bare tokens with no declared type
+  text.replace(/\b(var_[0-9a-fA-F]+(?:_\d+)?|v\d+)\b/g, x => { add(x, '—', /^var_/.test(x) ? 'stack' : 'reg'); return x; });
   return out;
 }
 
@@ -1260,14 +1537,26 @@ function paintDecompMsg(msg) { $$('.code').forEach(code => { code.innerHTML = `<
 const engCache = new Map(); const ENG_CACHE_MAX = 800;
 let sessionOn = false;   // a persistent `n0xis serve` process is loaded for curPath
 // route through the resident session when available (image loaded once), else one-shot
-// global "Loading" indicator — honest feedback while a query is in flight.
-// The commands are async (off the UI thread), so this actually animates instead
-// of the whole interface freezing.
-let inflight = 0, loadEl = null;
+// global "Loading" indicator — honest feedback ONLY for a slow interactive wait.
+// Debounced so it never strobes: it appears only after a query has been in flight
+// ~180ms continuously (so instant/cached calls and the fast background-analysis
+// stream — which the status bar already reports — never flash it), and once shown
+// it stays put for at least 320ms so it fades cleanly instead of blinking.
+let inflight = 0, loadEl = null, loadTimer = null, loadShownAt = 0;
 function setLoading(on) {
   inflight = Math.max(0, inflight + (on ? 1 : -1));
   if (!loadEl) { loadEl = document.createElement('div'); loadEl.id = 'loading-ind'; loadEl.innerHTML = '<span class="spin"></span><span>Loading…</span>'; document.body.appendChild(loadEl); }
-  loadEl.classList.toggle('on', inflight > 0);
+  if (inflight > 0) {
+    if (!loadEl.classList.contains('on') && !loadTimer)
+      loadTimer = setTimeout(() => { loadTimer = null; if (inflight > 0) { loadEl.classList.add('on'); loadShownAt = Date.now(); } }, 180);
+  } else {
+    if (loadTimer) { clearTimeout(loadTimer); loadTimer = null; }
+    if (loadEl.classList.contains('on')) {
+      const held = Date.now() - loadShownAt, minOn = 320;
+      if (held >= minOn) loadEl.classList.remove('on');
+      else setTimeout(() => { if (inflight === 0) loadEl.classList.remove('on'); }, minOn - held);
+    }
+  }
 }
 async function eng(args) {
   setLoading(true);
@@ -1289,10 +1578,20 @@ async function loadDecomp(seq) {
   if (r?.ok && Array.isArray(r.data.pseudo)) { paintDecomp(r.data.pseudo); VARS = parseVars(r.data.signature, r.data.pseudo); paintVars(); }
   else paintDecompMsg('// no decompilation for ' + selAddr + (r?.error ? ' — ' + r.error.message : ''));
 }
+// A branch/call whose target is a *named* function (recovered RTTI, a user
+// rename) renders `→ Name` beside the operand — the engine now names the whole
+// function list, so this resolves against it. A bare `sub_…` adds nothing, so it
+// is left off. Best-effort: a target not in the currently-loaded page stays plain.
+function calleeName(target) {
+  if (!target) return '';
+  const n = funcByAddr.get(String(target).toLowerCase());
+  return (n && !/^sub_/i.test(n)) ? n : '';
+}
+const symArrow = target => { const n = calleeName(target); return n ? ` <span class="dsym" style="color:var(--acc)">→ ${escH(n)}</span>` : ''; };
 function paintDisasm(insns) {
   const html = insns.map(i => {
     const op = (i.text || '').slice((i.mnemonic || '').length).trim();
-    return `<div class="drow" data-ctx="drow" data-addr="${escH(i.va || '')}"><span class="daddr">${escH(i.va || '')}</span><span class="dbytes">${escH(i.bytes || '')}</span><span class="dmn">${escH(i.mnemonic || '')}</span><span>${escH(op)}</span></div>`;
+    return `<div class="drow" data-ctx="drow" data-addr="${escH(i.va || '')}"><span class="daddr">${escH(i.va || '')}</span><span class="dbytes">${escH(i.bytes || '')}</span><span class="dmn">${escH(i.mnemonic || '')}</span><span>${escH(op)}${symArrow(i.target)}</span></div>`;
   }).join('');
   $$('.disasm').forEach(d => { d.innerHTML = html; });
 }
@@ -1306,60 +1605,184 @@ async function loadDisasm(seq) {
 
 /* ---- Linear view: the whole binary as one continuous listing + a minimap ---- */
 const linears = [];
+// The Linear view shows the WHOLE program as one continuous listing. It never
+// truncates on selection — it keeps a sliding window of whole functions that grows
+// UP (scroll up / prepend) and DOWN (scroll down / append), anchored on the sorted
+// function table, and simply centres on the selected function. The minimap maps the
+// ENTIRE function table at once (full extent immediately) and fills in as bodies load.
+const vaNum = a => parseInt(String(a || '').replace(/[^0-9a-fx]/gi, ''), 16) || 0;
+
+// ---- AI context scope: the AI sees ONLY the selected function, or, when lines are
+// selected in the Linear view, exactly that address range. Shown as a chip in Copilot.
+let linSel = null;                          // {a,b} numeric addresses, or null
+const linWarmed = new Set();                // numeric fn addrs whose disassembly is cached (fills the minimap)
+function aiScopeText() {
+  if (linSel) { const a = Math.min(linSel.a, linSel.b), b = Math.max(linSel.a, linSel.b); return a === b ? `line @ 0x${a.toString(16)}` : `lines 0x${a.toString(16)}–0x${b.toString(16)}`; }
+  if (selName || selAddr) return (selName || selAddr) + (selAddr && selName ? ' · ' + selAddr : '');
+  return 'whole binary';
+}
+function refreshAiScope() { $$('.ai-scope').forEach(el => { el.textContent = aiScopeText(); }); }
+
 function initLinear(root) {
-  const view = root.querySelector('.linear'), map = root.querySelector('.lin-map');
-  const wrap = root.querySelector('.lin-wrap');
-  let rows = [], loading = false, done = false;
-  const vaN = a => parseInt(a, 16) || 0;
-  const lineHTML = ins => {
-    const va = ins.va || '', fn = funcByAddr.get(va.toLowerCase());
-    const op = (ins.text || '').slice((ins.mnemonic || '').length).trim();
-    return (fn ? `<div class="lin-fn">${escH(fn)}</div>` : '') +
-      `<div class="lin-row${fn ? ' fnstart' : ''}" data-ctx="drow" data-addr="${escH(va)}"><span class="daddr">${escH(va)}</span><span class="dmn">${escH(ins.mnemonic || '')}</span><span class="lin-op">${escH(op)}</span></div>`;
-  };
-  const render = () => { view.innerHTML = rows.map(r => r.html).join(''); drawMap(); };
-  async function loadAt(addr, replace) {
-    if (loading || !isNative || !curPath || !addr) return;
-    loading = true;
-    const r = await n0xCached('lin|' + curPath + '|' + addr, ['disasm', '--file', curPath, '--addr', addr, '--count', '160']);
-    loading = false;
-    const ins = (r?.ok && Array.isArray(r.data.insns)) ? r.data.insns : [];
-    if (!ins.length) { if (replace) { rows = []; view.innerHTML = `<div class="fl-empty">no disassembly at ${escH(addr)}</div>`; } done = true; return; }
-    const chunk = ins.map(i => ({ va: i.va, len: i.len || 1, html: lineHTML(i) }));
-    rows = replace ? chunk : rows.concat(chunk);
-    if (replace) done = false;
-    if (rows.length > 4000) rows = rows.slice(-4000);
-    render();
+  const view = root.querySelector('.linear'), map = root.querySelector('.lin-map'), wrap = root.querySelector('.lin-wrap');
+  let FN = [], fnLen = -1;                  // sorted anchor table — rebuilt when the function list grows
+  const fnCache = new Map();               // fi → [rowObj]  (whole-function disassembly, cached)
+  let loFi = 0, hiFi = -1, rows = [], loading = false;
+  // The widget may mount before the function list has finished streaming (it's a tab
+  // built up front). Re-sync from the live FUNCLIST whenever it changes size.
+  function syncFN() {
+    const src = FUNCLIST || [];
+    if (src.length === fnLen) return false;
+    fnLen = src.length;
+    FN = src.map(f => ({ addr: f.addr, name: f.name, n: vaNum(f.addr) })).filter(f => f.n).sort((a, b) => a.n - b.n);
+    fnCache.clear(); loFi = 0; hiFi = -1; rows = [];
+    return true;
   }
-  async function loadMore() {
-    if (done || loading || !rows.length) return;
-    const last = rows[rows.length - 1], next = '0x' + (vaN(last.va) + last.len).toString(16);
-    await loadAt(next, false);
+  const MAXROWS = 5000;                    // sliding-window cap so the DOM stays light
+  const fiOf = n => { let lo = 0, hi = FN.length - 1, r = 0; while (lo <= hi) { const m = (lo + hi) >> 1; if (FN[m].n <= n) { r = m; lo = m + 1; } else hi = m - 1; } return r; };
+  const lineHTML = (ins, fnName) => {
+    const va = ins.va || '', op = (ins.text || '').slice((ins.mnemonic || '').length).trim();
+    return (fnName ? `<div class="lin-fn" data-addr="${escH(va)}">${escH(fnName)}</div>` : '') +
+      `<div class="lin-row${fnName ? ' fnstart' : ''}" data-ctx="drow" data-addr="${escH(va)}"><span class="daddr">${escH(va)}</span><span class="dmn">${escH(ins.mnemonic || '')}</span><span class="lin-op">${escH(op)}${symArrow(ins.target)}</span></div>`;
+  };
+  async function fetchFn(fi) {
+    if (fnCache.has(fi)) return fnCache.get(fi);
+    const f = FN[fi]; if (!f || !isNative || !curPath) return [];
+    const nextN = FN[fi + 1]?.n ?? (f.n + 0x400);
+    const approx = Math.max(24, Math.min(700, Math.ceil((nextN - f.n) / 2)));
+    const r = await n0xCached('lin|' + curPath + '|' + f.addr, ['disasm', '--file', curPath, '--addr', f.addr, '--count', String(approx)]);
+    let ins = (r?.ok && Array.isArray(r.data.insns)) ? r.data.insns : [];
+    if (FN[fi + 1]) ins = ins.filter(x => vaNum(x.va) < nextN);         // stop at the next function
+    const rws = ins.map((x, idx) => ({ va: x.va, fi, html: lineHTML(x, idx === 0 ? (f.name || 'sub_' + f.addr) : null) }));
+    if (!rws.length) rws.push({ va: f.addr, fi, html: lineHTML({ va: f.addr, mnemonic: '—', text: '' }, f.name || 'sub_' + f.addr) });
+    fnCache.set(fi, rws); linWarmed.add(f.n);
+    return rws;
+  }
+  const rebuild = () => { rows = []; for (let i = loFi; i <= hiFi; i++) rows = rows.concat(fnCache.get(i) || []); };
+  const render = () => { view.innerHTML = rows.map(r => r.html).join(''); markSel(); drawMap(); };
+  // keep whatever the user is looking at fixed in place across a window change (add/trim)
+  const anchor = () => { const el = [...view.querySelectorAll('.lin-row[data-addr]')].find(c => c.offsetTop >= view.scrollTop); return el ? { va: el.getAttribute('data-addr'), off: el.offsetTop - view.scrollTop } : null; };
+  const restore = a => { if (!a) return; const el = [...view.querySelectorAll('.lin-row[data-addr]')].find(c => c.getAttribute('data-addr') === a.va); if (el) view.scrollTop = el.offsetTop - a.off; };
+  async function appendNext() {
+    if (loading || hiFi >= FN.length - 1) return; loading = true;
+    const a = anchor();
+    await fetchFn(hiFi + 1); hiFi++;
+    rebuild(); while (rows.length > MAXROWS && loFi < hiFi) { loFi++; rebuild(); }
+    render(); restore(a); loading = false;
+  }
+  async function prependPrev() {
+    if (loading || loFi <= 0) return; loading = true;
+    const a = anchor();
+    await fetchFn(loFi - 1); loFi--;
+    rebuild(); while (rows.length > MAXROWS && hiFi > loFi) { hiFi--; rebuild(); }
+    render(); restore(a); loading = false;
+  }
+  function centerOn(addr) {
+    const t = vaNum(addr);
+    const el = [...view.querySelectorAll('[data-addr]')].find(c => vaNum(c.getAttribute('data-addr')) === t);
+    if (el) view.scrollTop = el.offsetTop - view.clientHeight / 2 + el.offsetHeight;
+    markSel(); drawVp();
+  }
+  function markSel() {
+    const t = vaNum(selAddr);
+    view.querySelectorAll('.lin-row.cur').forEach(n => n.classList.remove('cur'));
+    view.querySelectorAll('.lin-row[data-addr]').forEach(n => { if (vaNum(n.getAttribute('data-addr')) === t) n.classList.add('cur'); });
+    // paint the AI line-selection band
+    view.querySelectorAll('.lin-row.selline').forEach(n => n.classList.remove('selline'));
+    if (linSel) { const a = Math.min(linSel.a, linSel.b), b = Math.max(linSel.a, linSel.b); view.querySelectorAll('.lin-row[data-addr]').forEach(n => { const v = vaNum(n.getAttribute('data-addr')); if (v >= a && v <= b) n.classList.add('selline'); }); }
+  }
+  async function jump(addr) {
+    syncFN();
+    if (!FN.length || !isNative || !curPath) { view.innerHTML = '<div class="fl-empty">Open a binary to see the continuous listing.</div>'; return; }
+    const fi = fiOf(vaNum(addr) || FN[0].n);
+    if (fi < loFi || fi > hiFi || !rows.length) {   // re-anchor: load this function, then a small buffer each way
+      loFi = hiFi = fi; await fetchFn(fi); rebuild(); render();
+      for (let k = 0; k < 2; k++) { await appendNext(); await prependPrev(); }
+    }
+    centerOn(addr);
   }
   function drawMap() {
     const h = map.clientHeight || wrap.clientHeight || 400; if (map.height !== h) map.height = h;
     const ctx = map.getContext('2d'); ctx.clearRect(0, 0, map.width, h);
-    const n = rows.length || 1, step = h / n;
-    for (let i = 0; i < rows.length; i++) {
-      const m = rows[i].html;
-      ctx.fillStyle = m.includes('fnstart') ? '#3fdcc4' : (/>call</.test(m) ? '#8ab4ff' : (/>j[a-z]+</.test(m) ? '#ffb454' : 'rgba(150,160,180,.45)'));
-      ctx.fillRect(8, i * step, map.width - 16, Math.max(1, step * 0.7));
+    const N = FN.length || 1;
+    for (let y = 0; y < h; y++) {                    // full extent immediately; brighter where bodies are loaded
+      const fi = Math.floor(y / h * N), f = FN[fi];
+      const loaded = f && (fnCache.has(fi) || linWarmed.has(f.n)), named = f && !/^sub_/i.test(f.name);
+      ctx.fillStyle = loaded ? (named ? '#3fdcc4' : '#8ab4ff') : (named ? 'rgba(63,220,196,.28)' : 'rgba(150,160,180,.14)');
+      ctx.fillRect(8, y, map.width - 16, 1);
     }
+    if (hiFi >= loFi) { ctx.fillStyle = 'rgba(255,255,255,.06)'; ctx.fillRect(0, loFi / N * h, map.width, Math.max(2, (hiFi - loFi + 1) / N * h)); }
     drawVp();
   }
   function drawVp() {
     let box = wrap.querySelector('.lin-vp'); if (!box) { box = document.createElement('div'); box.className = 'lin-vp'; wrap.appendChild(box); }
-    const total = view.scrollHeight || 1, h = map.clientHeight || 400;
-    box.style.top = (view.scrollTop / total * h) + 'px';
-    box.style.height = Math.max(14, view.clientHeight / total * h) + 'px';
+    const N = FN.length || 1, h = map.clientHeight || 400, span = (hiFi - loFi + 1) || 1;
+    const frac = view.scrollHeight ? view.scrollTop / view.scrollHeight : 0, vfrac = view.scrollHeight ? view.clientHeight / view.scrollHeight : 1;
+    box.style.top = ((loFi + frac * span) / N * h) + 'px';
+    box.style.height = Math.max(10, (vfrac * span) / N * h) + 'px';
   }
-  view.addEventListener('scroll', () => { if (view.scrollTop + view.clientHeight > view.scrollHeight - 320) loadMore(); drawVp(); });
-  map.addEventListener('pointerdown', e => { const r = map.getBoundingClientRect(); view.scrollTop = (e.clientY - r.top) / r.height * view.scrollHeight; });
-  root._linJump = addr => loadAt(addr, true);
+  view.addEventListener('scroll', () => {
+    if (view.scrollTop < 240) prependPrev();
+    if (view.scrollTop + view.clientHeight > view.scrollHeight - 320) appendNext();
+    drawVp();
+  });
+  // click a row → select for the AI; shift-click → extend a line range (addresses passed to the AI)
+  view.addEventListener('click', e => {
+    const row = e.target.closest('.lin-row[data-addr]'); if (!row) return;
+    const v = vaNum(row.getAttribute('data-addr'));
+    if (e.shiftKey && linSel) linSel.b = v; else linSel = { a: v, b: v };
+    markSel(); refreshAiScope();
+  });
+  map.addEventListener('pointerdown', e => { const r = map.getBoundingClientRect(); const fi = clamp(Math.floor((e.clientY - r.top) / r.height * FN.length), 0, FN.length - 1); const f = FN[fi]; if (f) { selAddr = f.addr; selName = f.name; linSel = null; onSymbolSelect(); } });
+  root._linJump = addr => jump(addr);
+  // analysis ticks call this — if the function list only just arrived, populate now
+  root._linRedraw = () => { if (!rows.length && syncFN()) jump(selAddr || (FN[0] && FN[0].addr) || ''); else try { drawMap(); } catch {} };
   linears.push(root);
-  const start = selAddr || (FUNCLIST && FUNCLIST[0] && FUNCLIST[0].addr) || '';
-  if (start && isNative && curPath) loadAt(start, true);
-  else view.innerHTML = '<div class="fl-empty">Open a binary to see the continuous listing.</div>';
+  jump(selAddr || (FUNCLIST && FUNCLIST[0] && FUNCLIST[0].addr) || '');
+}
+
+// Background analysis — drives the REAL engine `analyze` pass (discover → RTTI →
+// xref index → IR-cache warm) as a separate process, and shows its live phases in
+// the status bar (like BN). It's what pre-builds the xref index so `xref to` is
+// instant, recovers MSVC class names, and persists to the per-target `.n0x/`.
+let analyzePollTimer = null;
+const PHASE_LABEL = { starting: 'starting', discovering: 'discovering', 'scanning-rtti': 'scanning RTTI', 'indexing-xrefs': 'indexing xrefs', disassembling: 'disassembling', done: 'ready' };
+// How many functions to pre-decode in the (optional) warm phase. null = skip it
+// (decompilation still caches lazily on first view; avoids ~371k tiny cache files).
+function fmtPhase(s) {
+  const p = PHASE_LABEL[s.phase] || s.phase || 'analyzing';
+  const done = +s.done || 0, total = +s.total || 0;
+  if (s.phase === 'disassembling' && total > 0) return `${p} ${done.toLocaleString()} / ${total.toLocaleString()}`;
+  if (done > 0) return `${p} ${done.toLocaleString()}`;
+  return p + '…';
+}
+async function startAnalysis(path) {
+  if (!isNative) return;
+  clearInterval(analyzePollTimer);
+  const val = $('#sb-aval'), spin = $('#sb-analysis .sb-aspin');
+  const set = (txt, col) => { if (val) { val.textContent = txt; val.style.color = col || 'var(--acc)'; } };
+  if (spin) spin.hidden = false;
+  set('starting…');
+  const limit = getSet('analyze.warmCfg', false) ? 0 : null;   // 0 = warm every fn · null = skip
+  await analyzeStart(path, limit, projectDir(path));
+  analyzePollTimer = setInterval(async () => {
+    if (path !== curPath) { clearInterval(analyzePollTimer); return; }
+    const s = await analyzeStatus();
+    if (!s) return;
+    if (s.running === false) {
+      clearInterval(analyzePollTimer);
+      if (spin) spin.hidden = true;
+      const r = s.result?.data;
+      if (r) {
+        const parts = [`${(+r.functions || 0).toLocaleString()} fns`];
+        if (r.rtti_classes) parts.push(`${(+r.rtti_classes).toLocaleString()} classes`);
+        set('ready · ' + parts.join(' · '), 'var(--ok)');
+      } else set('ready', 'var(--ok)');
+      linears.forEach(x => { if (x.isConnected) x._linRedraw?.(); });
+      return;
+    }
+    set(fmtPhase(s));
+  }, 300);
 }
 
 // one place that refreshes every symbol-following widget when the selection moves.
@@ -1367,6 +1790,7 @@ function initLinear(root) {
 // run xrefs + CFG if those widgets aren't shown) — big latency win.
 function onSymbolSelect() {
   const my = ++selSeq;
+  linSel = null;                             // a function selection supersedes any Linear line-selection
   const a = $('#sb-addr'); if (a) a.textContent = selAddr;
   const n = $('#sb-name'); if (n) n.textContent = selName || '—';
   if ($('.code')) loadDecomp(my);
@@ -1374,6 +1798,7 @@ function onSymbolSelect() {
   if ($('.xrefs')) { paintXrefs(); loadXrefs(my); }
   if ($('.graphwrap')) loadGraph();
   linears.forEach(r => { if (r.isConnected) r._linJump?.(selAddr); });
+  refreshAiScope();                          // a new function became the AI's context
 }
 
 /* ---- memory scanner: real `scan value` / `scan filter` against the attached pid ---- */
@@ -1442,12 +1867,12 @@ const C = (ca, a, cb, b) => ({ t: 'split', dir: 'col', ratio: [ca, cb], kids: [a
 const DEFAULT_LAYOUTS = {
   decompile: C(0.82,
     R(0.2, L('functions'),
-      0.8, R(0.66, C(0.68, L('decompiler'), 0.32, L('disassembly')),
+      0.8, R(0.66, C(0.68, L('decompiler', 'linear'), 0.32, L('disassembly')),
                  0.34, C(0.58, L('copilot'), 0.42, L('details', 'variables', 'xrefs')))),
     0.18, L('output', 'console')),
   static: R(0.22, L('functions'),
-    0.78, R(0.6, C(0.7, L('decompiler'), 0.3, L('disassembly', 'linear')),
-      0.4, C(0.5, L('triage'), 0.5, L('strings')))),
+    0.78, R(0.6, C(0.7, L('decompiler', 'linear'), 0.3, L('disassembly')),
+      0.4, C(0.5, L('variables', 'triage'), 0.5, L('strings', 'xrefs')))),
   graph: L('graph'),
   dynamic: R(0.34, C(0.4, L('registers', 'stack'), 0.6, L('watchpoints')),
     0.66, R(0.5, C(0.55, L('scanner'), 0.45, L('livemem')),
@@ -1548,11 +1973,16 @@ async function openBinary(path) {
   toast('Analyzing <span class="mono">' + escH(name) + '</span>…');
   setTarget(path);                             // → Triage via profile
   sessionOn = false;
-  if (isNative) { const s = await sessionOpen(path); if (path !== curPath) return; sessionOn = !!(s && s.ok); }
+  if (isNative) {
+    const proj = projectDir(path);
+    const s = await sessionOpen(path, proj); if (path !== curPath) return; sessionOn = !!(s && s.ok);
+    // arm the close behavior for the current cache-location + keep-on-close choice
+    setDiscardOnClose(getSet('cache.keepOnClose', true) ? null : path, proj);
+  }
   loadFunctions(path);
 }
 
-// Stream the function list in chunks so a huge binary (AyuGram = 371k functions)
+// Stream the function list in chunks so a huge binary (~370k functions is real)
 // never lands as one 16 MB blob that crashes the webview. --pdata gives exact
 // starts, a real total, and O(1) paging; falls back to prologue scan.
 const FUNC_CHUNK = 20000, FUNC_CAP = 400000;   // cap only guards against pathological OOM
@@ -1568,7 +1998,9 @@ async function loadFunctions(path) {
         FUNCLIST = c.list; FUNCLIST.forEach(f => funcByAddr.set((f.addr || '').toLowerCase(), f.name));
         FUNCMETA = { total: c.total ?? FUNCLIST.length, shown: FUNCLIST.length, named: c.named ?? 0 };
         paintFunctions(); $('#dockspace .flist .frow')?.click();
+        linears.forEach(r => { if (r.isConnected) r._linRedraw?.(); });   // populate a Linear tab that mounted early
         toast('Loaded ' + FUNCMETA.total.toLocaleString() + ' functions · cached');
+        if (getSet("analyze.autorun", true)) startAnalysis(path);
         return;
       }
     }
@@ -1598,6 +2030,8 @@ async function loadFunctions(path) {
     toast('Loaded ' + FUNCLIST.length.toLocaleString() + ' functions');
     // persist for an instant re-open next time (validated by file mtime)
     try { fncachePut(path, JSON.stringify({ list: FUNCLIST, total: FUNCMETA.total, named: FUNCMETA.named })); } catch {}
+    linears.forEach(r => { if (r.isConnected) r._linRedraw?.(); });        // populate a Linear tab that mounted early
+    if (getSet("analyze.autorun", true)) startAnalysis(path);
   }
 }
 

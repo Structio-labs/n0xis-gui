@@ -32,6 +32,15 @@ export function pickFile(title) {
   return invoke('pick_file', { title: title || 'Choose a target' });
 }
 
+/** Open a native folder picker (custom cache location) -> path | null */
+export function pickFolder(title) {
+  if (!isNative) return Promise.resolve(null);
+  return invoke('pick_folder', { title: title || 'Choose a folder' });
+}
+
+/** Arm/disarm deleting the derived cache for a target when the window closes. */
+export function setDiscardOnClose(path, project = null) { if (!isNative) return Promise.resolve(null); return invoke('set_discard_on_close', { path, project }); }
+
 /** A path passed on the command line (n0xis-gui /path) -> path | null */
 export function initialTarget() {
   if (!isNative) return Promise.resolve(null);
@@ -54,10 +63,22 @@ export function processIcons() {
 export function fncacheGet(path) { if (!isNative) return Promise.resolve(null); return invoke('fncache_get', { path }); }
 export function fncachePut(path, data) { if (!isNative) return Promise.resolve(false); return invoke('fncache_put', { path, data }); }
 
-/** Persistent engine session — the image is loaded once and reused. */
-export function sessionOpen(path) { if (!isNative) return Promise.resolve(null); return invoke('session_open', { path }); }
+/** Persistent engine session — the image is loaded once and reused. `project` is
+ * the directory whose `.n0x/` holds the caches (null = central default store). */
+export function sessionOpen(path, project = null) { if (!isNative) return Promise.resolve(null); return invoke('session_open', { path, project }); }
 export function sessionQuery(args) { if (!isNative) return Promise.resolve(null); return invoke('session_query', { args }); }
 export function sessionClose() { if (!isNative) return Promise.resolve(null); return invoke('session_close', {}); }
+
+/** Background whole-program analysis (engine `analyze`): discover → RTTI → xref
+ * index → IR-cache warm. `limit`: null = skip the CFG warm (default), 0 = every
+ * function, N = cap. Poll analyzeStatus() for {phase,done,total,running,result}. */
+export function analyzeStart(path, limit = null, project = null) { if (!isNative) return Promise.resolve(null); return invoke('analyze_start', { path, limit, project }); }
+export function analyzeStatus() { if (!isNative) return Promise.resolve(null); return invoke('analyze_status', {}); }
+
+/** Derived-cache (IR + xref index) size / clear for a target. `project` matches
+ * the cache-location choice (null = central). Never touches names/patches. */
+export function cacheInfo(path, project = null) { if (!isNative) return Promise.resolve(null); return invoke('cache_info', { path, project }); }
+export function clearCache(path, project = null) { if (!isNative) return Promise.resolve(null); return invoke('clear_cache', { path, project }); }
 
 /** Convenience wrappers over the CLI's verbs. */
 export const engine = {

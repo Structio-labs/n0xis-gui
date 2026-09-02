@@ -407,13 +407,22 @@ a{ color:var(--acc); }
 /* ---- graph: draggable blocks + edge legend ---- */
 .gnode{ cursor:grab; }
 .gnode.dragging{ cursor:grabbing; border-color:var(--acc); box-shadow:0 0 0 1px var(--acc),0 10px 24px rgba(0,0,0,.5); z-index:5; }
-.glegend{ position:absolute; left:12px; bottom:12px; display:flex; gap:12px; align-items:center; background:var(--bg2);
-  border:1px solid var(--bd2); border-radius:8px; padding:6px 11px; font-size:.7rem; color:var(--tx1); box-shadow:0 6px 18px rgba(0,0,0,.4);
-  z-index:3; pointer-events:none; opacity:.8; transition:opacity .15s; }
-.gviewport:hover .glegend{ opacity:.5; }   /* fades out of the way while you work in the graph */
-.glegend .lg{ display:flex; align-items:center; gap:5px; }
-.glegend .ln{ width:16px; height:0; border-top:2px solid var(--bd2); }
+/* Legend — a popover, opened on demand from the legend button (hidden by default). */
+.glegend{ position:absolute; right:3.6rem; bottom:12px; display:none; flex-direction:column; gap:7px; align-items:flex-start; background:var(--bg2);
+  border:1px solid var(--bd2); border-radius:8px; padding:9px 12px; font-size:.7rem; color:var(--tx1); box-shadow:0 8px 22px rgba(0,0,0,.5); z-index:6; }
+.glegend.on{ display:flex; }
+.glegend .lg-h{ font-size:.62rem; text-transform:uppercase; letter-spacing:.08em; color:var(--tx2); margin-bottom:1px; }
+.glegend .lg{ display:flex; align-items:center; gap:7px; }
+.glegend .ln{ width:20px; height:0; border-top:2px solid var(--bd2); flex:none; }
 .glegend .ln.t{ border-color:var(--ok); } .glegend .ln.f{ border-color:var(--dgr); } .glegend .ln.u{ border-color:var(--fn); } .glegend .ln.loop{ border-top-style:dashed; border-color:var(--live); }
+/* Graph controls — a button column above the zoom control (bottom-right). */
+.gctl{ position:absolute; right:12px; bottom:calc(12px + 8.4rem); display:flex; flex-direction:column; gap:2px; background:var(--bg2);
+  border:1px solid var(--bd2); border-radius:8px; overflow:hidden; box-shadow:0 6px 18px rgba(0,0,0,.4); z-index:4; }
+.gctl button{ position:relative; width:2rem; height:2rem; display:flex; align-items:center; justify-content:center; color:var(--tx1); }
+.gctl button:hover{ background:var(--bg3); color:var(--tx0); }
+.gctl button.on{ background:var(--acc); color:var(--bg0); }
+.gctl .gc-beta{ position:absolute; right:1px; top:0; font-size:.5rem; line-height:1; color:var(--live); font-weight:700; }
+.gctl button.on .gc-beta{ color:var(--bg0); }
 
 /* Copilot — one widget; "Follow AI" is a switch between chat and live trace */
 .coptop{ display:flex; align-items:center; gap:8px; padding:7px 11px; border-bottom:1px solid var(--bd); flex:0 0 auto; }
@@ -489,8 +498,12 @@ a{ color:var(--acc); }
 .var-r{ display:flex; align-items:center; gap:9px; padding:3px 11px; font-size:.78rem; }
 .var-r:hover{ background:var(--bg2); }
 .var-k{ width:1.15rem; height:1.15rem; border-radius:4px; display:flex; align-items:center; justify-content:center; font-size:.62rem; font-weight:700; flex:0 0 auto; }
+.var-k.arg{ background:rgba(255,180,84,.16); color:var(--live); }      /* Argument */
+.var-k.stack{ background:rgba(138,180,255,.14); color:var(--fn); }     /* Stack var */
+.var-k.reg{ background:rgba(167,139,250,.16); color:var(--vio); }      /* Register/SSA temp */
 .var-k.param{ background:rgba(255,180,84,.16); color:var(--live); }
 .var-k.local{ background:rgba(138,180,255,.14); color:var(--fn); }
+.vars-h{ padding:5px 11px; font-size:.68rem; color:var(--tx2); border-bottom:1px solid var(--bd); position:sticky; top:0; background:var(--bg1); }
 .stk{ padding:5px 0; }
 .stk-note{ font-size:.7rem; color:var(--tx2); padding:4px 11px 7px; }
 .stk-r{ display:flex; align-items:center; gap:10px; padding:2px 11px; font-size:.77rem; }
@@ -568,11 +581,20 @@ select.scan-type{ background:var(--bg2); color:var(--tx0); border:1px solid var(
 .lin-row{ display:flex; gap:12px; padding:0 14px; }
 .lin-row:hover{ background:rgba(127,127,127,.05); }
 .lin-row.fnstart{ box-shadow:inset 3px 0 0 var(--acc); }
+.lin-row.cur{ background:rgba(63,220,196,.12); box-shadow:inset 3px 0 0 var(--acc); }
+.lin-row.selline{ background:rgba(138,180,255,.16); }         /* AI line-selection band */
+.lin-row.selline .daddr{ color:var(--fn); }
 .lin-row .daddr{ color:var(--tx2); width:8rem; flex:0 0 auto; }
 .lin-row .dmn{ color:var(--k); width:4rem; flex:0 0 auto; }
 .lin-op{ color:var(--tx0); }
 .lin-map{ width:72px; flex:0 0 auto; background:var(--bg1); border-left:1px solid var(--bd2); cursor:pointer; }
 .lin-vp{ position:absolute; right:0; width:72px; box-sizing:border-box; background:rgba(127,140,170,.16); border:1px solid var(--acc); pointer-events:none; }
+/* Copilot AI-scope chip — what the assistant can actually see */
+.ai-scopebar{ margin:0 10px 6px; display:flex; align-items:center; gap:7px; padding:5px 10px; background:var(--bg1); border:1px solid var(--bd2); border-radius:8px; color:var(--tx2); font-size:.72rem; }
+.ai-scopebar .cxi svg,.ai-scopebar svg{ color:var(--acc); }
+.ai-scope{ color:var(--tx0); font-family:var(--mono,monospace); }
+/* status-bar analysis spinner */
+.sb-aspin{ width:.7rem; height:.7rem; border-radius:50%; border:2px solid var(--bd2); border-top-color:var(--acc); display:inline-block; animation:spin .7s linear infinite; }
 
 /* ---- global loading indicator (non-blocking; UI stays responsive) ---- */
 #loading-ind{ position:fixed; right:16px; bottom:40px; z-index:400; display:none; align-items:center; gap:8px;
