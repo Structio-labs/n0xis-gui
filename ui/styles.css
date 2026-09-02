@@ -573,3 +573,11 @@ select.scan-type{ background:var(--bg2); color:var(--tx0); border:1px solid var(
 .lin-op{ color:var(--tx0); }
 .lin-map{ width:72px; flex:0 0 auto; background:var(--bg1); border-left:1px solid var(--bd2); cursor:pointer; }
 .lin-vp{ position:absolute; right:0; width:72px; box-sizing:border-box; background:rgba(127,140,170,.16); border:1px solid var(--acc); pointer-events:none; }
+
+/* ---- global loading indicator (non-blocking; UI stays responsive) ---- */
+#loading-ind{ position:fixed; right:16px; bottom:40px; z-index:400; display:none; align-items:center; gap:8px;
+  background:var(--bg2); border:1px solid var(--bd2); color:var(--tx1); padding:7px 13px; border-radius:20px;
+  font-size:.78rem; box-shadow:var(--shadow); pointer-events:none; }
+#loading-ind.on{ display:flex; }
+#loading-ind .spin{ width:12px; height:12px; border:2px solid var(--bd2); border-top-color:var(--acc); border-radius:50%; animation:spin .7s linear infinite; }
+@keyframes spin{ to{ transform:rotate(360deg); } }

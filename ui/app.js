@@ -1118,7 +1118,7 @@ function triageHTML(p) {
     (exps.length > expCap.length ? `<div class="tg-more">+${exps.length - expCap.length} more · Console: <span class="mono">profile --exports</span></div>` : '');
   return `
     <div class="tg-head"><span class="chip-b mono">${escH(im.machine || '?')}</span><span class="tg-src mono">${escH(p.source || '')}</span></div>
-    ${adv.length ? `<div class="tg-adv">${adv.map(a => `<div class="tg-adv-i"><span class="mono tg-ac">${escH(a.code || 'note')}</span>${escH(a.message || a)}</div>`).join('')}</div>` : ''}
+    ${adv.length ? `<div class="tg-adv">${adv.map(a => { const msg = typeof a === 'string' ? a : (a.message || a.detail || a.text || JSON.stringify(a)); return `<div class="tg-adv-i"><span class="mono tg-ac">${escH(typeof a === 'object' ? (a.code || 'note') : 'note')}</span>${escH(msg)}</div>`; }).join('')}</div>` : ''}
     <div class="tg-grid">
       ${fact('Module base', im.module_base || '?')}
       ${fact('Image end', im.image_end || '?')}
@@ -1260,7 +1260,20 @@ function paintDecompMsg(msg) { $$('.code').forEach(code => { code.innerHTML = `<
 const engCache = new Map(); const ENG_CACHE_MAX = 800;
 let sessionOn = false;   // a persistent `n0xis serve` process is loaded for curPath
 // route through the resident session when available (image loaded once), else one-shot
-async function eng(args) { return (sessionOn && isNative) ? await sessionQuery(args) : await n0x(args); }
+// global "Loading" indicator — honest feedback while a query is in flight.
+// The commands are async (off the UI thread), so this actually animates instead
+// of the whole interface freezing.
+let inflight = 0, loadEl = null;
+function setLoading(on) {
+  inflight = Math.max(0, inflight + (on ? 1 : -1));
+  if (!loadEl) { loadEl = document.createElement('div'); loadEl.id = 'loading-ind'; loadEl.innerHTML = '<span class="spin"></span><span>Loading…</span>'; document.body.appendChild(loadEl); }
+  loadEl.classList.toggle('on', inflight > 0);
+}
+async function eng(args) {
+  setLoading(true);
+  try { return (sessionOn && isNative) ? await sessionQuery(args) : await n0x(args); }
+  finally { setLoading(false); }
+}
 async function n0xCached(key, args) {
   if (engCache.has(key)) { const v = engCache.get(key); engCache.delete(key); engCache.set(key, v); return v; }  // LRU touch
   const r = await eng(args);

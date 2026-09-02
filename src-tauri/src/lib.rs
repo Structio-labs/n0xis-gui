@@ -50,13 +50,13 @@ fn run_engine(args: &[String]) -> Value {
 
 /// Generic passthrough: `n0x_run(['guide','--brief'])`.
 #[tauri::command]
-fn n0x_run(args: Vec<String>) -> Value {
+async fn n0x_run(args: Vec<String>) -> Value {
     run_engine(&args)
 }
 
 /// Probe: is the engine reachable, and what version / how many commands?
 #[tauri::command]
-fn engine_info() -> Value {
+async fn engine_info() -> Value {
     let bin = engine_bin();
     let ver = Command::new(&bin).arg("--version").output();
     let version = match ver {
@@ -90,7 +90,7 @@ fn initial_target() -> Option<String> {
 /// /proc/<pid>/comm carries the real exe name ("Sam2.exe"). On Linux we read
 /// that directly; elsewhere we return empty so the caller falls back to the engine.
 #[tauri::command]
-fn list_processes() -> Value {
+async fn list_processes() -> Value {
     #[allow(unused_mut)]
     let mut procs: Vec<Value> = Vec::new();
     #[cfg(target_os = "linux")]
@@ -118,7 +118,7 @@ fn list_processes() -> Value {
 ///   • Everything else: match /proc/<pid>/comm to a .desktop's Exec/WMClass/Name.
 /// Returns { pid: "data:image/png;base64,…" } only for processes we could resolve.
 #[tauri::command]
-fn process_icons() -> Value {
+async fn process_icons() -> Value {
     #[allow(unused_mut)]
     let mut icons = serde_json::Map::new();
     #[cfg(target_os = "linux")]
@@ -271,7 +271,7 @@ fn file_mtime(path: &str) -> u64 {
 }
 /// Return the cached function-list JSON for `path` iff the file hasn't changed.
 #[tauri::command]
-fn fncache_get(app: tauri::AppHandle, path: String) -> Option<String> {
+async fn fncache_get(app: tauri::AppHandle, path: String) -> Option<String> {
     let p = fncache_path(&app, &path)?;
     let raw = std::fs::read_to_string(p).ok()?;
     let v: Value = serde_json::from_str(&raw).ok()?;
@@ -281,7 +281,7 @@ fn fncache_get(app: tauri::AppHandle, path: String) -> Option<String> {
 }
 /// Store the function-list JSON for `path`, stamped with the current mtime.
 #[tauri::command]
-fn fncache_put(app: tauri::AppHandle, path: String, data: String) -> bool {
+async fn fncache_put(app: tauri::AppHandle, path: String, data: String) -> bool {
     if let Some(p) = fncache_path(&app, &path) {
         let payload = json!({ "mtime": file_mtime(&path), "data": serde_json::from_str::<Value>(&data).unwrap_or(Value::Null) });
         return std::fs::write(p, payload.to_string()).is_ok();
@@ -310,7 +310,7 @@ fn kill_session(slot: &mut Option<EngineSess>) {
 /// `ready` envelope. On any spawn/IO failure the GUI silently falls back to
 /// one-shot calls.
 #[tauri::command]
-fn session_open(path: String) -> Value {
+async fn session_open(path: String) -> Value {
     use std::io::BufRead;
     let bin = engine_bin();
     let mut child = match std::process::Command::new(&bin)
@@ -336,7 +336,7 @@ fn session_open(path: String) -> Value {
 /// Run one command through the open session (args as a vector, like `n0x_run`).
 /// Returns the engine's JSON envelope, or `{ok:false}` if there is no session.
 #[tauri::command]
-fn session_query(args: Vec<String>) -> Value {
+async fn session_query(args: Vec<String>) -> Value {
     use std::io::{BufRead, Write};
     let mut slot = SESSION.lock().unwrap_or_else(|e| e.into_inner());
     let sess = match slot.as_mut() {
@@ -363,7 +363,7 @@ fn session_query(args: Vec<String>) -> Value {
 }
 
 #[tauri::command]
-fn session_close() {
+async fn session_close() {
     let mut slot = SESSION.lock().unwrap_or_else(|e| e.into_inner());
     kill_session(&mut slot);
 }
