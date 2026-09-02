@@ -1,5 +1,5 @@
 // N0xis GUI — interactive shell (framework-free; drops into Tauri's webview as-is)
-import { isNative, engineInfo, engine, pickFile, n0x, initialTarget, listProcesses, processIcons, fncacheGet, fncachePut } from './bridge.js';
+import { isNative, engineInfo, engine, pickFile, n0x, initialTarget, listProcesses, processIcons, fncacheGet, fncachePut, sessionOpen, sessionQuery, sessionClose } from './bridge.js';
 import { initDock } from './dock.js';
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -1258,9 +1258,12 @@ let decompStyle = 'structured', selSeq = 0;
 function paintDecompMsg(msg) { $$('.code').forEach(code => { code.innerHTML = `<div class="cl"><span class="gut"></span><span class="mono" style="color:var(--tx2)">${escH(msg)}</span></div>`; }); }
 // per-(command,file,addr) result cache → revisiting a function is instant, no re-spawn
 const engCache = new Map(); const ENG_CACHE_MAX = 800;
+let sessionOn = false;   // a persistent `n0xis serve` process is loaded for curPath
+// route through the resident session when available (image loaded once), else one-shot
+async function eng(args) { return (sessionOn && isNative) ? await sessionQuery(args) : await n0x(args); }
 async function n0xCached(key, args) {
   if (engCache.has(key)) { const v = engCache.get(key); engCache.delete(key); engCache.set(key, v); return v; }  // LRU touch
-  const r = await n0x(args);
+  const r = await eng(args);
   if (r && r.ok) { if (engCache.size >= ENG_CACHE_MAX) engCache.delete(engCache.keys().next().value); engCache.set(key, r); }
   return r;
 }
@@ -1531,6 +1534,8 @@ async function openBinary(path) {
   setWorkspace('static');
   toast('Analyzing <span class="mono">' + escH(name) + '</span>…');
   setTarget(path);                             // → Triage via profile
+  sessionOn = false;
+  if (isNative) { const s = await sessionOpen(path); if (path !== curPath) return; sessionOn = !!(s && s.ok); }
   loadFunctions(path);
 }
 
@@ -1556,12 +1561,13 @@ async function loadFunctions(path) {
     }
   } catch {}
   const mapf = f => { const addr = f.addr || f.address || f.va || ''; return { addr, name: f.name || f.symbol || f.label || 'sub_' + String(addr).replace(/^0x/, ''), tag: '' }; };
+  const fargs = (off, pd) => ['function', 'discover', '--file', path, ...(pd ? ['--pdata'] : []), '--limit', String(FUNC_CHUNK), '--offset', String(off)];
   let offset = 0, first = true, pdata = true, total = null;
   while (offset < FUNC_CAP) {
-    let res = await engine.functions(path, FUNC_CHUNK, offset, pdata);
+    let res = await eng(fargs(offset, pdata));   // resident session → the image is loaded once, not per chunk
     if (path !== curPath) return;              // a newer open superseded this one
     // if --pdata isn't applicable (non-x64-PE), retry this offset with prologue scan
-    if (pdata && (!res?.ok || !(res.data?.functions?.length))) { pdata = false; res = await engine.functions(path, FUNC_CHUNK, offset, false); if (path !== curPath) return; }
+    if (pdata && (!res?.ok || !(res.data?.functions?.length))) { pdata = false; res = await eng(fargs(offset, false)); if (path !== curPath) return; }
     const list = res?.data?.functions;
     if (!res?.ok) { if (first) { $$('#dockspace .flist').forEach(fl => { fl.innerHTML = `<div class="fl-empty">${escH(res?.error?.message || 'analysis failed')}</div>`; }); toast('Engine: ' + (res?.error?.message || 'failed')); } break; }
     if (total == null) total = res?.meta?.total ?? null;

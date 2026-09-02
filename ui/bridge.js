@@ -54,6 +54,11 @@ export function processIcons() {
 export function fncacheGet(path) { if (!isNative) return Promise.resolve(null); return invoke('fncache_get', { path }); }
 export function fncachePut(path, data) { if (!isNative) return Promise.resolve(false); return invoke('fncache_put', { path, data }); }
 
+/** Persistent engine session — the image is loaded once and reused. */
+export function sessionOpen(path) { if (!isNative) return Promise.resolve(null); return invoke('session_open', { path }); }
+export function sessionQuery(args) { if (!isNative) return Promise.resolve(null); return invoke('session_query', { args }); }
+export function sessionClose() { if (!isNative) return Promise.resolve(null); return invoke('session_close', {}); }
+
 /** Convenience wrappers over the CLI's verbs. */
 export const engine = {
   guide: (topic) => n0x(topic ? ['guide', topic, '--brief'] : ['guide', '--brief']),

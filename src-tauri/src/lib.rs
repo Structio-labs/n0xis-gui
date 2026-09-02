@@ -289,6 +289,85 @@ fn fncache_put(app: tauri::AppHandle, path: String, data: String) -> bool {
     false
 }
 
+/// A persistent engine session: one long-running `n0xis serve --file <target>`
+/// that keeps the parsed image resident, so decomp/disasm/xref/ir calls reuse it
+/// instead of re-loading the (possibly 233 MB) binary per click.
+struct EngineSess {
+    child: std::process::Child,
+    stdin: std::process::ChildStdin,
+    out: std::io::BufReader<std::process::ChildStdout>,
+}
+static SESSION: std::sync::Mutex<Option<EngineSess>> = std::sync::Mutex::new(None);
+
+fn kill_session(slot: &mut Option<EngineSess>) {
+    if let Some(mut s) = slot.take() {
+        let _ = s.child.kill();
+        let _ = s.child.wait();
+    }
+}
+
+/// Open (or replace) the persistent session for `path`. Returns the engine's
+/// `ready` envelope. On any spawn/IO failure the GUI silently falls back to
+/// one-shot calls.
+#[tauri::command]
+fn session_open(path: String) -> Value {
+    use std::io::BufRead;
+    let bin = engine_bin();
+    let mut child = match std::process::Command::new(&bin)
+        .args(["serve", "--file", &path])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(e) => return json!({ "ok": false, "error": { "message": format!("spawn {bin}: {e}") } }),
+    };
+    let stdin = match child.stdin.take() { Some(s) => s, None => return json!({ "ok": false, "error": { "message": "no stdin" } }) };
+    let mut out = std::io::BufReader::new(match child.stdout.take() { Some(s) => s, None => return json!({ "ok": false, "error": { "message": "no stdout" } }) });
+    let mut ready = String::new();
+    let _ = out.read_line(&mut ready);
+    let mut slot = SESSION.lock().unwrap_or_else(|e| e.into_inner());
+    kill_session(&mut slot);
+    *slot = Some(EngineSess { child, stdin, out });
+    serde_json::from_str::<Value>(ready.trim()).unwrap_or_else(|_| json!({ "ok": true, "data": { "ready": true } }))
+}
+
+/// Run one command through the open session (args as a vector, like `n0x_run`).
+/// Returns the engine's JSON envelope, or `{ok:false}` if there is no session.
+#[tauri::command]
+fn session_query(args: Vec<String>) -> Value {
+    use std::io::{BufRead, Write};
+    let mut slot = SESSION.lock().unwrap_or_else(|e| e.into_inner());
+    let sess = match slot.as_mut() {
+        Some(s) => s,
+        None => return json!({ "ok": false, "error": { "message": "no session" } }),
+    };
+    // Join args into one line; wrap any arg with whitespace in double quotes
+    // (split_command_line strips quotes, no backslash escaping).
+    let line = args
+        .iter()
+        .map(|a| if a.is_empty() || a.chars().any(|c| c.is_whitespace()) { format!("\"{a}\"") } else { a.clone() })
+        .collect::<Vec<_>>()
+        .join(" ");
+    if writeln!(sess.stdin, "{line}").is_err() || sess.stdin.flush().is_err() {
+        kill_session(&mut slot);
+        return json!({ "ok": false, "error": { "message": "session write failed" } });
+    }
+    let mut resp = String::new();
+    match sess.out.read_line(&mut resp) {
+        Ok(0) => { kill_session(&mut slot); json!({ "ok": false, "error": { "message": "session closed" } }) }
+        Ok(_) => serde_json::from_str::<Value>(resp.trim()).unwrap_or_else(|_| json!({ "ok": false, "error": { "message": "bad session response" } })),
+        Err(e) => { kill_session(&mut slot); json!({ "ok": false, "error": { "message": format!("session read: {e}") } }) }
+    }
+}
+
+#[tauri::command]
+fn session_close() {
+    let mut slot = SESSION.lock().unwrap_or_else(|e| e.into_inner());
+    kill_session(&mut slot);
+}
+
 /// Native file picker for choosing a target binary.
 #[tauri::command]
 async fn pick_file(app: tauri::AppHandle, title: String) -> Option<String> {
@@ -313,7 +392,7 @@ async fn pick_file(app: tauri::AppHandle, title: String) -> Option<String> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![n0x_run, engine_info, pick_file, initial_target, list_processes, process_icons, fncache_get, fncache_put])
+        .invoke_handler(tauri::generate_handler![n0x_run, engine_info, pick_file, initial_target, list_processes, process_icons, fncache_get, fncache_put, session_open, session_query, session_close])
         .run(tauri::generate_context!())
         .expect("error while running N0xis GUI");
 }
