@@ -501,6 +501,7 @@ function initGraphWidget(root) {
     layout(); renderGraph(); userAdjusted = false; fitGraph(); setTimeout(fitGraph, 60);
   }
   graphRebuilds.push(rebuild);
+  if (isNative && curPath) loadGraph();          // fetch the current function's CFG on mount
 }
 // convert the engine's `ir build` CFG into the graph widget's block/edge model
 function cfgToGraph(d) {
@@ -524,7 +525,7 @@ function cfgToGraph(d) {
 }
 async function loadGraph() {
   if (!isNative || !curPath) return;               // keep the demo CFG in the web preview
-  const r = await n0x(['ir', 'build', '--file', curPath, '--addr', selAddr]);
+  const r = await n0xCached('ir|' + curPath + '|' + selAddr, ['ir', 'build', '--file', curPath, '--addr', selAddr]);
   if (r?.ok && Array.isArray(r.data.blocks) && r.data.blocks.length) {
     GRAPH = cfgToGraph(r.data);
     graphRebuilds.forEach(fn => { try { fn(); } catch {} });
@@ -1195,10 +1196,13 @@ function paintXrefs(scope) {                         // scope: one widget root, 
     if (from) from.innerHTML = XREF.from.length ? XREF.from.map(x => xrefRow(x, 'from')).join('') : '<div class="xr-none">no references</div>';
   });
 }
-function initXrefs(root) { paintXrefs(root.querySelector('.xrefs') || root); root.querySelector('.xr-refresh')?.addEventListener('click', loadXrefs); }
+function initXrefs(root) { paintXrefs(root.querySelector('.xrefs') || root); root.querySelector('.xr-refresh')?.addEventListener('click', loadXrefs); if (isNative && curPath) loadXrefs(); }
 async function loadXrefs(seq) {
   if (!isNative || !curPath) { paintXrefs(); return; }
-  const [t, f] = await Promise.all([n0x(['xref', 'to', '--file', curPath, '--addr', selAddr]), n0x(['xref', 'from', '--file', curPath, '--addr', selAddr])]);
+  const [t, f] = await Promise.all([
+    n0xCached('xt|' + curPath + '|' + selAddr, ['xref', 'to', '--file', curPath, '--addr', selAddr]),
+    n0xCached('xf|' + curPath + '|' + selAddr, ['xref', 'from', '--file', curPath, '--addr', selAddr]),
+  ]);
   if (seq !== undefined && seq !== selSeq) return;
   if (t?.ok) XREF.to = t.data.refs || []; if (f?.ok) XREF.from = f.data.refs || [];
   paintXrefs();
@@ -1246,10 +1250,19 @@ function paintDecomp(lines) {
 }
 let decompStyle = 'structured', selSeq = 0;
 function paintDecompMsg(msg) { $$('.code').forEach(code => { code.innerHTML = `<div class="cl"><span class="gut"></span><span class="mono" style="color:var(--tx2)">${escH(msg)}</span></div>`; }); }
+// per-(command,file,addr) result cache → revisiting a function is instant, no re-spawn
+const engCache = new Map(); const ENG_CACHE_MAX = 800;
+async function n0xCached(key, args) {
+  if (engCache.has(key)) { const v = engCache.get(key); engCache.delete(key); engCache.set(key, v); return v; }  // LRU touch
+  const r = await n0x(args);
+  if (r && r.ok) { if (engCache.size >= ENG_CACHE_MAX) engCache.delete(engCache.keys().next().value); engCache.set(key, r); }
+  return r;
+}
 async function loadDecomp(seq) {
   if (!isNative || !curPath) return;                 // keep the demo pseudo in the web preview
-  paintDecompMsg('decompiling ' + (selName || selAddr) + '…');
-  const r = await n0x(['decomp', 'pseudo', '--file', curPath, '--addr', selAddr, '--style', decompStyle]);
+  const key = 'decomp|' + curPath + '|' + selAddr + '|' + decompStyle, cached = engCache.has(key);
+  if (!cached) paintDecompMsg('decompiling ' + (selName || selAddr) + '…');   // no flash on a cache hit
+  const r = await n0xCached(key, ['decomp', 'pseudo', '--file', curPath, '--addr', selAddr, '--style', decompStyle]);
   if (seq !== undefined && seq !== selSeq) return;    // a newer selection superseded this one
   if (r?.ok && Array.isArray(r.data.pseudo)) { paintDecomp(r.data.pseudo); VARS = parseVars(r.data.signature, r.data.pseudo); paintVars(); }
   else paintDecompMsg('// no decompilation for ' + selAddr + (r?.error ? ' — ' + r.error.message : ''));
@@ -1263,18 +1276,23 @@ function paintDisasm(insns) {
 }
 async function loadDisasm(seq) {
   if (!isNative || !curPath) return;
-  const r = await engine.disasm(curPath, selAddr);
+  const r = await n0xCached('disasm|' + curPath + '|' + selAddr, ['disasm', '--file', curPath, '--addr', selAddr, '--count', '40']);
   if (seq !== undefined && seq !== selSeq) return;
   if (r?.ok && Array.isArray(r.data.insns)) paintDisasm(r.data.insns);
   else $$('.disasm').forEach(d => { d.innerHTML = `<div class="drow" style="color:var(--tx2)">no disassembly for ${escH(selAddr)}</div>`; });
 }
 
-// one place that refreshes every symbol-following widget when the selection moves
+// one place that refreshes every symbol-following widget when the selection moves.
+// Only spawn the engine for panes that are actually visible (a click shouldn't
+// run xrefs + CFG if those widgets aren't shown) — big latency win.
 function onSymbolSelect() {
   const my = ++selSeq;
   const a = $('#sb-addr'); if (a) a.textContent = selAddr;
   const n = $('#sb-name'); if (n) n.textContent = selName || '—';
-  paintXrefs(); loadXrefs(my); loadDecomp(my); loadDisasm(my); loadGraph();
+  if ($('.code')) loadDecomp(my);
+  if ($('.disasm')) loadDisasm(my);
+  if ($('.xrefs')) { paintXrefs(); loadXrefs(my); }
+  if ($('.graphwrap')) loadGraph();
 }
 
 /* ---- memory scanner: real `scan value` / `scan filter` against the attached pid ---- */
@@ -1439,6 +1457,7 @@ async function openBinary(path) {
   const name = path.split(/[\\/]/).pop();
   curPid = 0; curPidName = '';                 // leave any live session
   selAddr = ''; selName = ''; FUNCLIST = null; FUNCMETA = null; funcQuery = '';
+  engCache.clear();                            // drop the previous target's cached results
   $$('.ffilter').forEach(i => { i.value = ''; });
   paintFunctions();                            // clear the old list immediately
   paintDecompMsg('analyzing ' + name + '…'); paintTriage();
