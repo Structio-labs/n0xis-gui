@@ -954,6 +954,7 @@ const FUNCS = [
 // function list is DATA (survives re-render / workspace switch / project change),
 // not a one-off DOM patch. null → the built-in demo list.
 let FUNCLIST = null, FUNCMETA = null, funcQuery = '';
+let funcByAddr = new Map();               // normalized addr → name, for linear-view headers
 const funcRows = () => FUNCLIST || FUNCS.map(([name, addr, tag]) => ({ name, addr, tag }));
 function funcView() {                       // full list filtered by the search box
   const q = funcQuery.trim().toLowerCase(), rows = funcRows();
@@ -1007,6 +1008,11 @@ const WIDGETS = {
   codeview: { title: 'Code', icon: 'decomp', body: () => `<div class="wfill cvw">
     <div class="dockhead cv-head"><button class="cv-sel">Pseudo-C ▾</button><div class="grow"></div><button class="dt" data-ws="graph">CFG ↗</button></div>
     <div class="cv-body" style="flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden"></div></div>`, init: root => initCodeView(root) },
+
+  // Linear view (Binary Ninja-style): the WHOLE binary as one continuous listing,
+  // functions flowing into one another, lazily disassembled as you scroll, with a
+  // VS Code-style minimap on the right.
+  linear: { title: 'Linear · listing', icon: 'disasm', body: () => `<div class="lin-wrap"><div class="linear selectable mono"></div><canvas class="lin-map" width="72"></canvas></div>`, init: root => initLinear(root) },
 
   hex: { title: 'Hex', icon: 'hex', body: () => `<div class="hex selectable" style="height:100%"><div class="hx"><span class="hxa">7FF6C21A40</span><span class="hxb"><span class="hb-hi">57 00 00 00</span> 2a 00 00 00 5c 21 c2 f6</span><span class="hxc">W....*...\\!</span></div><div class="hx"><span class="hxa">7FF6C21A50</span><span class="hxb">64 00 00 00 00 00 80 3f 00 00 80 3f</span><span class="hxc">d......?...?</span></div></div>` },
 
@@ -1282,6 +1288,64 @@ async function loadDisasm(seq) {
   else $$('.disasm').forEach(d => { d.innerHTML = `<div class="drow" style="color:var(--tx2)">no disassembly for ${escH(selAddr)}</div>`; });
 }
 
+/* ---- Linear view: the whole binary as one continuous listing + a minimap ---- */
+const linears = [];
+function initLinear(root) {
+  const view = root.querySelector('.linear'), map = root.querySelector('.lin-map');
+  const wrap = root.querySelector('.lin-wrap');
+  let rows = [], loading = false, done = false;
+  const vaN = a => parseInt(a, 16) || 0;
+  const lineHTML = ins => {
+    const va = ins.va || '', fn = funcByAddr.get(va.toLowerCase());
+    const op = (ins.text || '').slice((ins.mnemonic || '').length).trim();
+    return (fn ? `<div class="lin-fn">${escH(fn)}</div>` : '') +
+      `<div class="lin-row${fn ? ' fnstart' : ''}" data-ctx="drow" data-addr="${escH(va)}"><span class="daddr">${escH(va)}</span><span class="dmn">${escH(ins.mnemonic || '')}</span><span class="lin-op">${escH(op)}</span></div>`;
+  };
+  const render = () => { view.innerHTML = rows.map(r => r.html).join(''); drawMap(); };
+  async function loadAt(addr, replace) {
+    if (loading || !isNative || !curPath || !addr) return;
+    loading = true;
+    const r = await n0xCached('lin|' + curPath + '|' + addr, ['disasm', '--file', curPath, '--addr', addr, '--count', '160']);
+    loading = false;
+    const ins = (r?.ok && Array.isArray(r.data.insns)) ? r.data.insns : [];
+    if (!ins.length) { if (replace) { rows = []; view.innerHTML = `<div class="fl-empty">no disassembly at ${escH(addr)}</div>`; } done = true; return; }
+    const chunk = ins.map(i => ({ va: i.va, len: i.len || 1, html: lineHTML(i) }));
+    rows = replace ? chunk : rows.concat(chunk);
+    if (replace) done = false;
+    if (rows.length > 4000) rows = rows.slice(-4000);
+    render();
+  }
+  async function loadMore() {
+    if (done || loading || !rows.length) return;
+    const last = rows[rows.length - 1], next = '0x' + (vaN(last.va) + last.len).toString(16);
+    await loadAt(next, false);
+  }
+  function drawMap() {
+    const h = map.clientHeight || wrap.clientHeight || 400; if (map.height !== h) map.height = h;
+    const ctx = map.getContext('2d'); ctx.clearRect(0, 0, map.width, h);
+    const n = rows.length || 1, step = h / n;
+    for (let i = 0; i < rows.length; i++) {
+      const m = rows[i].html;
+      ctx.fillStyle = m.includes('fnstart') ? '#3fdcc4' : (/>call</.test(m) ? '#8ab4ff' : (/>j[a-z]+</.test(m) ? '#ffb454' : 'rgba(150,160,180,.45)'));
+      ctx.fillRect(8, i * step, map.width - 16, Math.max(1, step * 0.7));
+    }
+    drawVp();
+  }
+  function drawVp() {
+    let box = wrap.querySelector('.lin-vp'); if (!box) { box = document.createElement('div'); box.className = 'lin-vp'; wrap.appendChild(box); }
+    const total = view.scrollHeight || 1, h = map.clientHeight || 400;
+    box.style.top = (view.scrollTop / total * h) + 'px';
+    box.style.height = Math.max(14, view.clientHeight / total * h) + 'px';
+  }
+  view.addEventListener('scroll', () => { if (view.scrollTop + view.clientHeight > view.scrollHeight - 320) loadMore(); drawVp(); });
+  map.addEventListener('pointerdown', e => { const r = map.getBoundingClientRect(); view.scrollTop = (e.clientY - r.top) / r.height * view.scrollHeight; });
+  root._linJump = addr => loadAt(addr, true);
+  linears.push(root);
+  const start = selAddr || (FUNCLIST && FUNCLIST[0] && FUNCLIST[0].addr) || '';
+  if (start && isNative && curPath) loadAt(start, true);
+  else view.innerHTML = '<div class="fl-empty">Open a binary to see the continuous listing.</div>';
+}
+
 // one place that refreshes every symbol-following widget when the selection moves.
 // Only spawn the engine for panes that are actually visible (a click shouldn't
 // run xrefs + CFG if those widgets aren't shown) — big latency win.
@@ -1293,6 +1357,7 @@ function onSymbolSelect() {
   if ($('.disasm')) loadDisasm(my);
   if ($('.xrefs')) { paintXrefs(); loadXrefs(my); }
   if ($('.graphwrap')) loadGraph();
+  linears.forEach(r => { if (r.isConnected) r._linJump?.(selAddr); });
 }
 
 /* ---- memory scanner: real `scan value` / `scan filter` against the attached pid ---- */
@@ -1365,7 +1430,7 @@ const DEFAULT_LAYOUTS = {
                  0.34, C(0.58, L('copilot'), 0.42, L('details', 'variables', 'xrefs')))),
     0.18, L('output', 'console')),
   static: R(0.22, L('functions'),
-    0.78, R(0.6, C(0.7, L('decompiler'), 0.3, L('disassembly')),
+    0.78, R(0.6, C(0.7, L('decompiler'), 0.3, L('disassembly', 'linear')),
       0.4, C(0.5, L('triage'), 0.5, L('strings')))),
   graph: L('graph'),
   dynamic: R(0.34, C(0.4, L('registers', 'stack'), 0.6, L('watchpoints')),
@@ -1474,7 +1539,7 @@ async function openBinary(path) {
 // starts, a real total, and O(1) paging; falls back to prologue scan.
 const FUNC_CHUNK = 20000, FUNC_CAP = 400000;   // cap only guards against pathological OOM
 async function loadFunctions(path) {
-  FUNCLIST = []; FUNCMETA = { total: 0, shown: 0, named: 0 };
+  FUNCLIST = []; FUNCMETA = { total: 0, shown: 0, named: 0 }; funcByAddr = new Map();
   const mapf = f => { const addr = f.addr || f.address || f.va || ''; return { addr, name: f.name || f.symbol || f.label || 'sub_' + String(addr).replace(/^0x/, ''), tag: '' }; };
   let offset = 0, first = true, pdata = true, total = null;
   while (offset < FUNC_CAP) {
@@ -1486,7 +1551,7 @@ async function loadFunctions(path) {
     if (!res?.ok) { if (first) { $$('#dockspace .flist').forEach(fl => { fl.innerHTML = `<div class="fl-empty">${escH(res?.error?.message || 'analysis failed')}</div>`; }); toast('Engine: ' + (res?.error?.message || 'failed')); } break; }
     if (total == null) total = res?.meta?.total ?? null;
     if (!Array.isArray(list) || !list.length) break;
-    list.forEach(f => FUNCLIST.push(mapf(f)));
+    list.forEach(f => { const m = mapf(f); FUNCLIST.push(m); funcByAddr.set(m.addr.toLowerCase(), m.name); });
     FUNCMETA = { total: total ?? FUNCLIST.length, shown: FUNCLIST.length, named: Math.round(FUNCLIST.filter(f => !/^sub_/i.test(f.name)).length / FUNCLIST.length * 100) };
     paintFunctions();
     if (first) { first = false; $('#dockspace .flist .frow')?.click(); }  // decompile the first ASAP
