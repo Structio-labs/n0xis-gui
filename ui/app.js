@@ -1,5 +1,5 @@
 // N0xis GUI — interactive shell (framework-free; drops into Tauri's webview as-is)
-import { isNative, engineInfo, engine, pickFile, n0x, initialTarget, listProcesses, processIcons } from './bridge.js';
+import { isNative, engineInfo, engine, pickFile, n0x, initialTarget, listProcesses, processIcons, fncacheGet, fncachePut } from './bridge.js';
 import { initDock } from './dock.js';
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -1540,6 +1540,21 @@ async function openBinary(path) {
 const FUNC_CHUNK = 20000, FUNC_CAP = 400000;   // cap only guards against pathological OOM
 async function loadFunctions(path) {
   FUNCLIST = []; FUNCMETA = { total: 0, shown: 0, named: 0 }; funcByAddr = new Map();
+  // instant path: a validated on-disk cache (survives restarts) — no re-streaming
+  try {
+    const cached = await fncacheGet(path);
+    if (path !== curPath) return;
+    if (cached) {
+      const c = JSON.parse(cached);
+      if (Array.isArray(c.list) && c.list.length) {
+        FUNCLIST = c.list; FUNCLIST.forEach(f => funcByAddr.set((f.addr || '').toLowerCase(), f.name));
+        FUNCMETA = { total: c.total ?? FUNCLIST.length, shown: FUNCLIST.length, named: c.named ?? 0 };
+        paintFunctions(); $('#dockspace .flist .frow')?.click();
+        toast('Loaded ' + FUNCMETA.total.toLocaleString() + ' functions · cached');
+        return;
+      }
+    }
+  } catch {}
   const mapf = f => { const addr = f.addr || f.address || f.va || ''; return { addr, name: f.name || f.symbol || f.label || 'sub_' + String(addr).replace(/^0x/, ''), tag: '' }; };
   let offset = 0, first = true, pdata = true, total = null;
   while (offset < FUNC_CAP) {
@@ -1559,7 +1574,12 @@ async function loadFunctions(path) {
     offset += FUNC_CHUNK;
     await new Promise(r => setTimeout(r, 0));   // yield so the UI stays responsive
   }
-  if (FUNCLIST.length) { FUNCMETA.total = total ?? FUNCLIST.length; paintFunctions(); toast('Loaded ' + FUNCLIST.length.toLocaleString() + ' functions'); }
+  if (FUNCLIST.length) {
+    FUNCMETA.total = total ?? FUNCLIST.length; paintFunctions();
+    toast('Loaded ' + FUNCLIST.length.toLocaleString() + ' functions');
+    // persist for an instant re-open next time (validated by file mtime)
+    try { fncachePut(path, JSON.stringify({ list: FUNCLIST, total: FUNCMETA.total, named: FUNCMETA.named })); } catch {}
+  }
 }
 
 deepLink();

@@ -50,6 +50,10 @@ export function processIcons() {
   return invoke('process_icons', {});
 }
 
+/** Persistent function-list cache (validated by file mtime). */
+export function fncacheGet(path) { if (!isNative) return Promise.resolve(null); return invoke('fncache_get', { path }); }
+export function fncachePut(path, data) { if (!isNative) return Promise.resolve(false); return invoke('fncache_put', { path, data }); }
+
 /** Convenience wrappers over the CLI's verbs. */
 export const engine = {
   guide: (topic) => n0x(topic ? ['guide', topic, '--brief'] : ['guide', '--brief']),

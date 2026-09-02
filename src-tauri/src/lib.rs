@@ -247,6 +247,48 @@ fn process_icons() -> Value {
     json!({ "ok": true, "data": { "icons": icons } })
 }
 
+/// Persistent function-list cache, keyed by target path + validated by mtime, so
+/// re-opening a huge binary (371k functions) is instant instead of re-streaming.
+/// Stored under the app cache dir as one JSON blob per target.
+fn fncache_path(app: &tauri::AppHandle, path: &str) -> Option<std::path::PathBuf> {
+    use tauri::Manager;
+    let dir = app.path().app_cache_dir().ok()?.join("fncache");
+    let _ = std::fs::create_dir_all(&dir);
+    let safe: String = path.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect();
+    let key = format!("{:x}", md5ish(path));   // short stable key + a readable tail
+    Some(dir.join(format!("{key}_{}.json", &safe[safe.len().saturating_sub(24)..])))
+}
+// tiny non-crypto hash (FNV-1a) — just to key cache files, not for security
+fn md5ish(s: &str) -> u64 {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in s.bytes() { h ^= b as u64; h = h.wrapping_mul(0x100000001b3); }
+    h
+}
+fn file_mtime(path: &str) -> u64 {
+    std::fs::metadata(path).and_then(|m| m.modified()).ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs()).unwrap_or(0)
+}
+/// Return the cached function-list JSON for `path` iff the file hasn't changed.
+#[tauri::command]
+fn fncache_get(app: tauri::AppHandle, path: String) -> Option<String> {
+    let p = fncache_path(&app, &path)?;
+    let raw = std::fs::read_to_string(p).ok()?;
+    let v: Value = serde_json::from_str(&raw).ok()?;
+    if v.get("mtime").and_then(|m| m.as_u64()) == Some(file_mtime(&path)) {
+        v.get("data").map(|d| d.to_string())
+    } else { None }
+}
+/// Store the function-list JSON for `path`, stamped with the current mtime.
+#[tauri::command]
+fn fncache_put(app: tauri::AppHandle, path: String, data: String) -> bool {
+    if let Some(p) = fncache_path(&app, &path) {
+        let payload = json!({ "mtime": file_mtime(&path), "data": serde_json::from_str::<Value>(&data).unwrap_or(Value::Null) });
+        return std::fs::write(p, payload.to_string()).is_ok();
+    }
+    false
+}
+
 /// Native file picker for choosing a target binary.
 #[tauri::command]
 async fn pick_file(app: tauri::AppHandle, title: String) -> Option<String> {
@@ -271,7 +313,7 @@ async fn pick_file(app: tauri::AppHandle, title: String) -> Option<String> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![n0x_run, engine_info, pick_file, initial_target, list_processes, process_icons])
+        .invoke_handler(tauri::generate_handler![n0x_run, engine_info, pick_file, initial_target, list_processes, process_icons, fncache_get, fncache_put])
         .run(tauri::generate_context!())
         .expect("error while running N0xis GUI");
 }
