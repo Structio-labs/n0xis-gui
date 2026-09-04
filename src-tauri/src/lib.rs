@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Tymofii Kosovskyi
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
 // N0xis GUI backend — the thin server half of the thin-client GUI.
 //
 // The engine is not linked in-process; the GUI drives it across the *process seam*

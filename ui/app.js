@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Tymofii Kosovskyi
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
 // N0xis GUI — interactive shell (framework-free; drops into Tauri's webview as-is)
 import { isNative, engineInfo, engine, pickFile, pickFolder, n0x, initialTarget, listProcesses, processIcons, fncacheGet, fncachePut, sessionOpen, sessionQuery, sessionClose, analyzeStart, analyzeStatus, cacheInfo, clearCache, setDiscardOnClose } from './bridge.js';
 import { initDock } from './dock.js';
@@ -36,6 +39,7 @@ const ICON = {
   comment: "<path d='M22 17a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 21.286V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z' /> <path d='M12 11h.01' /> <path d='M16 11h.01' /> <path d='M8 11h.01' />",
   bug: "<path d='M12 20v-9' /> <path d='M14 7a4 4 0 0 1 4 4v3a6 6 0 0 1-12 0v-3a4 4 0 0 1 4-4z' /> <path d='M14.12 3.88 16 2' /> <path d='M21 21a4 4 0 0 0-3.81-4' /> <path d='M21 5a4 4 0 0 1-3.55 3.97' /> <path d='M22 13h-4' /> <path d='M3 21a4 4 0 0 1 3.81-4' /> <path d='M3 5a4 4 0 0 0 3.55 3.97' /> <path d='M6 13H2' /> <path d='m8 2 1.88 1.88' /> <path d='M9 7.13V6a3 3 0 1 1 6 0v1.13' />",
   redo: "<path d='m15 14 5-5-5-5' /> <path d='M20 9H9.5A5.5 5.5 0 0 0 4 14.5A5.5 5.5 0 0 0 9.5 20H13' />",
+  bookmark: "<path d='m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z' />",
   undo: "<path d='M9 14 4 9l5-5' /> <path d='M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5a5.5 5.5 0 0 1-5.5 5.5H11' />",
   step: "<path d='m6 17 5-5-5-5' /> <path d='m13 17 5-5-5-5' />",
   min: "<path d='M5 12h14' />",
@@ -186,6 +190,9 @@ const KEYDEFS = [
   { id: 'palette3', label: 'Command palette · F1', group: 'General', def: 'F1', scope: 'global', act: () => openPal() },
   { id: 'open', label: 'Open file / process', group: 'General', def: 'Ctrl+O', scope: 'global', act: () => openFileTarget() },
   { id: 'goto', label: 'Go to address / symbol', group: 'General', def: 'Ctrl+G', scope: 'target', act: () => doGoto() },
+  { id: 'find', label: 'Find in image (bytes / string)', group: 'General', def: 'Ctrl+F', scope: 'target', act: () => openFind() },
+  { id: 'navback', label: 'Navigate back', group: 'General', def: 'Alt+ArrowLeft', scope: 'target', act: () => navBackward() },
+  { id: 'navfwd', label: 'Navigate forward', group: 'General', def: 'Alt+ArrowRight', scope: 'target', act: () => navForward() },
   { id: 'settings', label: 'Settings', group: 'General', def: 'Ctrl+,', scope: 'global', act: () => openSettings() },
   { id: 'zoomin', label: 'Zoom in', group: 'General', def: 'Ctrl+=', scope: 'global', act: () => setZoom(zoom + 0.1) },
   { id: 'zoomout', label: 'Zoom out', group: 'General', def: 'Ctrl+-', scope: 'global', act: () => setZoom(zoom - 0.1) },
@@ -194,12 +201,14 @@ const KEYDEFS = [
   { id: 'decompile', label: 'Decompile / Continue', group: 'Analysis', def: 'F5', scope: 'target', act: () => { if (isLive()) toast('Continue'); else { setWorkspace('decompile'); toast('Decompiling'); } } },
   { id: 'rename', label: 'Rename symbol', group: 'Analysis', def: 'F2', scope: 'target', act: () => doRename() },
   { id: 'comment', label: 'Comment', group: 'Analysis', def: 'Ctrl+/', scope: 'target', act: () => doComment() },
+  { id: 'announdo', label: 'Undo rename / comment', group: 'Analysis', def: 'Ctrl+Z', scope: 'target', act: () => annotationUndo() },
+  { id: 'annoredo', label: 'Redo rename / comment', group: 'Analysis', def: 'Ctrl+Y', scope: 'target', act: () => annotationRedo() },
   { id: 'xrefs', label: 'Find references (xrefs)', group: 'Analysis', def: 'Shift+F12', scope: 'target', act: () => toast('Xrefs') },
   { id: 'stepover', label: 'Step over', group: DBG, def: 'F10', scope: 'live', act: () => toast('Step over') },
   { id: 'stepinto', label: 'Step into', group: DBG, def: 'F11', scope: 'live', act: () => toast('Step into') },
   { id: 'breakpoint', label: 'Toggle breakpoint', group: DBG, def: 'F9', scope: 'target', act: () => toast('Toggle breakpoint') },
   { id: 'undo', label: 'Undo layout change', group: 'Layout', def: 'Ctrl+Shift+Z', scope: 'global', act: () => dock.undo() },
-  { id: 'redo', label: 'Redo layout change', group: 'Layout', def: 'Ctrl+Shift+X', scope: 'global', act: () => dock.redo() },
+  { id: 'redo', label: 'Redo layout change', group: 'Layout', def: 'Ctrl+Shift+Y', scope: 'global', act: () => dock.redo() },
 ];
 const keyOf = id => (id in prefs.keys ? prefs.keys[id] : (KEYDEFS.find(d => d.id === id)?.def ?? null));
 function comboOf(e) {                              // normalize an event → "Ctrl+Shift+P" / "F2" / "Ctrl+/"
@@ -208,7 +217,15 @@ function comboOf(e) {                              // normalize an event → "Ct
   if (e.ctrlKey || e.metaKey) s += 'Ctrl+';
   if (e.shiftKey) s += 'Shift+';
   if (e.altKey) s += 'Alt+';
-  let k = e.key; if (k.length === 1) k = k.toUpperCase();
+  // Letters/digits come from the PHYSICAL key code, not e.key — otherwise a
+  // non-Latin keyboard layout (Ukrainian, Russian, …) reports the Cyrillic char
+  // for the Z key ('я'), so Ctrl+Z would never match a 'Ctrl+Z' binding. Function
+  // keys, arrows and punctuation keep e.key (layout-independent enough, and lets
+  // '/' , ',' etc. bind naturally).
+  let k;
+  if (/^Key[A-Z]$/.test(e.code)) k = e.code.slice(3);          // KeyZ -> Z
+  else if (/^Digit[0-9]$/.test(e.code)) k = e.code.slice(5);   // Digit0 -> 0
+  else { k = e.key; if (k.length === 1) k = k.toUpperCase(); }
   return s + k;
 }
 let recordingId = null;
@@ -796,6 +813,8 @@ function menuFor(el, tgt) {
       item('Show CFG graph', 'graph', '', () => setWorkspace('graph')),
       sep,
       item('Rename…', 'rename', 'F2', () => doRename(addr || selAddr, name)),
+      item('Set return type…', 'type', '', () => doRetypeReturn(addr || selAddr)),
+      item('Bookmark this', 'bookmark', '', () => toggleBookmark(addr || selAddr)),
       item('Find xrefs to', 'xref', 'Shift+F12', () => toast('Xrefs to ' + name)),
       item('Find xrefs from', 'xref', '', () => toast('Xrefs from ' + name)),
       item('Apply signature', 'type', '', () => echo('sig apply --func ' + name, 'matched 1')),
@@ -805,20 +824,33 @@ function menuFor(el, tgt) {
     ];
     case 'cl': return [
       item('Copy line', 'copy', 'Ctrl+C', () => copy(tgt.textContent.replace(/^\d+/, '').trim())),
-      item('Rename variable…', 'rename', 'F2', () => doRename(selAddr, '')),
-      item('Change type…', 'type', '', () => doRetype(selAddr)),
+      item('Rename function…', 'rename', 'F2', () => doRename(selAddr, selName)),
+      item('Set return type…', 'type', '', () => doRetypeReturn(selAddr)),
+      item('Comment…', 'note', 'Ctrl+/', () => doComment(selAddr)),
+      item('Bookmark this', 'bookmark', '', () => toggleBookmark(selAddr)),
       sep,
       item('Toggle breakpoint', 'bp', 'F9', () => { tgt.classList.toggle('hot'); toast('Breakpoint toggled'); }),
       item('Add watchpoint', 'watch', '', () => { setWorkspace('dynamic'); toast('Watchpoint added'); }),
-      item('Comment…', 'note', 'Ctrl+/', () => doComment(selAddr)),
     ];
+    case 'varrow': {
+      const vn = tgt.dataset?.var || '';
+      return [
+        lbl(vn || 'variable'),
+        item('Rename variable…', 'rename', 'F2', () => doRenameVar(addr || selAddr, vn)),
+        item('Set type…', 'type', '', () => doRetypeVar(addr || selAddr, vn)),
+        sep,
+        item('Copy name', 'copy', '', () => copy(vn)),
+      ];
+    }
     case 'drow': return [
       item('Copy instruction', 'copy', '', () => copy(tgt.textContent.trim())),
+      item('Comment…', 'note', 'Ctrl+/', () => doComment(tgt.dataset?.addr || tgt.querySelector('.daddr')?.textContent || selAddr)),
+      item('Bookmark this line', 'bookmark', '', () => toggleBookmark(tgt.dataset?.addr || tgt.querySelector('.daddr')?.textContent || selAddr)),
       item('Toggle breakpoint', 'bp', 'F9', () => { tgt.classList.toggle('hot'); toast('Breakpoint @ ' + (tgt.querySelector('.daddr')?.textContent || '')); }),
       item('Set watchpoint', 'watch', '', () => setWorkspace('dynamic')),
       item('Follow in dump', 'hex', '', () => setWorkspace('dynamic')),
       sep,
-      item('Copy address', 'copy', '', () => copy(tgt.querySelector('.daddr')?.textContent || '')),
+      item('Copy address', 'copy', '', () => copy(tgt.dataset?.addr || tgt.querySelector('.daddr')?.textContent || '')),
     ];
     case 'wprow': return [
       lbl('watchpoint ' + (tgt.querySelector('.mono')?.textContent || '')),
@@ -859,6 +891,30 @@ function menuFor(el, tgt) {
       sep,
       item('Copy block address', 'copy', '', () => copy(tgt.dataset.addr || '')),
     ];
+    case 'typrow': {
+      const tn = tgt.dataset?.name || '';
+      const isStruct = tgt.dataset?.kind === 'struct';
+      return [
+        lbl(tgt.dataset?.kind + ' ' + tn),
+        ...(isStruct ? [item('Add field…', 'add', '', () => addField(tn))] : []),
+        item('Copy name', 'copy', '', () => copy(tn)),
+        sep,
+        item('Delete type', 'trash', '', () => rmType(tn), { danger: true }),
+      ];
+    }
+    case 'bmkrow': {
+      const a = tgt.dataset?.addr || '';
+      return [
+        lbl(a),
+        item('Go to', 'xref', '', () => findGoto(a)),
+        item('Rename…', 'rename', 'F2', () => doRename(a, tgt.querySelector('.fnc')?.textContent || '')),
+        item('Comment…', 'note', 'Ctrl+/', () => doComment(a)),
+        item('Toggle bookmark', 'bookmark', '', () => toggleBookmark(a)),
+        sep,
+        item('Copy address', 'copy', '', () => copy(a)),
+        item('Remove all annotations here', 'trash', '', () => rmAnno(a), { danger: true }),
+      ];
+    }
     default: return [
       item('Add widget…', 'add', '', () => openWpal($('#btn-addw'))),
       item('Command palette', 'decomp', 'Ctrl+P', openPal),
@@ -891,40 +947,119 @@ function askInput(title, value = '', placeholder = '') {
     setTimeout(() => { inp.focus(); inp.select(); }, 20);
   });
 }
-async function runAnnotate(kind, addr, val, okverb) {
-  if (!isNative) { toast(`${okverb} <span class="mono">${escH(addr)}</span> → ${escH(val || '(cleared)')} · demo`); return; }
-  const args = ['annotate', kind, '--addr', addr]; if (val !== '') args.push('--value', val);
-  // Route through the session so the write lands in THIS target's `.n0x/` (the
-  // serve process runs in the project dir); a bare `n0x()` would walk up from the
-  // GUI's own cwd and scribble names into an unrelated global `.n0x/`.
-  const r = await eng(args);
-  if (!r?.ok) { toast(`annotate failed: ${escH(r?.error?.message || '?')}`); return; }
-  toast(`${okverb} <span class="mono">${escH(addr)}</span> → ${escH(val || 'cleared')}`);
-  // Decomp/disasm/xref are cached by address and now carry the old name — drop the
-  // cache so the views re-fetch. The engine's IR cache invalidates itself (the
-  // symbol fingerprint changed), so the re-fetch renders the new name.
-  engCache.clear();
+/* =====================================================================
+   Annotation edits with a real undo/redo stack (Ctrl+Z / Ctrl+Y).
+   The engine already keeps full versioned history in .n0x/annotations.json;
+   this is the live stack that lets a rename/comment/type be reversed with a
+   keystroke. Every edit records (before → after) so undo re-applies `before`.
+   ===================================================================== */
+const annoUndo = [], annoRedo = [];
+const ANNO_MAX = 200;
+async function readRecord(addr) { const r = await eng(['annotate', 'show', '--addr', addr]); return r?.ok ? r.data : null; }
+function fieldOf(rec, kind, key) {
+  if (!rec) return null;
+  if (kind === 'name') return rec.name ?? null;
+  if (kind === 'comment') return rec.comment ?? null;
+  if (kind === 'type') return rec.type_note ?? null;
+  if (kind === 'var') return (rec.var_names && rec.var_names[key]) ?? null;
+  if (kind === 'vartype') return (rec.var_types && rec.var_types[key]) ?? null;
+  return null;
+}
+// A variable's stable key is its SYNTHESISED name. After a first rename the user
+// sees the new name, so translate a displayed name back to the underlying key —
+// otherwise a second rename (or an undo) would target a dead slot.
+function effectiveVarKey(rec, displayed) {
+  if (!rec || !rec.var_names) return displayed;
+  if (displayed in rec.var_names) return displayed;
+  for (const [k, v] of Object.entries(rec.var_names)) if (v === displayed) return k;
+  return displayed;
+}
+function annoArgs(kind, addr, key, value) {
+  // `var` and `vartype` carry a per-variable key; the rest are address-scoped.
+  const a = (kind === 'var' || kind === 'vartype') ? ['annotate', kind, '--addr', addr, '--var', key] : ['annotate', kind, '--addr', addr];
+  if (value != null && value !== '') a.push('--value', value);
+  return a;
+}
+// Apply a value WITHOUT recording it — shared by edits and by undo/redo. Routes
+// through the session so the write lands in THIS target's .n0x/ (the serve
+// process runs in the project dir); a bare n0x() would walk up from the GUI cwd.
+async function applyAnno(kind, addr, key, value) {
+  const r = await eng(annoArgs(kind, addr, key, value));
+  if (r?.ok) { engCache.clear(); refreshAfterAnno(kind, addr, value); }
+  return r;
+}
+function refreshAfterAnno(kind, addr, value) {
   if (kind === 'name') {
-    const key = (addr || '').toLowerCase();
-    const shown = val || ('sub_' + (addr || '').replace(/^0x/i, '').toUpperCase());
-    funcByAddr.set(key, shown);
-    if (Array.isArray(FUNCLIST)) { const f = FUNCLIST.find(f => (f.addr || '').toLowerCase() === key); if (f) f.name = shown; }
-    if ((selAddr || '').toLowerCase() === key) selName = val || selName;
+    const k = (addr || '').toLowerCase();
+    const shown = value || ('sub_' + (addr || '').replace(/^0x/i, '').toUpperCase());
+    funcByAddr.set(k, shown);
+    if (Array.isArray(FUNCLIST)) { const f = FUNCLIST.find(f => (f.addr || '').toLowerCase() === k); if (f) f.name = shown; }
+    if ((selAddr || '').toLowerCase() === k) selName = value || selName;
     try { paintFunctions(); } catch {}
   }
-  onSymbolSelect();   // re-run every open view (decomp/disasm/xref/graph/linear) so the edit shows live
+  onSymbolSelect();   // re-run every open view (decomp/disasm/xref/graph/linear)
+  try { refreshBookmarks(); } catch {}   // the Notes panel reflects the new name/comment
+}
+// User-facing edit: capture the current value, apply, push onto the undo stack.
+async function editAnno(kind, addr, displayed, value, okverb) {
+  value = value || '';
+  if (!isNative) { toast(`${okverb} <span class="mono">${escH(displayed || addr)}</span> → ${escH(value || '(cleared)')} · demo`); return; }
+  const rec = await readRecord(addr);
+  // `var`/`vartype` are keyed by the variable's stable synthesized name (translate
+  // the displayed name back); `@return` passes straight through.
+  const key = (kind === 'var' || kind === 'vartype') ? effectiveVarKey(rec, displayed) : null;
+  const before = fieldOf(rec, kind, key);
+  if ((before ?? '') === value) { toast('No change'); return; }   // nothing to record
+  const r = await applyAnno(kind, addr, key, value);
+  if (!r?.ok) { toast(`annotate failed: ${escH(r?.error?.message || '?')}`); return; }
+  annoUndo.push({ kind, addr, key, before, after: value || null, label: displayed || addr });
+  if (annoUndo.length > ANNO_MAX) annoUndo.shift();
+  annoRedo.length = 0;
+  toast(`${okverb} <span class="mono">${escH(displayed || addr)}</span> → ${escH(value || 'cleared')} · Ctrl+Z to undo`);
+}
+async function annotationUndo() {
+  const e = annoUndo.pop();
+  if (!e) { toast('Nothing to undo'); return; }
+  await applyAnno(e.kind, e.addr, e.key, e.before || '');
+  annoRedo.push(e);
+  toast(`Undo <span class="mono">${escH(e.label)}</span> ↺ ${escH(e.before || 'cleared')}`);
+}
+async function annotationRedo() {
+  const e = annoRedo.pop();
+  if (!e) { toast('Nothing to redo'); return; }
+  await applyAnno(e.kind, e.addr, e.key, e.after || '');
+  annoUndo.push(e);
+  toast(`Redo <span class="mono">${escH(e.label)}</span> → ${escH(e.after || 'cleared')}`);
 }
 async function doRename(addr = selAddr, cur = selName) {
   const v = await askInput(`Rename ${cur || addr}`, cur || '', 'new function/variable name');
-  if (v !== null) runAnnotate('name', addr, v.trim(), 'Renamed');
+  if (v !== null) editAnno('name', addr, cur, v.trim(), 'Renamed');
 }
 async function doComment(addr = selAddr) {
-  const v = await askInput(`Comment @ ${addr}`, '', 'free-text note');
-  if (v !== null) runAnnotate('comment', addr, v, 'Commented');
+  const cur = isNative ? fieldOf(await readRecord(addr), 'comment', null) : null;
+  const v = await askInput(`Comment @ ${addr}`, cur || '', 'free-text note');
+  if (v !== null) editAnno('comment', addr, addr, v, 'Commented');
 }
-async function doRetype(addr = selAddr, cur = '') {
-  const v = await askInput(`Change type @ ${addr}`, cur, 'e.g.  int(char*, size_t)');
-  if (v !== null) runAnnotate('type', addr, v.trim(), 'Type set on');
+// Rename a decompiled variable by its displayed name (`local_78`, `rcx`, `v3`) —
+// scoped to the current function (fnAddr). WYSIWYG: you rename what you see.
+async function doRenameVar(fnAddr, varName) {
+  if (!varName) { toast('No variable to rename'); return; }
+  const v = await askInput(`Rename variable ${varName}`, varName, 'new variable name');
+  if (v !== null) editAnno('var', fnAddr, varName, v.trim(), 'Renamed');
+}
+// Set the C type of a decompiled variable/parameter — applied live in the
+// decompiler's signature + declarations (keyed by the var's displayed name).
+async function doRetypeVar(fnAddr, varName) {
+  if (!varName) { toast('No variable to type'); return; }
+  const cur = isNative ? (fieldOf(await readRecord(fnAddr), 'vartype', effectiveVarKey(await readRecord(fnAddr), varName)) || '') : '';
+  const v = await askInput(`Set type of ${varName}`, cur, 'e.g.  int   ·   char *   ·   MyStruct *');
+  if (v !== null) editAnno('vartype', fnAddr, varName, v.trim(), 'Type set on');
+}
+// Set the function's return type (@return); empty / "void" → void.
+async function doRetypeReturn(fnAddr = selAddr) {
+  const cur = isNative ? (fieldOf(await readRecord(fnAddr), 'vartype', '@return') || '') : '';
+  const v = await askInput(`Set return type of ${selName || fnAddr}`, cur, 'e.g.  int   ·   bool   ·   void   ·   Foo *');
+  if (v !== null) editAnno('vartype', fnAddr, '@return', v.trim(), 'Return type set on');
 }
 async function doIdentify(addr = selAddr) {
   if (!isNative || !curPath) { toast('Scanning for known algorithms… · demo'); return; }
@@ -947,6 +1082,149 @@ async function doGoto() {                          // navigate to an address or 
     || rows.find(r => (r.querySelector('.fa')?.textContent || '').toLowerCase() === q.toLowerCase());
   if (hit) { hit.click(); hit.scrollIntoView({ block: 'nearest' }); toast('Jumped to ' + escH(hit.querySelector('.nm')?.textContent || q)); }
   else { selAddr = /^0x/i.test(q) ? q : selAddr; selName = q; onSymbolSelect(); toast('Go to ' + escH(q)); }
+}
+
+/* ---- Find in image (Ctrl+F): byte / string / escaped-string search over the
+   engine's `find` command, results navigate to the address. ---- */
+let findState = { mode: 'string', utf16: false, q: '' };
+async function openFind() {
+  if (!isNative || !curPath) { toast('Open a binary to search'); return; }
+  document.querySelector('.find-ov')?.remove();
+  const ov = document.createElement('div');
+  ov.className = 'find-ov';
+  ov.innerHTML = `<div class="find-box"><div class="find-top">` +
+    `<input class="find-in mono" placeholder="text, bytes (48 8B ?? C3), or \\x48…" value="${escH(findState.q)}">` +
+    `<div class="find-modes">` +
+    ['string', 'bytes', 'escaped'].map(m => `<button class="find-mode${m === findState.mode ? ' on' : ''}" data-mode="${m}">${m === 'string' ? 'Text' : m === 'bytes' ? 'Bytes' : 'Escaped'}</button>`).join('') +
+    `<label class="find-w"><input type="checkbox" class="find-utf16"${findState.utf16 ? ' checked' : ''}> wide</label></div></div>` +
+    `<div class="find-res"></div><div class="find-foot"><span class="find-stat">Enter to search · Esc to close</span></div></div>`;
+  document.body.appendChild(ov);
+  const inp = ov.querySelector('.find-in'), res = ov.querySelector('.find-res'), stat = ov.querySelector('.find-stat');
+  const close = () => ov.remove();
+  ov.addEventListener('mousedown', e => { if (e.target === ov) close(); });
+  ov.querySelectorAll('.find-mode').forEach(b => b.onclick = () => { findState.mode = b.dataset.mode; ov.querySelectorAll('.find-mode').forEach(x => x.classList.toggle('on', x === b)); inp.focus(); });
+  ov.querySelector('.find-utf16').onchange = e => { findState.utf16 = e.target.checked; };
+  async function run() {
+    const q = inp.value; findState.q = q; if (!q.trim()) return;
+    stat.textContent = 'searching…';
+    const flag = findState.mode === 'bytes' ? '--bytes' : findState.mode === 'escaped' ? '--escaped' : '--string';
+    const args = ['find', '--file', curPath, flag, q, '--limit', '300'];
+    if (findState.mode === 'string' && findState.utf16) args.push('--utf16');
+    const r = await eng(args);
+    if (!r?.ok) { stat.textContent = 'error: ' + escH(r?.error?.message || '?'); res.innerHTML = ''; return; }
+    const d = r.data, ms = d.matches || [];
+    stat.textContent = `${d.count} match${d.count === 1 ? '' : 'es'}${d.truncated ? ' (capped)' : ''} · ${(d.bytes_scanned || 0).toLocaleString()} bytes scanned`;
+    res.innerHTML = ms.map(m => `<div class="find-r" data-addr="${escH(m.va)}"><span class="fnc mono">${escH(m.va)}</span><span class="find-sec">${escH(m.section || '')}</span></div>`).join('') || '<div class="xr-none">no matches</div>';
+    res.querySelectorAll('.find-r').forEach(row => row.onclick = () => { findGoto(row.dataset.addr); close(); });
+  }
+  inp.addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Enter') { e.preventDefault(); run(); } else if (e.key === 'Escape') { e.preventDefault(); close(); } });
+  setTimeout(() => { inp.focus(); inp.select(); }, 20);
+}
+function findGoto(addr) {
+  if (!addr) return;
+  selAddr = addr; selName = ''; selSeq++;
+  const sb = $('#sb-addr'); if (sb) sb.textContent = addr;
+  onSymbolSelect();                                   // re-center disasm/linear/decomp on the hit
+  linears.forEach(r => { if (r.isConnected) r._linJump?.(addr); });
+  toast('Jumped to <span class="mono">' + escH(addr) + '</span>');
+}
+
+/* ---- Bookmarks / Notes widget: every address the user annotated (name / comment
+   / type / var-rename / bookmark), read from `.n0x/annotations.json` via
+   `annotate list`. Click a row → jump. This is the "saved work" index. ---- */
+function initBookmarks(root) {
+  const box = root.querySelector('.bmk') || root;
+  box.querySelector('.bmk-refresh')?.addEventListener('click', () => loadBookmarks(box));
+  loadBookmarks(box);
+}
+function refreshBookmarks() { $$('.bmk').forEach(loadBookmarks); }
+async function loadBookmarks(box) {
+  const el = box.querySelector('.bmk-list'); if (!el) return;
+  if (!isNative || !curPath) { el.innerHTML = '<div class="xr-none">open a binary to see its notes</div>'; return; }
+  const r = await eng(['annotate', 'list']);
+  const recs = (r?.ok && r.data && r.data.records) ? r.data.records : [];
+  // Only records the USER created (names, comments, types, var renames, bookmarks)
+  // — the recovered 371k RTTI names live elsewhere and would drown the list.
+  const rows = recs.filter(x => x.name || x.comment || x.type_note || x.bookmark || (x.var_names && Object.keys(x.var_names).length));
+  rows.sort((a, b) => (b.bookmark ? 1 : 0) - (a.bookmark ? 1 : 0) || vaNum(a.va) - vaNum(b.va));
+  if (!rows.length) { el.innerHTML = '<div class="xr-none">no notes yet — right-click ▸ “Bookmark this”, or rename / comment something</div>'; return; }
+  el.innerHTML = rows.map(x => {
+    const va = x.va;
+    const nm = x.name || ('sub_' + String(va).replace(/^0x/i, '').toUpperCase());
+    const cmt = x.comment ? `<span class="bmk-cmt">${escH(String(x.comment).split('\n')[0])}</span>` : '';
+    const star = x.bookmark ? '<span class="bmk-star on" title="bookmark">★</span>' : '<span class="bmk-star"></span>';
+    return `<div class="bmk-r" data-ctx="bmkrow" data-addr="${escH(va)}">${star}<span class="fnc mono">${escH(nm)}</span>${cmt}<span class="bmk-va mono">${escH(va)}</span></div>`;
+  }).join('');
+  el.querySelectorAll('.bmk-r').forEach(row => row.addEventListener('click', () => findGoto(row.dataset.addr)));
+}
+async function toggleBookmark(addr = selAddr) {
+  if (!isNative || !addr) { toast(`Bookmark <span class="mono">${escH(addr)}</span> · demo`); return; }
+  const rec = await readRecord(addr);
+  const on = !(rec && rec.bookmark);
+  const args = ['annotate', 'bookmark', '--addr', addr]; if (!on) args.push('--off');
+  const r = await eng(args);
+  if (!r?.ok) { toast(`bookmark failed: ${escH(r?.error?.message || '?')}`); return; }
+  toast(on ? `Bookmarked <span class="mono">${escH(addr)}</span>` : `Removed bookmark <span class="mono">${escH(addr)}</span>`);
+  refreshBookmarks();
+}
+async function rmAnno(addr = selAddr) {
+  if (!isNative || !addr) return;
+  const r = await eng(['annotate', 'rm', '--addr', addr]);
+  if (r?.ok) { toast(`Cleared annotations @ <span class="mono">${escH(addr)}</span>`); engCache.clear(); onSymbolSelect(); refreshBookmarks(); }
+  else toast(`clear failed: ${escH(r?.error?.message || '?')}`);
+}
+
+/* ---- Types panel: define struct/enum types (`.n0x/types.json`). A struct's
+   named fields make the decompiler render `p->count` for a pointer typed to it
+   (right-click a variable ▸ Set type). ---- */
+function initTypes(root) {
+  const box = root.querySelector('.typ') || root;
+  box.querySelector('.typ-refresh')?.addEventListener('click', () => loadTypes(box));
+  box.querySelector('.typ-add-s')?.addEventListener('click', () => addStruct());
+  box.querySelector('.typ-add-e')?.addEventListener('click', () => addEnum());
+  loadTypes(box);
+}
+function refreshTypes() { $$('.typ').forEach(loadTypes); }
+async function loadTypes(box) {
+  const el = box.querySelector('.typ-list'); if (!el) return;
+  if (!isNative || !curPath) { el.innerHTML = '<div class="xr-none">open a binary to define types</div>'; return; }
+  const r = await eng(['type', 'list']);
+  const d = (r && r.ok && r.data) ? r.data : { structs: [], enums: [] };
+  const struct = s => `<div class="typ-s"><div class="typ-srow" data-ctx="typrow" data-name="${escH(s.name)}" data-kind="struct"><span class="typ-k">struct</span><span class="fnc mono">${escH(s.name)}</span><button class="typ-addf" title="Add field">＋</button></div>` +
+    (s.fields || []).slice().sort((a, b) => a.offset - b.offset).map(f => `<div class="typ-f mono">+0x${(f.offset >>> 0).toString(16)} <b>${escH(f.name)}</b>${f.ctype ? ' : ' + escH(f.ctype) : ''}</div>`).join('') + `</div>`;
+  const enm = e => `<div class="typ-s"><div class="typ-srow" data-ctx="typrow" data-name="${escH(e.name)}" data-kind="enum"><span class="typ-k">enum</span><span class="fnc mono">${escH(e.name)}</span></div>` +
+    (e.members || []).map(m => `<div class="typ-f mono">${escH(m.name)} = ${m.value}</div>`).join('') + `</div>`;
+  el.innerHTML = ((d.structs || []).map(struct).join('') + (d.enums || []).map(enm).join('')) ||
+    '<div class="xr-none">no types yet — “+ Struct”, add fields, then right-click a variable ▸ Set type</div>';
+  el.querySelectorAll('.typ-addf').forEach(b => b.addEventListener('click', e => { e.stopPropagation(); addField(b.closest('.typ-srow').dataset.name); }));
+}
+async function addStruct() {
+  const n = await askInput('New struct name', '', 'e.g.  Player');
+  if (n && n.trim()) { await eng(['type', 'struct', '--name', n.trim()]); refreshTypes(); }
+}
+async function addEnum() {
+  const n = await askInput('New enum name', '', 'e.g.  State');
+  if (n && n.trim()) { await eng(['type', 'enum', '--name', n.trim()]); refreshTypes(); }
+}
+async function addField(structName) {
+  const spec = await askInput(`Add field to ${structName}`, '', 'offset name [ctype]   e.g.  0x68 count int');
+  if (!spec || !spec.trim()) return;
+  const p = spec.trim().split(/\s+/);
+  if (p.length < 2) { toast('Need: offset name [ctype]'); return; }
+  // put replaces the struct, so re-send the existing fields + the new one.
+  const r = await eng(['type', 'list']);
+  const s = ((r && r.data && r.data.structs) || []).find(x => x.name === structName);
+  const args = ['type', 'struct', '--name', structName];
+  (s && s.fields || []).forEach(f => args.push('--field', `${f.offset}:${f.name}${f.ctype ? ':' + f.ctype : ''}`));
+  args.push('--field', `${p[0]}:${p[1]}${p[2] ? ':' + p[2] : ''}`);
+  const w = await eng(args);
+  if (!w?.ok) { toast(`add field failed: ${escH(w?.error?.message || '?')}`); return; }
+  refreshTypes(); engCache.clear(); onSymbolSelect();   // re-decompile: the field name may now render
+}
+async function rmType(name) {
+  if (!name) return;
+  const r = await eng(['type', 'rm', '--name', name]);
+  if (r?.ok) { toast(`Removed type <span class="mono">${escH(name)}</span>`); refreshTypes(); engCache.clear(); onSymbolSelect(); }
 }
 
 function openCtx(x, y, items) {
@@ -1090,7 +1368,7 @@ function menuItems(name) {
       sep,
       item('Rename…', 'rename', 'F2', () => doRename()),
       item('Comment…', 'comment', 'Ctrl+/', () => doComment()),
-      item('Change type…', 'type', '', () => doRetype()),
+      item('Set return type…', 'type', '', () => doRetypeReturn()),
       item('Invert branch logic', 'redo', '', () => doPatch('Invert branch')),
       item('Patch → NOP…', 'patch', '', () => doPatch('NOP')),
       sep,
@@ -1127,7 +1405,7 @@ function menuItems(name) {
       item('Add widget…', 'add', '', () => openWpal($('#btn-addw'))),
       sep,
       item('Undo layout', 'undo', 'Ctrl+Shift+Z', () => dock.undo()),
-      item('Redo layout', 'redo', 'Ctrl+Shift+X', () => dock.redo()),
+      item('Redo layout', 'redo', 'Ctrl+Shift+Y', () => dock.redo()),
       item('Reset layout', 'reset', '', () => dock.reset()),
       sep,
       item('Minimize', 'min', '', () => winCtl('min')),
@@ -1168,6 +1446,13 @@ window.addEventListener('keydown', e => {   // data-driven dispatch — reads th
     if (d.scope === 'live' && !isLive()) return;
     d.act(); return;
   }
+});
+// Mouse back/forward buttons (button 3 = back, 4 = forward), like every browser
+// and disassembler — mirror Alt+←/→. Only when a target is open.
+window.addEventListener('mouseup', e => {
+  if (!targetOpen()) return;
+  if (e.button === 3) { e.preventDefault(); navBackward(); }
+  else if (e.button === 4) { e.preventDefault(); navForward(); }
 });
 
 /* =====================================================================
@@ -1219,7 +1504,7 @@ function funcView() {                       // full list filtered by the search 
   const q = funcQuery.trim().toLowerCase(), rows = funcRows();
   return q ? rows.filter(f => (f.name + ' ' + f.addr).toLowerCase().includes(q)) : rows;
 }
-const frowHTML = f => `<div class="frow${f.tag === 'sub' ? ' sub' : ''}${f.addr === selAddr ? ' on' : ''}" data-addr="${escH(f.addr)}"><span class="sym">ƒ</span><span class="nm mono">${escH(f.name)}</span>${f.tag === 'sig' ? '<span class="badge">sig</span>' : ''}<span class="fa mono">${escH(f.addr)}</span></div>`;
+const frowHTML = f => `<div class="frow${f.tag === 'sub' ? ' sub' : ''}${f.addr === selAddr ? ' on' : ''}" data-addr="${escH(f.addr)}"><span class="sym">ƒ</span><span class="nm mono" title="${escH(f.name)}">${escH(f.name)}</span>${f.tag === 'sig' ? '<span class="badge">sig</span>' : ''}<span class="fa mono">${escH(f.addr)}</span></div>`;
 const FROW_H = 27;                          // px — must match .frow height in CSS
 function renderFlist(fl) {                  // virtualized: no cap, only visible rows in the DOM
   const rows = funcView(), total = rows.length;
@@ -1271,7 +1556,7 @@ const WIDGETS = {
   // Linear view (Binary Ninja-style): the WHOLE binary as one continuous listing,
   // functions flowing into one another, lazily disassembled as you scroll, with a
   // VS Code-style minimap on the right.
-  linear: { title: 'Linear · listing', icon: 'disasm', body: () => `<div class="lin-wrap"><div class="linear selectable mono"></div><canvas class="lin-map" width="72"></canvas></div>`, init: root => initLinear(root) },
+  linear: { title: 'Linear · listing', icon: 'disasm', body: () => `<div class="lin-outer"><div class="lin-bar"><button data-mode="asm" class="on">Asm</button><button data-mode="pseudo">Pseudo</button><span class="lin-bar-hint">continuous listing · whole program</span></div><div class="lin-wrap"><div class="linear selectable mono"></div><canvas class="lin-map" width="72"></canvas></div></div>`, init: root => initLinear(root) },
 
   hex: { title: 'Hex', icon: 'hex', body: () => `<div class="hex selectable" style="height:100%"><div class="hx"><span class="hxa">7FF6C21A40</span><span class="hxb"><span class="hb-hi">57 00 00 00</span> 2a 00 00 00 5c 21 c2 f6</span><span class="hxc">W....*...\\!</span></div><div class="hx"><span class="hxa">7FF6C21A50</span><span class="hxb">64 00 00 00 00 00 80 3f 00 00 80 3f</span><span class="hxc">d......?...?</span></div></div>` },
 
@@ -1350,6 +1635,16 @@ const WIDGETS = {
   // Stack — a call frame view. Live backtrace (`stack backtrace --pid`) once a
   // process is attached; a static frame sketch until then.
   stack: { title: 'Stack', icon: 'regs', body: () => `<div class="stk selectable" style="height:100%;overflow:auto"></div>`, init: root => { paintStack(root.querySelector('.stk')); } },
+
+  // Bookmarks / Notes — every address the user has annotated (renamed, commented,
+  // typed, or bookmarked). Click a row to jump there. The saved-work index; it
+  // reads the same `.n0x/annotations.json` everything else writes to.
+  bookmarks: { title: 'Bookmarks', icon: 'bookmark', body: () => `<div class="bmk" style="height:100%;display:flex;flex-direction:column"><div class="bmk-hd"><span class="dk-mk">${svg(ICON.bookmark, '')}</span><span class="bmk-t">names · comments · bookmarks</span><span style="flex:1"></span><button class="bmk-refresh" title="Refresh">${svg(ICON.reset, '')}</button></div><div class="bmk-list selectable" style="flex:1;overflow:auto"></div></div>`, init: root => initBookmarks(root) },
+
+  // Types — user-defined struct / enum definitions the decompiler uses to render
+  // named struct fields (`p->count`). Define one, add fields, then right-click a
+  // variable ▸ Set type to a pointer to it.
+  types: { title: 'Types', icon: 'type', body: () => `<div class="typ" style="height:100%;display:flex;flex-direction:column"><div class="typ-hd"><button class="typ-add-s">+ Struct</button><button class="typ-add-e">+ Enum</button><span style="flex:1"></span><button class="typ-refresh" title="Refresh">${svg(ICON.reset, '')}</button></div><div class="typ-list selectable" style="flex:1;overflow:auto"></div></div>`, init: root => initTypes(root) },
 };
 
 /* ---- Triage: render the `profile` envelope (demo data until a real target) ---- */
@@ -1453,6 +1748,12 @@ function initConsole(root) {
 }
 
 /* ---- Xrefs / Variables / Stack + live decompiler (engine-backed) ---- */
+// The reverse-xref index is built by `analyze`. Querying `xref to` before it
+// exists makes the ENGINE build it inside the session — 18.6 s on AyuGram
+// (2.2 M targets, measured) — and because `session_query` holds one mutex for the
+// whole request, every decompile queues behind it and the whole UI sits in
+// "Loading". So we don't ask until the index is there.
+let xrefIndexReady = false;
 let XREF = {
   to: [{ from: '0x14e6', to: '0x1510', kind: 'call', text: 'call crc32_z' }, { from: '0x1a70', to: '0x1510', kind: 'call', text: 'call crc32_z' }],
   from: [{ from: '0x1510', to: '0x1002a', kind: 'call', text: 'call sub_1002A' }, { from: '0x1510', to: '0x1560', kind: 'cond_jmp', text: 'je short 0x1560' }],
@@ -1470,6 +1771,9 @@ function paintXrefs(scope) {                         // scope: one widget root, 
 function initXrefs(root) { paintXrefs(root.querySelector('.xrefs') || root); root.querySelector('.xr-refresh')?.addEventListener('click', loadXrefs); if (isNative && curPath) loadXrefs(); }
 async function loadXrefs(seq) {
   if (!isNative || !curPath) { paintXrefs(); return; }
+  // Index not built yet — skip rather than block the session (see `xrefIndexReady`).
+  // `startAnalysis` re-runs this the moment the index is ready.
+  if (!xrefIndexReady) { XREF = { to: [], from: [] }; paintXrefs(); return; }
   const [t, f] = await Promise.all([
     n0xCached('xt|' + curPath + '|' + selAddr, ['xref', 'to', '--file', curPath, '--addr', selAddr]),
     n0xCached('xf|' + curPath + '|' + selAddr, ['xref', 'from', '--file', curPath, '--addr', selAddr]),
@@ -1485,7 +1789,7 @@ function paintVars(el) {
   if (!el) { $$('.vars').forEach(paintVars); return; }
   const n = { arg: 0, stack: 0, reg: 0 }; VARS.forEach(v => n[v.k] = (n[v.k] || 0) + 1);
   const head = VARS.length ? `<div class="vars-h">${n.arg} args · ${n.stack} stack · ${n.reg} reg</div>` : '';
-  el.innerHTML = head + (VARS.length ? VARS.map(v => `<div class="var-r" data-ctx="drow" data-addr="${escH(selAddr)}"><span class="var-k ${v.k}" title="${v.k}">${VAR_BADGE[v.k] || '?'}</span><span class="ty mono">${escH(v.t)}</span><span class="fnc mono">${escH(v.n)}</span></div>`).join('') : '<div class="xr-none">no variables</div>');
+  el.innerHTML = head + (VARS.length ? VARS.map(v => `<div class="var-r" data-ctx="varrow" data-addr="${escH(selAddr)}" data-var="${escH(v.n)}"><span class="var-k ${v.k}" title="${v.k}">${VAR_BADGE[v.k] || '?'}</span><span class="ty mono">${escH(v.t)}</span><span class="fnc mono">${escH(v.n)}</span></div>`).join('') : '<div class="xr-none">no variables</div>');
 }
 // Classify variables the way BN does: Arguments (signature), Stack (var_XXXX =
 // frame offsets), Register (vN / rax_N = SSA temporaries), with types lifted from
@@ -1560,7 +1864,20 @@ function setLoading(on) {
 }
 async function eng(args) {
   setLoading(true);
-  try { return (sessionOn && isNative) ? await sessionQuery(args) : await n0x(args); }
+  try {
+    if (!(sessionOn && isNative)) return await n0x(args);
+    const r = await sessionQuery(args);
+    // The Rust side kills the session on ANY io error, but `sessionOn` never got
+    // cleared — so every later call kept asking a dead session and returned
+    // `{ok:false,"no session"}` instead of degrading. Fall back to a one-shot
+    // (and stop using the session) whenever the SESSION is what failed, not the
+    // command. Slower per call, but the app keeps working.
+    if (r && r.ok === false && /no session|session (closed|write|read)/i.test(r.error?.message || '')) {
+      sessionOn = false;
+      return await n0x(args);
+    }
+    return r;
+  }
   finally { setLoading(false); }
 }
 async function n0xCached(key, args) {
@@ -1588,10 +1905,13 @@ function calleeName(target) {
   return (n && !/^sub_/i.test(n)) ? n : '';
 }
 const symArrow = target => { const n = calleeName(target); return n ? ` <span class="dsym" style="color:var(--acc)">→ ${escH(n)}</span>` : ''; };
+// A user comment on this address (from `annotate comment`) rides on the row as
+// `; text`, muted, like a source comment.
+const cmtSpan = c => c ? ` <span class="dcmt" style="color:var(--tx2);font-style:italic">; ${escH(c)}</span>` : '';
 function paintDisasm(insns) {
   const html = insns.map(i => {
     const op = (i.text || '').slice((i.mnemonic || '').length).trim();
-    return `<div class="drow" data-ctx="drow" data-addr="${escH(i.va || '')}"><span class="daddr">${escH(i.va || '')}</span><span class="dbytes">${escH(i.bytes || '')}</span><span class="dmn">${escH(i.mnemonic || '')}</span><span>${escH(op)}${symArrow(i.target)}</span></div>`;
+    return `<div class="drow" data-ctx="drow" data-addr="${escH(i.va || '')}"><span class="daddr">${escH(i.va || '')}</span><span class="dbytes">${escH(i.bytes || '')}</span><span class="dmn">${escH(i.mnemonic || '')}</span><span>${escH(op)}${symArrow(i.target)}${cmtSpan(i.comment)}</span></div>`;
   }).join('');
   $$('.disasm').forEach(d => { d.innerHTML = html; });
 }
@@ -1628,13 +1948,15 @@ function initLinear(root) {
   let FN = [], fnLen = -1;                  // sorted anchor table — rebuilt when the function list grows
   const fnCache = new Map();               // fi → [rowObj]  (whole-function disassembly, cached)
   let loFi = 0, hiFi = -1, rows = [], loading = false;
+  let mapDrag = false;                      // true while the minimap thumb is being dragged (see the handler)
+  let linMode = 'asm';                       // 'asm' = disassembly listing | 'pseudo' = continuous decompiled C
   // The widget may mount before the function list has finished streaming (it's a tab
   // built up front). Re-sync from the live FUNCLIST whenever it changes size.
   function syncFN() {
     const src = FUNCLIST || [];
     if (src.length === fnLen) return false;
     fnLen = src.length;
-    FN = src.map(f => ({ addr: f.addr, name: f.name, n: vaNum(f.addr) })).filter(f => f.n).sort((a, b) => a.n - b.n);
+    FN = src.map(f => ({ addr: f.addr, name: f.name, n: vaNum(f.addr), end: vaNum(f.end) })).filter(f => f.n).sort((a, b) => a.n - b.n);
     fnCache.clear(); loFi = 0; hiFi = -1; rows = [];
     return true;
   }
@@ -1642,27 +1964,49 @@ function initLinear(root) {
   const fiOf = n => { let lo = 0, hi = FN.length - 1, r = 0; while (lo <= hi) { const m = (lo + hi) >> 1; if (FN[m].n <= n) { r = m; lo = m + 1; } else hi = m - 1; } return r; };
   const lineHTML = (ins, fnName) => {
     const va = ins.va || '', op = (ins.text || '').slice((ins.mnemonic || '').length).trim();
-    return (fnName ? `<div class="lin-fn" data-addr="${escH(va)}">${escH(fnName)}</div>` : '') +
-      `<div class="lin-row${fnName ? ' fnstart' : ''}" data-ctx="drow" data-addr="${escH(va)}"><span class="daddr">${escH(va)}</span><span class="dmn">${escH(ins.mnemonic || '')}</span><span class="lin-op">${escH(op)}${symArrow(ins.target)}</span></div>`;
+    return (fnName ? `<div class="lin-fn" data-addr="${escH(va)}" title="${escH(fnName)}">${escH(fnName)}</div>` : '') +
+      `<div class="lin-row${fnName ? ' fnstart' : ''}" data-ctx="drow" data-addr="${escH(va)}"><span class="daddr">${escH(va)}</span><span class="dmn">${escH(ins.mnemonic || '')}</span><span class="lin-op">${escH(op)}${symArrow(ins.target)}${cmtSpan(ins.comment)}</span></div>`;
   };
   async function fetchFn(fi) {
     if (fnCache.has(fi)) return fnCache.get(fi);
     const f = FN[fi]; if (!f || !isNative || !curPath) return [];
-    const nextN = FN[fi + 1]?.n ?? (f.n + 0x400);
-    const approx = Math.max(24, Math.min(700, Math.ceil((nextN - f.n) / 2)));
+    if (linMode === 'pseudo') return fetchFnPseudo(fi, f);
+    // Stop at the function's REAL end. `.pdata` gives an exact `end`; without it,
+    // the next function's start. This is what keeps the listing from disassembling
+    // the int3/zero padding after `ret` as bogus `add [rax],al` — and stops the
+    // LAST function from running 0x400 bytes into the section's zero tail.
+    const nextN = FN[fi + 1]?.n ?? Infinity;
+    const stop = (f.end && f.end > f.n) ? Math.min(f.end, nextN) : (Number.isFinite(nextN) ? nextN : f.n + 0x400);
+    const approx = Math.max(24, Math.min(2000, Math.ceil((stop - f.n) / 2)));
     const r = await n0xCached('lin|' + curPath + '|' + f.addr, ['disasm', '--file', curPath, '--addr', f.addr, '--count', String(approx)]);
     let ins = (r?.ok && Array.isArray(r.data.insns)) ? r.data.insns : [];
-    if (FN[fi + 1]) ins = ins.filter(x => vaNum(x.va) < nextN);         // stop at the next function
+    ins = ins.filter(x => vaNum(x.va) < stop);                          // trim the over-fetch + any padding past the end
     const rws = ins.map((x, idx) => ({ va: x.va, fi, html: lineHTML(x, idx === 0 ? (f.name || 'sub_' + f.addr) : null) }));
     if (!rws.length) rws.push({ va: f.addr, fi, html: lineHTML({ va: f.addr, mnemonic: '—', text: '' }, f.name || 'sub_' + f.addr) });
+    fnCache.set(fi, rws); linWarmed.add(f.n);
+    return rws;
+  }
+  // Pseudocode mode: decompile the whole function (same engine call as the Decompiler
+  // tab — cached + vtable-memoised, so revisits are instant) and lay its C lines out
+  // as rows, so the Linear view flows decompiled C for the whole program.
+  async function fetchFnPseudo(fi, f) {
+    const r = await n0xCached('linp|' + curPath + '|' + f.addr + '|' + decompStyle,
+      ['decomp', 'pseudo', '--file', curPath, '--addr', f.addr, '--style', decompStyle]);
+    const lines = (r?.ok && Array.isArray(r.data.pseudo) && r.data.pseudo.length) ? r.data.pseudo : ['// no decompilation'];
+    const name = f.name || 'sub_' + f.addr;
+    const hdr = `<div class="lin-fn" data-addr="${escH(f.addr)}" title="${escH(name)}">${escH(name)}</div>`;
+    const rws = lines.map((ln, idx) => ({
+      va: f.addr, fi,
+      html: (idx === 0 ? hdr : '') + `<div class="lin-prow" data-addr="${escH(f.addr)}"><span class="lin-pgut">${idx + 1}</span><span class="lin-pc">${escH(ln)}</span></div>`,
+    }));
     fnCache.set(fi, rws); linWarmed.add(f.n);
     return rws;
   }
   const rebuild = () => { rows = []; for (let i = loFi; i <= hiFi; i++) rows = rows.concat(fnCache.get(i) || []); };
   const render = () => { view.innerHTML = rows.map(r => r.html).join(''); markSel(); drawMap(); };
   // keep whatever the user is looking at fixed in place across a window change (add/trim)
-  const anchor = () => { const el = [...view.querySelectorAll('.lin-row[data-addr]')].find(c => c.offsetTop >= view.scrollTop); return el ? { va: el.getAttribute('data-addr'), off: el.offsetTop - view.scrollTop } : null; };
-  const restore = a => { if (!a) return; const el = [...view.querySelectorAll('.lin-row[data-addr]')].find(c => c.getAttribute('data-addr') === a.va); if (el) view.scrollTop = el.offsetTop - a.off; };
+  const anchor = () => { const el = [...view.querySelectorAll('.lin-row[data-addr],.lin-prow[data-addr]')].find(c => c.offsetTop >= view.scrollTop); return el ? { va: el.getAttribute('data-addr'), off: el.offsetTop - view.scrollTop } : null; };
+  const restore = a => { if (!a) return; const el = [...view.querySelectorAll('.lin-row[data-addr],.lin-prow[data-addr]')].find(c => c.getAttribute('data-addr') === a.va); if (el) view.scrollTop = el.offsetTop - a.off; };
   async function appendNext() {
     if (loading || hiFi >= FN.length - 1) return; loading = true;
     const a = anchor();
@@ -1697,7 +2041,8 @@ function initLinear(root) {
     const fi = fiOf(vaNum(addr) || FN[0].n);
     if (fi < loFi || fi > hiFi || !rows.length) {   // re-anchor: load this function, then a small buffer each way
       loFi = hiFi = fi; await fetchFn(fi); rebuild(); render();
-      for (let k = 0; k < 2; k++) { await appendNext(); await prependPrev(); }
+      const buf = linMode === 'pseudo' ? 1 : 2;         // decompiling is heavier — load a tighter buffer
+      for (let k = 0; k < buf; k++) { await appendNext(); await prependPrev(); }
     }
     centerOn(addr);
   }
@@ -1715,6 +2060,7 @@ function initLinear(root) {
     drawVp();
   }
   function drawVp() {
+    if (mapDrag) return;                     // while dragging, the thumb follows the cursor (see mapThumbAt) — don't fight it
     let box = wrap.querySelector('.lin-vp'); if (!box) { box = document.createElement('div'); box.className = 'lin-vp'; wrap.appendChild(box); }
     const N = FN.length || 1, h = map.clientHeight || 400, span = (hiFi - loFi + 1) || 1;
     const frac = view.scrollHeight ? view.scrollTop / view.scrollHeight : 0, vfrac = view.scrollHeight ? view.clientHeight / view.scrollHeight : 1;
@@ -1728,12 +2074,58 @@ function initLinear(root) {
   });
   // click a row → select for the AI; shift-click → extend a line range (addresses passed to the AI)
   view.addEventListener('click', e => {
+    // Clicking a function NAME header in the listing = select & decompile it — the
+    // way to decompile after scrolling there with the minimap (which is scroll-only).
+    const hdr = e.target.closest('.lin-fn[data-addr]');
+    if (hdr) { const a = hdr.getAttribute('data-addr'); const f = FN.find(x => x.addr === a); selAddr = f ? f.addr : a; selName = f ? f.name : ''; linSel = null; onSymbolSelect(); return; }
     const row = e.target.closest('.lin-row[data-addr]'); if (!row) return;
     const v = vaNum(row.getAttribute('data-addr'));
     if (e.shiftKey && linSel) linSel.b = v; else linSel = { a: v, b: v };
     markSel(); refreshAiScope();
   });
-  map.addEventListener('pointerdown', e => { const r = map.getBoundingClientRect(); const fi = clamp(Math.floor((e.clientY - r.top) / r.height * FN.length), 0, FN.length - 1); const f = FN[fi]; if (f) { selAddr = f.addr; selName = f.name; linSel = null; onSymbolSelect(); } });
+  // Minimap = a PURE global scrollbar over the whole program, fully decoupled from
+  // the decompiler. Click or drag only SCROLLS the listing; it never decompiles
+  // (that's a separate action: click a function name in the listing). The thumb
+  // follows the cursor instantly (visual only); the actual re-anchor (`jump`) is
+  // COALESCED — a single one runs at a time, always to the latest target — so any
+  // amount of fast clicking/dragging never queues work or piles up.
+  let mapTargetFi = 0, mapJumping = false, mapPending = false;
+  const mapFiAt = clientY => { const r = map.getBoundingClientRect(); return clamp(Math.round((clientY - r.top) / r.height * ((FN.length || 1) - 1)), 0, (FN.length || 1) - 1); };
+  function mapThumbTo(clientY) {                    // move the thumb to the cursor — instant, no load
+    const r = map.getBoundingClientRect();
+    let box = wrap.querySelector('.lin-vp'); if (!box) { box = document.createElement('div'); box.className = 'lin-vp'; wrap.appendChild(box); }
+    box.style.top = clamp(clientY - r.top, 0, r.height - box.offsetHeight) + 'px';
+  }
+  function mapKick() {                              // scroll to the latest target, one jump at a time
+    mapPending = true;
+    if (mapJumping) return;
+    mapJumping = true;
+    (async () => {
+      while (mapPending) { mapPending = false; const f = FN[mapTargetFi]; if (f) { try { await jump(f.addr); } catch {} } }
+      mapJumping = false;
+      if (!mapDrag) drawVp();
+    })();
+  }
+  const mapAt = e => { mapThumbTo(e.clientY); mapTargetFi = mapFiAt(e.clientY); mapKick(); };
+  map.addEventListener('pointerdown', e => { e.preventDefault(); mapDrag = true; map.setPointerCapture?.(e.pointerId); map.style.cursor = 'grabbing'; mapAt(e); });
+  map.addEventListener('pointermove', e => { if (!mapDrag) return; e.preventDefault(); mapAt(e); });
+  const mapEnd = e => { if (!mapDrag) return; mapDrag = false; map.releasePointerCapture?.(e.pointerId); map.style.cursor = 'grab'; mapAt(e); };
+  map.addEventListener('pointerup', mapEnd);
+  map.addEventListener('pointercancel', () => { mapDrag = false; map.style.cursor = 'grab'; drawVp(); });
+  map.style.cursor = 'grab';
+  // Keep the minimap sized to the widget: redraw (which resyncs the canvas buffer
+  // to its clientHeight and repositions the thumb) whenever the panel is resized,
+  // so it never overflows into its own scrollbar or leaves an empty strip below.
+  try { new ResizeObserver(() => { try { drawMap(); } catch {} }).observe(wrap); } catch {}
+  // Asm ⇄ Pseudo: same windowed loader, different per-function fetch. Switching
+  // drops the cached rows (different content) and re-anchors on the current spot.
+  root.querySelector('.lin-bar')?.addEventListener('click', e => {
+    const b = e.target.closest('button[data-mode]'); if (!b || b.classList.contains('on')) return;
+    root.querySelectorAll('.lin-bar button').forEach(x => x.classList.toggle('on', x === b));
+    linMode = b.dataset.mode;
+    fnCache.clear(); loFi = 0; hiFi = -1; rows = [];
+    jump(selAddr || (FN[0] && FN[0].addr) || '');
+  });
   root._linJump = addr => jump(addr);
   // analysis ticks call this — if the function list only just arrived, populate now
   root._linRedraw = () => { if (!rows.length && syncFN()) jump(selAddr || (FN[0] && FN[0].addr) || ''); else try { drawMap(); } catch {} };
@@ -1759,6 +2151,7 @@ function fmtPhase(s) {
 async function startAnalysis(path) {
   if (!isNative) return;
   clearInterval(analyzePollTimer);
+  xrefIndexReady = false;                       // the index is being (re)built
   const val = $('#sb-aval'), spin = $('#sb-analysis .sb-aspin');
   const set = (txt, col) => { if (val) { val.textContent = txt; val.style.color = col || 'var(--acc)'; } };
   if (spin) spin.hidden = false;
@@ -1778,6 +2171,8 @@ async function startAnalysis(path) {
         if (r.rtti_classes) parts.push(`${(+r.rtti_classes).toLocaleString()} classes`);
         set('ready · ' + parts.join(' · '), 'var(--ok)');
       } else set('ready', 'var(--ok)');
+      xrefIndexReady = true;                    // built on disk — in-session queries are now ~2 ms
+      loadXrefs();                              // fill the panel that was skipped while indexing
       linears.forEach(x => { if (x.isConnected) x._linRedraw?.(); });
       return;
     }
@@ -1788,9 +2183,40 @@ async function startAnalysis(path) {
 // one place that refreshes every symbol-following widget when the selection moves.
 // Only spawn the engine for panes that are actually visible (a click shouldn't
 // run xrefs + CFG if those widgets aren't shown) — big latency win.
+// ---- Navigation history (Alt+← / Alt+→), like every disassembler. A stack of
+// visited locations: any user navigation pushes the previous spot onto `navBack`;
+// going back/forward replays without re-recording (guarded).
+const navBack = [], navFwd = [];
+let navPrev = null, navGuard = false;
+const NAV_MAX = 300;
+function navGoTo(loc) {                       // replay a remembered location
+  navGuard = true;
+  selAddr = loc.addr; selName = loc.name || '';
+  onSymbolSelect();
+  linears.forEach(r => { if (r.isConnected) r._linJump?.(selAddr); });
+  navGuard = false;
+}
+function navBackward() {
+  if (!navBack.length) { toast('No previous location'); return; }
+  navFwd.push({ addr: selAddr, name: selName });
+  navGoTo(navBack.pop());
+}
+function navForward() {
+  if (!navFwd.length) { toast('Nothing to go forward to'); return; }
+  navBack.push({ addr: selAddr, name: selName });
+  navGoTo(navFwd.pop());
+}
 function onSymbolSelect() {
   const my = ++selSeq;
   linSel = null;                             // a function selection supersedes any Linear line-selection
+  // Record the jump for back/forward — the PREVIOUS location, unless this select
+  // is itself a back/forward replay (navGuard) or a no-op re-select.
+  if (!navGuard && navPrev && navPrev.addr && navPrev.addr !== selAddr) {
+    navBack.push(navPrev);
+    if (navBack.length > NAV_MAX) navBack.shift();
+    navFwd.length = 0;                        // a fresh navigation forks history
+  }
+  navPrev = { addr: selAddr, name: selName };
   const a = $('#sb-addr'); if (a) a.textContent = selAddr;
   const n = $('#sb-name'); if (n) n.textContent = selName || '—';
   if ($('.code')) loadDecomp(my);
@@ -1868,11 +2294,11 @@ const DEFAULT_LAYOUTS = {
   decompile: C(0.82,
     R(0.2, L('functions'),
       0.8, R(0.66, C(0.68, L('decompiler', 'linear'), 0.32, L('disassembly')),
-                 0.34, C(0.58, L('copilot'), 0.42, L('details', 'variables', 'xrefs')))),
+                 0.34, C(0.58, L('copilot'), 0.42, L('details', 'variables', 'xrefs', 'bookmarks')))),
     0.18, L('output', 'console')),
   static: R(0.22, L('functions'),
     0.78, R(0.6, C(0.7, L('decompiler', 'linear'), 0.3, L('disassembly')),
-      0.4, C(0.5, L('variables', 'triage'), 0.5, L('strings', 'xrefs')))),
+      0.4, C(0.5, L('variables', 'triage', 'types'), 0.5, L('strings', 'xrefs', 'bookmarks')))),
   graph: L('graph'),
   dynamic: R(0.34, C(0.4, L('registers', 'stack'), 0.6, L('watchpoints')),
     0.66, R(0.5, C(0.55, L('scanner'), 0.45, L('livemem')),
@@ -1902,10 +2328,10 @@ function resetDock() { dock.reset(); }
 $('#btn-addw').addEventListener('click', e => { e.stopPropagation(); wpal.classList.contains('on') ? closeWpal() : openWpal($('#btn-addw')); });
 window.addEventListener('pointerdown', e => { if (!e.target.closest('#wpal,#btn-addw')) closeWpal(); }, true);
 
-// undo / redo — buttons + Ctrl+Shift+Z / Ctrl+Shift+X
+// undo / redo — buttons + Ctrl+Shift+Z / Ctrl+Shift+Y
 $('#btn-undo')?.addEventListener('click', () => dock.undo());
 $('#btn-redo')?.addEventListener('click', () => dock.redo());
-// (Ctrl+Shift+Z / Ctrl+Shift+X handled by the data-driven dispatcher)
+// (Ctrl+Shift+Z / Ctrl+Shift+Y handled by the data-driven dispatcher)
 
 /* =====================================================================
    DEEP LINK (?ws=graph / #dynamic) — also handy for screenshots
@@ -2000,12 +2426,12 @@ async function loadFunctions(path) {
         paintFunctions(); $('#dockspace .flist .frow')?.click();
         linears.forEach(r => { if (r.isConnected) r._linRedraw?.(); });   // populate a Linear tab that mounted early
         toast('Loaded ' + FUNCMETA.total.toLocaleString() + ' functions · cached');
-        if (getSet("analyze.autorun", true)) startAnalysis(path);
+        if (getSet("analyze.autorun", true)) startAnalysis(path); else xrefIndexReady = true;
         return;
       }
     }
   } catch {}
-  const mapf = f => { const addr = f.addr || f.address || f.va || ''; return { addr, name: f.name || f.symbol || f.label || 'sub_' + String(addr).replace(/^0x/, ''), tag: '' }; };
+  const mapf = f => { const addr = f.addr || f.address || f.va || ''; return { addr, name: f.name || f.symbol || f.label || 'sub_' + String(addr).replace(/^0x/, ''), end: f.end || f.end_va || '', tag: '' }; };
   const fargs = (off, pd) => ['function', 'discover', '--file', path, ...(pd ? ['--pdata'] : []), '--limit', String(FUNC_CHUNK), '--offset', String(off)];
   let offset = 0, first = true, pdata = true, total = null;
   while (offset < FUNC_CAP) {
@@ -2031,7 +2457,7 @@ async function loadFunctions(path) {
     // persist for an instant re-open next time (validated by file mtime)
     try { fncachePut(path, JSON.stringify({ list: FUNCLIST, total: FUNCMETA.total, named: FUNCMETA.named })); } catch {}
     linears.forEach(r => { if (r.isConnected) r._linRedraw?.(); });        // populate a Linear tab that mounted early
-    if (getSet("analyze.autorun", true)) startAnalysis(path);
+    if (getSet("analyze.autorun", true)) startAnalysis(path); else xrefIndexReady = true;
   }
 }
 

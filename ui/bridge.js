@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Tymofii Kosovskyi
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
 // bridge.js — the thin-client seam between the web UI and the n0x engine.
 //
 // In the Tauri window, window.__TAURI__ is present (withGlobalTauri=true) and the

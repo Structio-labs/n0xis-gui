@@ -73,3 +73,17 @@ cargo tauri dev        # from repo root, or: cd src-tauri && cargo run
 ## Credits
 
 Icons: [Lucide](https://lucide.dev) (ISC License) — inlined as 24×24 SVG markup in `ui/app.js` (`ICON`).
+
+## License
+
+Source-available, developed under the Structio name.
+
+- **Free for noncommercial use** — personal projects, research, education,
+  CTFs, hobby reverse engineering, and use by noncommercial organizations,
+  under the [PolyForm Noncommercial License 1.0.0](LICENSE).
+- **Commercial use requires a paid license** — see
+  [COMMERCIAL.md](https://github.com/Structio-labs/N0xis/blob/main/COMMERCIAL.md)
+  in the N0xis engine repository.
+
+Not sure whether your use case is commercial? Open an issue or email
+<structio.dev@gmail.com> — I'd rather answer a question than chase a violation.
