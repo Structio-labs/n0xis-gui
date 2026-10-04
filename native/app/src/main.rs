@@ -4,6 +4,8 @@
 //! N0xis desktop GUI on GPUI. What it has to reach is listed in
 //! `docs/CURRENT-UI.md`; the engine always runs as a separate process.
 
+mod appearance;
+mod config;
 mod decompiler;
 mod disassembly;
 mod functions;
@@ -34,7 +36,12 @@ fn main() {
             KeyBinding::new("ctrl-shift-z", UndoLayout, None),
             KeyBinding::new("ctrl-shift-y", RedoLayout, None),
             KeyBinding::new("shift-escape", ToggleZoom, None),
+            KeyBinding::new("ctrl-=", appearance::ZoomIn, None),
+            KeyBinding::new("ctrl-+", appearance::ZoomIn, None),
+            KeyBinding::new("ctrl--", appearance::ZoomOut, None),
+            KeyBinding::new("ctrl-0", appearance::ResetZoom, None),
         ]);
+        let theme_problems = appearance::init(cx);
         cx.on_action(|_: &Quit, cx: &mut App| cx.quit());
         // One window: closing it ends the app instead of leaving a headless process.
         cx.on_window_closed(|cx, _| {
@@ -59,7 +66,7 @@ fn main() {
         };
         let (window, workbench) = gpui_kit::open_window(options, cx, |window, cx| {
             window.set_window_title("N0xis");
-            cx.new(|cx| workbench::Workbench::new(target, window, cx))
+            cx.new(|cx| workbench::Workbench::new(target, theme_problems, window, cx))
         })
         .expect("open the main window");
         // Keyboard shortcuts and menu actions reach the workbench through focus.

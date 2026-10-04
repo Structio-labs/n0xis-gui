@@ -57,14 +57,9 @@ pub fn default_layout(views: &Views, cx: &App) -> DockLayout {
         )
 }
 
-/// `$XDG_CONFIG_HOME/n0xis/ui-layout.json`, falling back to `~/.config`, or to
-/// `%APPDATA%` on Windows.
+/// `ui-layout.json` in the GUI's config directory.
 pub fn layout_file() -> Option<PathBuf> {
-    let base = std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("APPDATA").map(PathBuf::from))
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))?;
-    Some(base.join("n0xis").join("ui-layout.json"))
+    crate::config::dir().map(|dir| dir.join("ui-layout.json"))
 }
 
 /// Why a saved layout was not used. Saying so matters: a layout that silently
@@ -108,17 +103,10 @@ pub fn read_saved() -> Result<DockAreaState, SavedLayout> {
     }
 }
 
-/// Write through a temporary file and a rename, so a crash mid-write leaves
-/// the previous layout, never half of one.
 pub fn write(state: &DockAreaState) -> std::io::Result<()> {
     let path = layout_file().ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "no config directory"))?;
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
     let json = serde_json::to_string_pretty(state).map_err(std::io::Error::other)?;
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, json)?;
-    std::fs::rename(&tmp, &path)
+    crate::config::write_atomic(&path, &json)
 }
 
 /// Layout changes, for undo and redo. Entries are whole layout snapshots;

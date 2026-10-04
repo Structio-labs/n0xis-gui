@@ -19,6 +19,7 @@ use n0xis_client::{Engine, EngineCommand, EngineStatus, FunctionEntry};
 use crate::decompiler::DecompilerView;
 use crate::disassembly::DisassemblyView;
 use crate::functions::{FunctionList, FunctionSelected};
+use crate::appearance::{self, ResetZoom, SelectTheme, ZoomIn, ZoomOut};
 use crate::layout::{self, History, Views};
 use crate::{About, Open, RedoLayout, ResetLayout, UndoLayout, menus, project};
 
@@ -58,12 +59,13 @@ pub struct Workbench {
     /// its sizes shift, so comparing snapshots cannot tell the two apart.
     next_change_is_load: bool,
     _layout_settle: Option<Task<()>>,
+    _theme_poll: Task<()>,
     _status_poll: Task<()>,
     _subscriptions: Vec<Subscription>,
 }
 
 impl Workbench {
-    pub fn new(target: Option<PathBuf>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(target: Option<PathBuf>, theme_problems: Vec<String>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let functions = cx.new(|cx| FunctionList::new(window, cx));
         let decompiler = cx.new(|cx| DecompilerView::new(window, cx));
         let disassembly = cx.new(DisassemblyView::new);
@@ -112,6 +114,31 @@ impl Workbench {
                 }
             }
         });
+        // Watch the user's theme folder: an edited theme shows at once, a broken
+        // file is reported instead of silently ignored.
+        let theme_poll = cx.spawn_in(window, async move |this, cx| {
+            loop {
+                cx.background_executor().timer(appearance::THEME_POLL).await;
+                let alive = this.update_in(cx, |wb, window, cx| {
+                    if let Some(problems) = appearance::poll_user_themes(cx) {
+                        wb.refresh_menus(cx);
+                        for problem in problems {
+                            window.push_notification(SharedString::from(problem), cx);
+                        }
+                    }
+                });
+                if alive.is_err() {
+                    break;
+                }
+            }
+        });
+        if !theme_problems.is_empty() {
+            window.defer(cx, move |window, cx| {
+                for problem in theme_problems {
+                    window.push_notification(SharedString::from(problem), cx);
+                }
+            });
+        }
         let mut workbench = Self {
             target: None,
             open_error: None,
@@ -128,6 +155,7 @@ impl Workbench {
             layout_save_failed: false,
             next_change_is_load: true,
             _layout_settle: None,
+            _theme_poll: theme_poll,
             _status_poll: status_poll,
             _subscriptions: vec![selection, layout_changes],
         };
@@ -246,6 +274,42 @@ impl Workbench {
         self.dock_area.update(cx, |area, cx| area.set_center(layout::default_layout(&views, cx), window, cx));
     }
 
+    fn refresh_menus(&self, cx: &mut Context<Self>) {
+        let bar = self.menu_bar.clone();
+        menus::refresh(&bar, cx);
+    }
+
+    /// Keep an appearance change for the next run, and say so if that fails.
+    fn keep_appearance(&self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Err(e) = appearance::save(cx) {
+            window.push_notification(SharedString::from(format!("The appearance could not be saved: {e}")), cx);
+        }
+    }
+
+    fn on_select_theme(&mut self, action: &SelectTheme, window: &mut Window, cx: &mut Context<Self>) {
+        if appearance::apply_theme(&action.0, cx) {
+            self.keep_appearance(window, cx);
+            self.refresh_menus(cx);
+        } else {
+            window.push_notification(SharedString::from(format!("There is no theme called {}.", action.0)), cx);
+        }
+    }
+
+    fn on_zoom_in(&mut self, _: &ZoomIn, window: &mut Window, cx: &mut Context<Self>) {
+        appearance::zoom(1., cx);
+        self.keep_appearance(window, cx);
+    }
+
+    fn on_zoom_out(&mut self, _: &ZoomOut, window: &mut Window, cx: &mut Context<Self>) {
+        appearance::zoom(-1., cx);
+        self.keep_appearance(window, cx);
+    }
+
+    fn on_reset_zoom(&mut self, _: &ResetZoom, window: &mut Window, cx: &mut Context<Self>) {
+        appearance::reset_zoom(cx);
+        self.keep_appearance(window, cx);
+    }
+
     fn on_open(&mut self, _: &Open, window: &mut Window, cx: &mut Context<Self>) {
         self.prompt_open(window, cx);
     }
@@ -351,6 +415,10 @@ impl Render for Workbench {
             .on_action(cx.listener(Self::on_undo_layout))
             .on_action(cx.listener(Self::on_redo_layout))
             .on_action(cx.listener(Self::on_reset_layout))
+            .on_action(cx.listener(Self::on_select_theme))
+            .on_action(cx.listener(Self::on_zoom_in))
+            .on_action(cx.listener(Self::on_zoom_out))
+            .on_action(cx.listener(Self::on_reset_zoom))
             .bg(background)
             .text_color(foreground)
             .child(self.render_title_bar(cx))

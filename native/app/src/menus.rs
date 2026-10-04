@@ -8,19 +8,34 @@ use gpui_kit::component::menu::AppMenuBar;
 use gpui_kit::component::{GlobalState, input};
 use gpui_kit::{App, Entity, Menu, MenuItem};
 
+use crate::appearance::{self, ResetZoom, SelectTheme, ZoomIn, ZoomOut};
 use crate::{About, Open, Quit, RedoLayout, ResetLayout, UndoLayout};
 
-/// Register the menus with the platform (the macOS menu bar) and with the
-/// in-window menu bar that Linux and Windows show in the title bar.
+/// Create the in-window menu bar (Linux and Windows show it in the title bar)
+/// and register the menus with the platform (the macOS menu bar).
 pub fn init(cx: &mut App) -> Entity<AppMenuBar> {
     let bar = AppMenuBar::new(cx);
-    cx.set_menus(build());
-    GlobalState::global_mut(cx).set_app_menus(build().into_iter().map(|menu| menu.owned()).collect());
-    bar.update(cx, |bar, cx| bar.reload(cx));
+    refresh(&bar, cx);
     bar
 }
 
-fn build() -> Vec<Menu> {
+/// Rebuild the menus: the theme list and its check mark follow what is loaded
+/// and in use.
+pub fn refresh(bar: &Entity<AppMenuBar>, cx: &mut App) {
+    cx.set_menus(build(cx));
+    let owned = build(cx).into_iter().map(|menu| menu.owned()).collect();
+    GlobalState::global_mut(cx).set_app_menus(owned);
+    bar.update(cx, |bar, cx| bar.reload(cx));
+}
+
+fn build(cx: &App) -> Vec<Menu> {
+    let current = appearance::current_theme(cx);
+    let themes = cx
+        .global::<appearance::Themes>()
+        .list()
+        .iter()
+        .map(|t| MenuItem::action(t.name.clone(), SelectTheme(t.name.clone())).checked(t.name == current))
+        .collect();
     vec![
         Menu {
             name: "File".into(),
@@ -30,6 +45,17 @@ fn build() -> Vec<Menu> {
         Menu {
             name: "Edit".into(),
             items: vec![MenuItem::action("Copy", input::Copy), MenuItem::action("Select All", input::SelectAll)],
+            disabled: false,
+        },
+        Menu {
+            name: "View".into(),
+            items: vec![
+                MenuItem::Submenu(Menu { name: "Theme".into(), items: themes, disabled: false }),
+                MenuItem::separator(),
+                MenuItem::action("Zoom In", ZoomIn),
+                MenuItem::action("Zoom Out", ZoomOut),
+                MenuItem::action("Reset Zoom", ResetZoom),
+            ],
             disabled: false,
         },
         Menu {

@@ -46,7 +46,11 @@ engine. The protocol tests need Python for the stand-in engine.
 
 ## Status (2026-10-04)
 
-Done: a dock (panels in tab groups; drag a tab onto another group or an edge; zoom with
+Done: themes (the Tauri build's six, Midnight, Deep, Light, Nebula, Warm and Forest, generated
+from its stylesheet by `app/themes/build_themes.py`; your own GPUI Kit theme files in
+`~/.config/n0xis/themes/`, re-read when they change so a palette can be tuned with the window
+open, and reported when one cannot be read), View ▸ Theme, zoom (Ctrl+= / Ctrl+- / Ctrl+0),
+both kept in `~/.config/n0xis/ui-settings.json`; a dock (panels in tab groups; drag a tab onto another group or an edge; zoom with
 Shift+Esc; the arrangement is saved to `~/.config/n0xis/ui-layout.json` and restored, with
 undo/redo of layout changes on Ctrl+Shift+Z / Ctrl+Shift+Y and Window ▸ Reset Layout); one title bar (on Linux the window draws its own frame and controls) with a menu that
 lists only working actions (Open, Quit, Copy, Select All, About); open a target (argument or file dialog), function list from the unwind table or

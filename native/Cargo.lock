@@ -4015,6 +4015,7 @@ version = "0.1.0"
 dependencies = [
  "gpui-kit",
  "n0xis-client",
+ "serde",
  "serde_json",
 ]
 
