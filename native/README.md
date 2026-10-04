@@ -36,7 +36,9 @@ cargo test -p n0xis-ui       # the app's data logic
 
 To see and drive the window without a GPU (the conditions of a VM), use
 `scripts/drive.sh`: it runs the app on a private Xvfb display, replays clicks and
-keys with xdotool, and saves screenshots.
+keys with xdotool, and saves screenshots. Xvfb has no compositor, so there the
+window falls back to the system frame; `scripts/kwin-shot.sh` runs it inside a
+nested, virtual KWin instead, which shows the window's own frame and controls.
 
 The real-engine test compiles a small C function with planted constants and checks
 they appear in its decompilation. It skips, saying why, without a C compiler or an
@@ -44,7 +46,8 @@ engine. The protocol tests need Python for the stand-in engine.
 
 ## Status (2026-10-04)
 
-Done: open a target (argument or file dialog), function list from the unwind table or
+Done: one title bar (on Linux the window draws its own frame and controls) with a menu that
+lists only working actions (Open, Quit, Copy, Select All, About); open a target (argument or file dialog), function list from the unwind table or
 a prologue scan (virtualized, filtered), decompiler (three styles, C colouring,
 read-only editor with selection and copy), disassembly bounded by the function's
 extent, engine status in the status bar.

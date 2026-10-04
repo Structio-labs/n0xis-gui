@@ -9,8 +9,9 @@ use std::time::Duration;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::status_bar::StatusBar;
+use gpui_kit::component::menu::AppMenuBar;
 use gpui_kit::component::{
-    ActiveTheme as _, IconName, Sizable as _, TitleBar, h_flex, h_resizable, resizable_panel, v_flex, v_resizable,
+    ActiveTheme as _, IconName, TitleBar, WindowExt as _, h_flex, h_resizable, resizable_panel, v_flex, v_resizable,
 };
 use gpui_kit::*;
 use n0xis_client::{Engine, EngineCommand, EngineStatus, FunctionEntry};
@@ -18,7 +19,7 @@ use n0xis_client::{Engine, EngineCommand, EngineStatus, FunctionEntry};
 use crate::decompiler::DecompilerView;
 use crate::disassembly::DisassemblyView;
 use crate::functions::{FunctionList, FunctionSelected};
-use crate::project;
+use crate::{About, Open, menus, project};
 
 /// How often the status bar re-reads the engine's state.
 const STATUS_POLL: Duration = Duration::from_millis(300);
@@ -26,6 +27,8 @@ const STATUS_POLL: Duration = Duration::from_millis(300);
 struct Target {
     path: PathBuf,
     engine: Arc<Engine>,
+    /// The engine binary this target is being analysed with, for About.
+    engine_program: PathBuf,
 }
 
 pub struct Workbench {
@@ -37,6 +40,8 @@ pub struct Workbench {
     functions: Entity<FunctionList>,
     decompiler: Entity<DecompilerView>,
     disassembly: Entity<DisassemblyView>,
+    menu_bar: Entity<AppMenuBar>,
+    focus_handle: FocusHandle,
     _status_poll: Task<()>,
     _subscriptions: Vec<Subscription>,
 }
@@ -75,6 +80,8 @@ impl Workbench {
             functions,
             decompiler,
             disassembly,
+            menu_bar: menus::init(cx),
+            focus_handle: cx.focus_handle(),
             _status_poll: status_poll,
             _subscriptions: vec![selection],
         };
@@ -113,8 +120,9 @@ impl Workbench {
         if project.is_some() {
             self.open_error = None;
         }
+        let engine_program = command.program().to_path_buf();
         let engine = Arc::new(Engine::start(command, path.clone(), project));
-        self.target = Some(Target { path: path.clone(), engine: Arc::clone(&engine) });
+        self.target = Some(Target { path: path.clone(), engine: Arc::clone(&engine), engine_program });
         self.engine_status = Some(engine.status());
         self.selected = None;
         self.decompiler.update(cx, |view, cx| view.set_engine(Some(Arc::clone(&engine)), cx));
@@ -142,22 +150,38 @@ impl Workbench {
         .detach();
     }
 
+    fn on_open(&mut self, _: &Open, window: &mut Window, cx: &mut Context<Self>) {
+        self.prompt_open(window, cx);
+    }
+
+    fn on_about(&mut self, _: &About, window: &mut Window, cx: &mut Context<Self>) {
+        let engine = self
+            .target
+            .as_ref()
+            .map_or_else(|| "none started yet".to_string(), |t| t.engine_program.display().to_string());
+        window.open_dialog(cx, move |dialog, _, _| {
+            dialog.title("About N0xis").child(
+                v_flex()
+                    .gap_2()
+                    .text_sm()
+                    .child(format!("N0xis GUI {}", env!("CARGO_PKG_VERSION")))
+                    .child(format!("Engine: {engine}"))
+                    .child("Built on GPUI Kit (Apache-2.0).")
+                    .child("Source-available under the PolyForm Noncommercial License 1.0.0."),
+            )
+        });
+    }
+
+    /// One strip: the menus, then the open target. On Linux it also carries
+    /// the window controls, since the window draws its own frame.
     fn render_title_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let target = self.target.as_ref().map(|t| t.path.display().to_string()).unwrap_or_default();
         TitleBar::new().child(
             h_flex()
                 .gap_3()
-                .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child("N0xis"))
-                .child(div().text_xs().text_color(theme.muted_foreground).truncate().child(target))
-                .child(
-                    Button::new("open")
-                        .icon(IconName::FolderOpen)
-                        .label("Open…")
-                        .xsmall()
-                        .ghost()
-                        .on_click(cx.listener(|wb, _: &ClickEvent, window, cx| wb.prompt_open(window, cx))),
-                ),
+                .child(self.menu_bar.clone())
+                .child(div().text_xs().text_color(theme.muted_foreground).truncate().child(target)),
         )
     }
 
@@ -236,10 +260,20 @@ impl Render for Workbench {
         };
         v_flex()
             .size_full()
+            .key_context("Workbench")
+            .track_focus(&self.focus_handle)
+            .on_action(cx.listener(Self::on_open))
+            .on_action(cx.listener(Self::on_about))
             .bg(background)
             .text_color(foreground)
             .child(self.render_title_bar(cx))
             .child(div().flex_1().min_h_0().flex().child(main))
             .child(self.render_status_bar(cx))
+    }
+}
+
+impl Focusable for Workbench {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus_handle.clone()
     }
 }

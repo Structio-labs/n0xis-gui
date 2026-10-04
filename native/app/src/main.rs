@@ -7,6 +7,7 @@
 mod decompiler;
 mod disassembly;
 mod functions;
+mod menus;
 mod project;
 mod workbench;
 
@@ -15,7 +16,7 @@ use std::path::PathBuf;
 use gpui_kit::component::{Theme, ThemeMode, TitleBar};
 use gpui_kit::*;
 
-gpui_kit::actions!(n0xis, [Quit]);
+gpui_kit::actions!(n0xis, [Quit, Open, About]);
 
 fn main() {
     // `n0xis-ui <binary>` opens it straight away, from a terminal or a file manager.
@@ -23,7 +24,7 @@ fn main() {
     gpui_kit::application().with_assets(gpui_kit::assets::Assets).run(move |cx| {
         gpui_kit::init(cx);
         Theme::change(ThemeMode::Dark, None, cx);
-        cx.bind_keys([KeyBinding::new("ctrl-q", Quit, None)]);
+        cx.bind_keys([KeyBinding::new("ctrl-q", Quit, None), KeyBinding::new("ctrl-o", Open, None)]);
         cx.on_action(|_: &Quit, cx: &mut App| cx.quit());
         // One window: closing it ends the app instead of leaving a headless process.
         cx.on_window_closed(|cx, _| {
@@ -37,13 +38,28 @@ fn main() {
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
             window_min_size: Some(size(px(900.), px(600.))),
+            // On Linux the window draws its own frame, so the title bar below is
+            // the only one: menus, target and window controls in one strip. On
+            // Windows and macOS the title bar options already hide the system one.
+            #[cfg(target_os = "linux")]
+            window_decorations: Some(WindowDecorations::Client),
+            #[cfg(target_os = "linux")]
+            window_background: WindowBackgroundAppearance::Transparent,
             ..TitleBar::window_options()
         };
-        gpui_kit::open_window(options, cx, |window, cx| {
+        let (window, workbench) = gpui_kit::open_window(options, cx, |window, cx| {
             window.set_window_title("N0xis");
             cx.new(|cx| workbench::Workbench::new(target, window, cx))
         })
         .expect("open the main window");
+        // Keyboard shortcuts and menu actions reach the workbench through focus.
+        let focus = workbench.read(cx).focus_handle(cx);
+        window
+            .update(cx, |_, window, cx| {
+                window.activate_window();
+                focus.focus(window, cx);
+            })
+            .ok();
         cx.activate(true);
     });
 }
