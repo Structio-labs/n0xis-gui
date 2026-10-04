@@ -15,6 +15,7 @@ mod functions;
 mod graph;
 mod graph_layout;
 mod layout;
+mod linear;
 mod menus;
 mod nav;
 mod panel;
@@ -56,6 +57,8 @@ fn main() {
             // of moving the caret.
             KeyBinding::new("up", console::HistoryPrevious, Some("Console > Input")),
             KeyBinding::new("down", console::HistoryNext, Some("Console > Input")),
+            // The listing copies its selected lines.
+            KeyBinding::new("ctrl-c", gpui_kit::component::input::Copy, Some(linear::KEY_CONTEXT)),
         ]);
         let theme_problems = appearance::init(cx);
         cx.on_action(|_: &Quit, cx: &mut App| cx.quit());

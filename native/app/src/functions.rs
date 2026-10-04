@@ -40,6 +40,9 @@ pub struct FunctionIndex {
     /// (start, entry index), sorted by start, for finding the function an
     /// address lies in.
     by_start: Vec<(u64, usize)>,
+    /// Bumped whenever `by_start` had to be re-sorted, so a view that numbers
+    /// functions by address knows its numbering moved.
+    order_generation: u64,
 }
 
 impl FunctionIndex {
@@ -80,7 +83,29 @@ impl FunctionIndex {
         // The engine lists in address order; sort only if a page did not.
         if !self.by_start[was_sorted_to.saturating_sub(1)..].is_sorted() {
             self.by_start.sort_unstable();
+            self.order_generation += 1;
         }
+    }
+
+    /// How many functions have an address, i.e. can be shown in address order.
+    pub fn addressed_len(&self) -> usize {
+        self.by_start.len()
+    }
+
+    /// The `n`th function by address, with its start.
+    pub fn by_address(&self, n: usize) -> Option<(u64, &FunctionEntry)> {
+        let &(start, ix) = self.by_start.get(n)?;
+        Some((start, self.entries.get(ix)?))
+    }
+
+    /// The position in address order of the function starting at `va`, or of
+    /// the last one starting below it.
+    pub fn address_rank(&self, va: u64) -> Option<usize> {
+        self.by_start.partition_point(|&(start, _)| start <= va).checked_sub(1)
+    }
+
+    pub fn order_generation(&self) -> u64 {
+        self.order_generation
     }
 
     /// The function `va` lies in: the one starting there, or the nearest one
@@ -126,6 +151,9 @@ pub enum LoadState {
 /// Emitted when the user picks a function, and once for the first one loaded.
 pub struct FunctionSelected(pub FunctionEntry);
 
+/// Emitted when a page of functions has been added.
+pub struct FunctionsLoaded;
+
 pub struct FunctionList {
     index: FunctionIndex,
     total: Option<u64>,
@@ -142,6 +170,7 @@ pub struct FunctionList {
 }
 
 impl EventEmitter<FunctionSelected> for FunctionList {}
+impl EventEmitter<FunctionsLoaded> for FunctionList {}
 
 impl FunctionList {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -232,6 +261,7 @@ impl FunctionList {
         }
         let more = returned == PAGE_SIZE as usize && self.index.len() < MAX_FUNCTIONS;
         self.state = if more { LoadState::Loading } else { LoadState::Done };
+        cx.emit(FunctionsLoaded);
         cx.notify();
         more
     }

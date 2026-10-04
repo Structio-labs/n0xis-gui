@@ -22,8 +22,9 @@ use crate::bookmarks::BookmarksView;
 use crate::console::ConsoleView;
 use crate::decompiler::DecompilerView;
 use crate::disassembly::DisassemblyView;
-use crate::functions::{FunctionList, FunctionSelected};
+use crate::functions::{FunctionList, FunctionSelected, FunctionsLoaded};
 use crate::graph::GraphView;
+use crate::linear::LinearView;
 use crate::assets::AppIcon;
 use crate::layout::{self, History, PanelKind, ShowPanel, Views};
 use crate::nav::{Location, Navigate, hex};
@@ -80,6 +81,7 @@ impl Workbench {
             decompiler: cx.new(|cx| DecompilerView::new(window, cx)),
             disassembly: cx.new(DisassemblyView::new),
             graph: cx.new(GraphView::new),
+            linear: cx.new(LinearView::new),
             xrefs: cx.new(XrefsView::new),
             triage: cx.new(|cx| TriageView::new(window, cx)),
             bookmarks: cx.new(BookmarksView::new),
@@ -118,6 +120,11 @@ impl Workbench {
         let mut navigation = vec![
             cx.subscribe_in(&views.disassembly, window, Self::on_navigate),
             cx.subscribe_in(&views.graph, window, Self::on_navigate),
+            cx.subscribe_in(&views.linear, window, Self::on_navigate),
+            // The listing numbers functions by address; it follows the list's pages.
+            cx.subscribe(&views.functions, |this, _, _: &FunctionsLoaded, cx| {
+                this.views.linear.update(cx, |view, cx| view.sync(cx));
+            }),
             cx.subscribe_in(&views.xrefs, window, Self::on_navigate),
             cx.subscribe_in(&views.triage, window, Self::on_navigate),
             cx.subscribe_in(&views.bookmarks, window, Self::on_navigate),
@@ -232,6 +239,7 @@ impl Workbench {
         v.decompiler.update(cx, |view, cx| view.set_engine(e(), cx));
         v.disassembly.update(cx, |view, cx| view.set_engine(e(), cx));
         v.graph.update(cx, |view, cx| view.set_engine(e(), cx));
+        v.linear.update(cx, |view, cx| view.set_engine(e(), cx));
         v.xrefs.update(cx, |view, cx| view.set_engine(e(), cx));
         v.triage.update(cx, |view, cx| view.set_engine(e(), cx));
         v.bookmarks.update(cx, |view, cx| view.set_engine(e(), cx));
@@ -251,6 +259,7 @@ impl Workbench {
         v.decompiler.update(cx, |view, cx| view.show(&location, window, cx));
         v.disassembly.update(cx, |view, cx| view.show(&location, cx));
         v.graph.update(cx, |view, cx| view.show(&location, window, cx));
+        v.linear.update(cx, |view, cx| view.show(&location, cx));
         v.xrefs.update(cx, |view, cx| view.show(&location, cx));
         self.location = Some(location);
         cx.notify();

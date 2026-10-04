@@ -14,6 +14,8 @@
 #   key <keysym>          press a key (e.g. Return, ctrl+q)
 #   drag <x1> <y1> <x2> <y2>  press at the first point, move in steps, release at the second
 #   wheel <x> <y> <up|down> <n>  turn the mouse wheel n notches over a point
+#   clip <name>           save the clipboard's text to <out-prefix>-<name>.txt (needs xclip)
+#   shiftclick <x> <y>    left click with Shift held
 #   shot <name>           save <out-prefix>-<name>.png
 #
 # Example:
@@ -52,6 +54,8 @@ while read -r cmd arg rest; do
             [ "$dir" = down ] && button=5
             DISPLAY="$disp" xdotool mousemove "$arg" "$y" click --repeat "$n" --delay 80 "$button"
             ;;
+        clip) DISPLAY="$disp" xclip -o -selection clipboard >"$prefix-$arg.txt" 2>/dev/null ;;
+        shiftclick) DISPLAY="$disp" xdotool mousemove "$arg" "$rest" keydown shift click 1 keyup shift ;;
         shot)
             DISPLAY="$disp" import -window root "$prefix-$arg.png" 2>/dev/null
             echo "shot $prefix-$arg.png"

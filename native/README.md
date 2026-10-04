@@ -70,6 +70,12 @@ moved and opened again without losing what it holds.
   and put back, a click on a block goes to it, and the view fits itself until you move
   it. Functions over 400 blocks are not drawn, and the view says so. Known limit: an edge
   that skips several rows runs down a side lane, so very wide functions get long lanes.
+- Linear: the whole program as one listing, function after function in address order,
+  each cut at the end the function list states (or, where it states none, at the next
+  function, and the header says so). Asm or Pseudo. Functions are fetched as they come
+  into view, a few at a time, and dropped again far from it; a minimap spans the whole
+  address range (named functions in the accent colour, fetched ones brighter) and a click
+  or drag on it jumps. Click and Shift+click select lines; Ctrl+C copies them.
 - Cross-references: who references the selection (`xref to`), and for a function the calls
   it makes as the engine resolved them (`ir build`).
 - Triage: the image's own headers (`profile --exports`): sections, exports with forwarders
@@ -94,5 +100,5 @@ engine's function list, and only where the list states the function's extent; ot
 the address is shown as an address.
 
 Every view shows only what the engine returned; an empty or failed view says so. Still
-open from `docs/CURRENT-UI.md` §12: the linear listing, the memory scanner, editing (rename, comment, types of variables) with undo, go to and history, and
+open from `docs/CURRENT-UI.md` §12: the memory scanner, editing (rename, comment, types of variables) with undo, go to and history, and
 the settings.
