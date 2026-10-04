@@ -11,6 +11,7 @@
 
 mod envelope;
 mod find;
+mod live;
 mod locate;
 mod notes;
 mod profile;
@@ -21,6 +22,10 @@ mod worker;
 
 pub use envelope::{EngineError, Envelope, Meta};
 pub use find::{Find, FindMatch, FindQuery, FindResult};
+pub use live::{
+    ListProcesses, MemoryMap, Narrow, ProcessInfo, Processes, Region, Regions, SCAN_TYPES, ScanFilter, ScanMatch,
+    ScanResult, ScanValue,
+};
 pub use locate::{ENGINE_ENV, EngineCommand};
 pub use notes::{
     AnnotationRecord, Annotations, DefineEnum, DefineStruct, EnumDef, EnumMember, ListAnnotations, ListTypes,

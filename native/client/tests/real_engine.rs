@@ -199,3 +199,92 @@ fn the_widget_requests_answer_questions_whose_answers_are_known() {
     assert!(matches!(engine.status(), EngineStatus::Ready { .. }), "the session survived: {:?}", engine.status());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A process that prints the address of the value it holds, and changes the
+/// value on SIGUSR1: the scan's answer is known before the scan runs.
+const HOLDER_SOURCE: &str = r#"
+#include <signal.h>
+#include <stdio.h>
+#include <unistd.h>
+volatile int planted = 1592594996;
+static void bump(int s) { (void)s; planted = 777777; }
+int main(void) {
+    signal(SIGUSR1, bump);
+    printf("%p\n", (void *)&planted);
+    fflush(stdout);
+    for (;;) pause();
+}
+"#;
+
+/// Kills the holder however the test ends: a holder left running keeps the
+/// test's output pipe open, and whatever reads it waits forever.
+struct KillOnDrop(std::process::Child);
+
+impl Drop for KillOnDrop {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+/// Whether this process may read a process that is not its descendant.
+fn may_read_other_processes() -> Result<(), String> {
+    let scope = std::fs::read_to_string("/proc/sys/kernel/yama/ptrace_scope").map(|s| s.trim().to_string());
+    let root = Command::new("id").arg("-u").output().is_ok_and(|o| String::from_utf8_lossy(&o.stdout).trim() == "0");
+    match scope.as_deref() {
+        _ if root => Ok(()),
+        Ok("0") | Err(_) => Ok(()),
+        Ok(other) => Err(format!("yama ptrace_scope is {other} and this test is not root, so the engine may not read the holder")),
+    }
+}
+
+#[test]
+fn the_scanner_finds_the_address_a_process_printed_and_narrows_on_change() {
+    use n0xis_client::{Narrow, ScanFilter, ScanValue};
+    use std::io::BufRead as _;
+    let engine = match EngineCommand::locate() {
+        Ok(e) => e,
+        Err(e) => {
+            eprintln!("SKIPPED: {e}");
+            return;
+        }
+    };
+    if let Err(why) = may_read_other_processes() {
+        eprintln!("SKIPPED: {why}");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("n0xis-client-scan-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join(".n0x")).expect("temp project");
+    let (src, exe) = (dir.join("holder.c"), dir.join("holder"));
+    std::fs::write(&src, HOLDER_SOURCE).expect("source");
+    if !Command::new("cc").arg("-O0").arg("-o").arg(&exe).arg(&src).status().is_ok_and(|s| s.success()) {
+        eprintln!("SKIPPED: no C compiler (cc)");
+        return;
+    }
+    let mut holder = KillOnDrop(
+        Command::new(&exe)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("start the holder"),
+    );
+    let mut printed = String::new();
+    std::io::BufReader::new(holder.0.stdout.take().expect("stdout")).read_line(&mut printed).expect("the holder prints its address");
+    let planted = va(printed.trim());
+    let pid = holder.0.id();
+
+    let first = engine
+        .run_request(&ScanValue { pid, value_type: "i32".into(), value: "1592594996".into(), save_as: "first".into() }, Some(&dir))
+        .expect("scan value");
+    assert!(first.matches.iter().any(|m| va(&m.addr) == planted), "the printed address {planted:#x} is among {:?}", first.matches);
+
+    let _ = Command::new("kill").arg("-USR1").arg(pid.to_string()).status();
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    let narrowed = engine
+        .run_request(&ScanFilter { pid, from: "first".into(), narrow: Narrow::Changed, save_as: "second".into() }, Some(&dir))
+        .expect("scan filter");
+    let kept = narrowed.matches.iter().find(|m| va(&m.addr) == planted).expect("the changed value is kept");
+    assert_eq!(kept.value.to_string(), "777777");
+    drop(holder);
+    let _ = std::fs::remove_dir_all(&dir);
+}

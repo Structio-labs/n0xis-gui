@@ -21,6 +21,9 @@ pub mod schema {
     pub const ANNOTATION: &str = "n0xis.annotation.v1";
     pub const TYPES: &str = "n0xis.types.v1";
     pub const FIND: &str = "n0xis.find.v1";
+    pub const PROCESS_PS: &str = "n0xis.process.ps.v1";
+    pub const MEM_MAP: &str = "n0xis.mem.map.v1";
+    pub const SCAN: &str = "n0xis.scan.v1";
 }
 
 /// A request the engine answers with one payload shape.

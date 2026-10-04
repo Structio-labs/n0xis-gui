@@ -57,8 +57,8 @@ group or an edge, Shift+Esc zooms one; the arrangement is saved to
 `~/.config/n0xis/ui-layout.json`, with layout undo/redo on Ctrl+Shift+Z / Ctrl+Shift+Y and
 Window ▸ Reset Layout.
 
-Panels. Every one is an ordinary widget: View ▸ Panels opens it, and it can be closed,
-moved and opened again without losing what it holds.
+Panels. Every one is an ordinary widget: View ▸ Panels opens it (back in the group it
+belongs with), and it can be closed, moved and opened again without losing what it holds.
 
 - Functions: from the unwind table or a prologue scan, virtualized, filtered.
 - Decompiler: three styles, C colouring, a read-only editor with selection and copy.
@@ -88,6 +88,12 @@ moved and opened again without losing what it holds.
   matches, and it says when there are more.
 - Console: any engine command in the target's session, without `--file`; ↑ / ↓ history;
   the engine's own JSON, with Copy.
+- Memory scanner: pick a running process (`process ps`), see whether it can be read
+  (`mem map`), find the addresses that hold a value (`scan value`, ten types) and narrow
+  them as it changes (`scan filter`: equals, changed, unchanged, increased, decreased). It
+  needs no open file: each request runs the engine once against the process, and the start
+  screen offers it. Where the system will not let a process be read (on Linux, Yama's
+  `ptrace_scope`), the engine's own explanation is what the panel shows.
 
 Icons: the Tauri build's whole set, 60 of them (its Lucide icons, ISC licence in
 `app/icons/LICENSE-LUCIDE`, and the ones drawn inline on its page), written out as SVG files
@@ -100,5 +106,5 @@ engine's function list, and only where the list states the function's extent; ot
 the address is shown as an address.
 
 Every view shows only what the engine returned; an empty or failed view says so. Still
-open from `docs/CURRENT-UI.md` §12: the memory scanner, editing (rename, comment, types of variables) with undo, go to and history, and
+open from `docs/CURRENT-UI.md` §12: editing (rename, comment, types of variables) with undo, go to and history, and
 the settings.

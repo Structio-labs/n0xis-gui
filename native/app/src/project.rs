@@ -20,15 +20,25 @@ pub fn fnv1a64(bytes: &[u8]) -> u64 {
     h
 }
 
-/// The project directory for `target`, created with its `.n0x/` if missing.
-pub fn project_dir(target: &Path) -> std::io::Result<PathBuf> {
+/// The folder `name` under the projects directory, created with its `.n0x/`.
+fn projects_subdir(name: &str) -> std::io::Result<PathBuf> {
     let home = std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
         .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "no home directory"))?;
-    let key = format!("{:x}", fnv1a64(target.to_string_lossy().as_bytes()));
-    let dir = Path::new(&home).join(PROJECTS_DIR).join(key);
+    let dir = Path::new(&home).join(PROJECTS_DIR).join(name);
     std::fs::create_dir_all(dir.join(".n0x"))?;
     Ok(dir)
+}
+
+/// The project directory for `target`, created with its `.n0x/` if missing.
+pub fn project_dir(target: &Path) -> std::io::Result<PathBuf> {
+    projects_subdir(&format!("{:x}", fnv1a64(target.to_string_lossy().as_bytes())))
+}
+
+/// Where scans of running processes keep the results a later scan narrows.
+/// One folder for all of them: a result is named after its process.
+pub fn live_dir() -> std::io::Result<PathBuf> {
+    projects_subdir("live")
 }
 
 #[cfg(test)]

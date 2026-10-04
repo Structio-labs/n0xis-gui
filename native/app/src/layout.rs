@@ -19,6 +19,7 @@ use crate::disassembly::DisassemblyView;
 use crate::functions::FunctionList;
 use crate::graph::GraphView;
 use crate::linear::LinearView;
+use crate::scanner::ScannerView;
 use crate::search::SearchView;
 use crate::triage::TriageView;
 use crate::types::TypesView;
@@ -41,10 +42,11 @@ pub enum PanelKind {
     Types,
     Find,
     Console,
+    Scanner,
 }
 
 impl PanelKind {
-    pub const ALL: [PanelKind; 11] = [
+    pub const ALL: [PanelKind; 12] = [
         Self::Functions,
         Self::Decompiler,
         Self::Disassembly,
@@ -56,6 +58,7 @@ impl PanelKind {
         Self::Types,
         Self::Find,
         Self::Console,
+        Self::Scanner,
     ];
 
     /// The name a saved layout knows the panel by. Once chosen, never change
@@ -73,6 +76,7 @@ impl PanelKind {
             Self::Types => "types",
             Self::Find => "find",
             Self::Console => "console",
+            Self::Scanner => "scanner",
         }
     }
 
@@ -89,6 +93,7 @@ impl PanelKind {
             Self::Types => "Types",
             Self::Find => "Find",
             Self::Console => "Console",
+            Self::Scanner => "Memory scanner",
         }
     }
 
@@ -104,8 +109,20 @@ impl PanelKind {
             Self::Triage => AppIcon::Chip,
             Self::Bookmarks => AppIcon::Bookmark,
             Self::Types => AppIcon::Type,
-            Self::Find => AppIcon::Scan,
+            Self::Find => AppIcon::Search,
             Self::Console => AppIcon::Term,
+            Self::Scanner => AppIcon::Scan,
+        }
+    }
+
+    /// The panel whose tab group this one joins when it is opened again; `None`
+    /// opens it as a column of its own on the left.
+    pub const fn companion(self) -> Option<PanelKind> {
+        match self {
+            Self::Functions => None,
+            Self::Decompiler | Self::Graph | Self::Linear => Some(Self::Decompiler),
+            Self::Xrefs | Self::Bookmarks | Self::Find => Some(Self::Xrefs),
+            Self::Disassembly | Self::Console | Self::Triage | Self::Types | Self::Scanner => Some(Self::Disassembly),
         }
     }
 
@@ -141,6 +158,7 @@ pub struct Views {
     pub types: Entity<TypesView>,
     pub find: Entity<SearchView>,
     pub console: Entity<ConsoleView>,
+    pub scanner: Entity<ScannerView>,
 }
 
 impl Global for Views {}
@@ -159,6 +177,7 @@ impl Views {
             PanelKind::Types => panel_handle(self.types.clone()),
             PanelKind::Find => panel_handle(self.find.clone()),
             PanelKind::Console => panel_handle(self.console.clone()),
+            PanelKind::Scanner => panel_handle(self.scanner.clone()),
         }
     }
 
@@ -176,6 +195,7 @@ impl Views {
             PanelKind::Types => self.types.entity_id(),
             PanelKind::Find => self.find.entity_id(),
             PanelKind::Console => self.console.entity_id(),
+            PanelKind::Scanner => self.scanner.entity_id(),
         };
         PanelId::from(entity)
     }

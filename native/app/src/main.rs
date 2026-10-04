@@ -20,6 +20,7 @@ mod menus;
 mod nav;
 mod panel;
 mod project;
+mod scanner;
 mod search;
 mod triage;
 mod types;

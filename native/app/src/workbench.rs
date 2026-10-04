@@ -8,7 +8,8 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
-use gpui_kit::base::dock::DockPlacement;
+use gpui_kit::base::Placement;
+use gpui_kit::base::dock::{DockPlacement, InsertTarget};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::status_bar::StatusBar;
 use gpui_kit::component::dock::{DockArea, DockAreaState, DockEvent, DockSkin};
@@ -28,6 +29,7 @@ use crate::linear::LinearView;
 use crate::assets::AppIcon;
 use crate::layout::{self, History, PanelKind, ShowPanel, Views};
 use crate::nav::{Location, Navigate, hex};
+use crate::scanner::ScannerView;
 use crate::search::SearchView;
 use crate::triage::TriageView;
 use crate::types::TypesView;
@@ -55,6 +57,8 @@ pub struct Workbench {
     engine_status: Option<EngineStatus>,
     /// The one selection every view follows.
     location: Option<Location>,
+    /// The dock is on screen without a target: a panel was asked for by name.
+    dock_shown: bool,
     views: Views,
     menu_bar: Entity<AppMenuBar>,
     focus_handle: FocusHandle,
@@ -88,6 +92,7 @@ impl Workbench {
             types: cx.new(|cx| TypesView::new(window, cx)),
             find: cx.new(|cx| SearchView::new(window, cx)),
             console: cx.new(|cx| ConsoleView::new(window, cx)),
+            scanner: cx.new(|cx| ScannerView::new(window, cx)),
         };
         cx.set_global(views.clone());
         let (dock_area, dock_skin) = DockSkin::dock_area(layout::AREA_ID, Some(layout::LAYOUT_VERSION), window, cx);
@@ -175,6 +180,7 @@ impl Workbench {
             open_error: None,
             engine_status: None,
             location: None,
+            dock_shown: false,
             views,
             menu_bar: menus::init(cx),
             focus_handle: cx.focus_handle(),
@@ -278,14 +284,28 @@ impl Workbench {
 
     fn on_show_panel(&mut self, action: &ShowPanel, window: &mut Window, cx: &mut Context<Self>) {
         let Some(kind) = PanelKind::from_name(&action.0) else { return };
+        // A panel opened by name is wanted now, target or not (the scanner needs none).
+        self.dock_shown = true;
         let (id, handle) = (self.views.panel_id(kind), self.views.handle(kind));
+        let companion = kind.companion().map(|c| self.views.panel_id(c)).filter(|&c| c != id);
         self.dock_area.update(cx, |area, cx| {
             if area.panel(id).is_some() {
                 area.select_panel(id, window, cx);
-            } else {
-                area.add_panel_view(handle, DockPlacement::Center, None, window, cx);
+                return;
+            }
+            // Added first (that registers it), then moved where it belongs: into
+            // its companion's group, or for the function list, a column on the left.
+            area.add_panel_view(handle, DockPlacement::Center, None, window, cx);
+            let tree = area.layout(DockPlacement::Center);
+            let target = match companion {
+                Some(c) => tree.and_then(|t| t.find_panel_node(c)).map(|node| InsertTarget::Tabs { node, ix: None, activate: true }),
+                None => tree.map(|t| InsertTarget::Split { node: t.root().id(), placement: Placement::Left, size: Some(px(300.)) }),
+            };
+            if let Some(target) = target {
+                area.move_panel(id, target, window, cx);
             }
         });
+        cx.notify();
     }
 
     fn on_toggle_bookmark(&mut self, _: &ToggleBookmark, window: &mut Window, cx: &mut Context<Self>) {
@@ -495,6 +515,15 @@ impl Workbench {
                     .label("Open…")
                     .on_click(cx.listener(|wb, _: &ClickEvent, window, cx| wb.prompt_open(window, cx))),
             )
+            .child(
+                Button::new("scan-empty")
+                    .ghost()
+                    .icon(AppIcon::Scan)
+                    .label("Scan a running process…")
+                    .on_click(cx.listener(|wb, _: &ClickEvent, window, cx| {
+                        wb.on_show_panel(&ShowPanel(PanelKind::Scanner.name().into()), window, cx)
+                    })),
+            )
             .children(self.open_error.clone().map(|e| div().text_sm().text_color(theme.danger).child(e)))
     }
 }
@@ -506,7 +535,7 @@ fn first_line(s: &str) -> &str {
 impl Render for Workbench {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let (background, foreground) = (cx.theme().background, cx.theme().foreground);
-        let main = if self.target.is_some() {
+        let main = if self.target.is_some() || self.dock_shown {
             self.dock_area.clone().into_any_element()
         } else {
             self.render_empty(cx).into_any_element()
