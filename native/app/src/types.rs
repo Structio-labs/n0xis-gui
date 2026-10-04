@@ -10,13 +10,14 @@ use std::sync::Arc;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
-use gpui_kit::component::{ActiveTheme as _, IconName, Sizable as _, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use n0xis_client::{
     ClientError, DefineEnum, DefineStruct, Engine, EnumDef, ListTypes, RemoveType, StructDef, TypeLibrary, Written,
 };
 
+use crate::assets::AppIcon;
 use crate::layout::PanelKind;
 use crate::panel::{dock_panel, header, message};
 
@@ -355,7 +356,7 @@ impl TypesView {
                         .child(div().flex_1().truncate().font_family(theme.mono_font_family.clone()).text_color(theme.muted_foreground).child(f.ctype.clone()))
                         .child(
                             Button::new(("field-rm", ix))
-                                .icon(IconName::Close)
+                                .icon(AppIcon::X)
                                 .xsmall()
                                 .ghost()
                                 .on_click(cx.listener(move |view, _: &ClickEvent, _, cx| view.remove_field(ix, cx))),
@@ -388,7 +389,7 @@ impl TypesView {
                         .child(div().flex_1().font_family(theme.mono_font_family.clone()).child(m.value.to_string()))
                         .child(
                             Button::new(("member-rm", ix))
-                                .icon(IconName::Close)
+                                .icon(AppIcon::X)
                                 .xsmall()
                                 .ghost()
                                 .on_click(cx.listener(move |view, _: &ClickEvent, _, cx| view.remove_member(ix, cx))),

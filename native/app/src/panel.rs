@@ -4,7 +4,7 @@
 //! What every dockable view shares: the dock's traits, written once, and the
 //! small pieces of rendering each view repeats.
 
-use gpui_kit::component::{ActiveTheme as _, h_flex};
+use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex};
 use gpui_kit::*;
 
 /// Make a view dockable. `$kind` is its [`crate::layout::PanelKind`], which
@@ -42,12 +42,21 @@ macro_rules! dock_panel {
         impl gpui_kit::EventEmitter<gpui_kit::base::dock::PanelEvent> for $view {}
         impl gpui_kit::component::dock::Panel for $view {
             fn title(&mut self, _: &mut gpui_kit::Window, _: &mut gpui_kit::Context<Self>) -> impl gpui_kit::IntoElement {
-                $kind.title()
+                $crate::panel::tab_title($kind)
             }
         }
     };
 }
 pub(crate) use dock_panel;
+
+/// A tab's title: the widget's icon from the Tauri set, then its name.
+pub fn tab_title(kind: crate::layout::PanelKind) -> impl IntoElement {
+    h_flex()
+        .gap_1p5()
+        .items_center()
+        .child(gpui_kit::component::Icon::new(kind.icon()).small())
+        .child(kind.title())
+}
 
 /// A view's text where its content would be: what it is waiting for, or why
 /// there is nothing. `danger` marks a failure.

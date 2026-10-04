@@ -5,6 +5,7 @@
 //! `docs/CURRENT-UI.md`; the engine always runs as a separate process.
 
 mod appearance;
+mod assets;
 mod bookmarks;
 mod config;
 mod console;
@@ -33,7 +34,7 @@ gpui_kit::actions!(n0xis, [Quit, Open, About, ResetLayout, UndoLayout, RedoLayou
 fn main() {
     // `n0xis-ui <binary>` opens it straight away, from a terminal or a file manager.
     let target = std::env::args_os().nth(1).map(PathBuf::from);
-    gpui_kit::application().with_assets(gpui_kit::assets::Assets).run(move |cx| {
+    gpui_kit::application().with_assets(assets::Assets).run(move |cx| {
         gpui_kit::init(cx);
         Theme::change(ThemeMode::Dark, None, cx);
         layout::register_panels(cx);

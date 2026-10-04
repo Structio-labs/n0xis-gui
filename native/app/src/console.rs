@@ -15,6 +15,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use n0xis_client::{ClientError, Engine};
 
+use crate::assets::AppIcon;
 use crate::layout::PanelKind;
 use crate::panel::{clip, dock_panel, header, message};
 
@@ -184,6 +185,7 @@ impl ConsoleView {
                     .when_some(full, |row, full| {
                         row.child(
                             Button::new(("console-copy", ix))
+                                .icon(AppIcon::Copy)
                                 .label("Copy")
                                 .xsmall()
                                 .ghost()

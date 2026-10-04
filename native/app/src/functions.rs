@@ -8,11 +8,12 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use gpui_kit::component::input::{Input, InputEvent, InputState};
-use gpui_kit::component::{ActiveTheme as _, Icon, IconName, Sizable as _, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use n0xis_client::{ClientError, DiscoverFunctions, Engine, FunctionEntry};
 
+use crate::assets::AppIcon;
 use crate::layout::PanelKind;
 use crate::nav::parse_va;
 use crate::panel::dock_panel;
@@ -329,7 +330,7 @@ impl Render for FunctionList {
                 div()
                     .px_2()
                     .py_2()
-                    .child(Input::new(&self.filter).small().prefix(Icon::new(IconName::Search).small())),
+                    .child(Input::new(&self.filter).small().prefix(Icon::new(AppIcon::Scan).small())),
             )
             .child(
                 uniform_list(

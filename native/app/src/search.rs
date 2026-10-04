@@ -10,10 +10,11 @@ use std::sync::Arc;
 use gpui_kit::base::Selectable as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
-use gpui_kit::component::{ActiveTheme as _, Icon, IconName, Sizable as _, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use n0xis_client::{Engine, Find, FindMatch, FindQuery, FindResult};
 
+use crate::assets::AppIcon;
 use crate::layout::{PanelKind, Views};
 use crate::nav::{Location, Navigate, parse_va};
 use crate::panel::{dock_panel, header, message};
@@ -204,7 +205,7 @@ impl Render for SearchView {
             .child(
                 h_flex()
                     .gap_2()
-                    .child(div().flex_1().child(Input::new(&self.query).small().prefix(Icon::new(IconName::Search).small())))
+                    .child(div().flex_1().child(Input::new(&self.query).small().prefix(Icon::new(AppIcon::Search).small())))
                     .child(
                         Button::new("find-go")
                             .label("Find")

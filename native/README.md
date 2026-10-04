@@ -77,6 +77,12 @@ moved and opened again without losing what it holds.
 - Console: any engine command in the target's session, without `--file`; ↑ / ↓ history;
   the engine's own JSON, with Copy.
 
+Icons: the Tauri build's whole set, 60 of them (its Lucide icons, ISC licence in
+`app/icons/LICENSE-LUCIDE`, and the ones drawn inline on its page), written out as SVG files
+by `app/icons/extract_icons.py` and embedded at build time; `extract_icons.py --verify`
+renders each next to the page's own markup and compares them pixel by pixel. Each panel's
+tab carries the icon the Tauri build gave that widget.
+
 A click in any panel goes to that address. The function it lies in comes from the
 engine's function list, and only where the list states the function's extent; otherwise
 the address is shown as an address.

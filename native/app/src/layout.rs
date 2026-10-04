@@ -11,6 +11,7 @@ use gpui_kit::base::dock::{PanelId, PanelView};
 use gpui_kit::component::dock::{DockAreaState, DockLayout, panel_handle, register_panel};
 use gpui_kit::*;
 
+use crate::assets::AppIcon;
 use crate::bookmarks::BookmarksView;
 use crate::console::ConsoleView;
 use crate::decompiler::DecompilerView;
@@ -78,6 +79,21 @@ impl PanelKind {
             Self::Types => "Types",
             Self::Find => "Find",
             Self::Console => "Console",
+        }
+    }
+
+    /// The icon the Tauri build gave this widget, from the same set.
+    pub const fn icon(self) -> AppIcon {
+        match self {
+            Self::Functions => AppIcon::Strings,
+            Self::Decompiler => AppIcon::Decomp,
+            Self::Disassembly => AppIcon::Disasm,
+            Self::Xrefs => AppIcon::Xref,
+            Self::Triage => AppIcon::Chip,
+            Self::Bookmarks => AppIcon::Bookmark,
+            Self::Types => AppIcon::Type,
+            Self::Find => AppIcon::Scan,
+            Self::Console => AppIcon::Term,
         }
     }
 
@@ -170,7 +186,7 @@ pub fn default_layout(views: &Views, cx: &App) -> DockLayout {
                 .child(
                     DockLayout::h_split()
                         .child(tabs(views, &[Decompiler], cx), None)
-                        .child(tabs(views, &[Xrefs, Bookmarks, Find], cx), Some(px(380.))),
+                        .child(tabs(views, &[Xrefs, Bookmarks, Find], cx), Some(px(430.))),
                     None,
                 )
                 .child(tabs(views, &[Disassembly, Console, Triage, Types], cx), Some(px(280.))),

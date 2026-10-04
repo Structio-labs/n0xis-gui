@@ -13,7 +13,7 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::status_bar::StatusBar;
 use gpui_kit::component::dock::{DockArea, DockAreaState, DockEvent, DockSkin};
 use gpui_kit::component::menu::AppMenuBar;
-use gpui_kit::component::{ActiveTheme as _, IconName, TitleBar, WindowExt as _, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme as _, TitleBar, WindowExt as _, h_flex, v_flex};
 use gpui_kit::*;
 use n0xis_client::{Engine, EngineCommand, EngineStatus, SetBookmark};
 
@@ -23,6 +23,7 @@ use crate::console::ConsoleView;
 use crate::decompiler::DecompilerView;
 use crate::disassembly::DisassemblyView;
 use crate::functions::{FunctionList, FunctionSelected};
+use crate::assets::AppIcon;
 use crate::layout::{self, History, PanelKind, ShowPanel, Views};
 use crate::nav::{Location, Navigate, hex};
 use crate::search::SearchView;
@@ -476,7 +477,7 @@ impl Workbench {
             .child(
                 Button::new("open-empty")
                     .primary()
-                    .icon(IconName::FolderOpen)
+                    .icon(AppIcon::Open)
                     .label("Open…")
                     .on_click(cx.listener(|wb, _: &ClickEvent, window, cx| wb.prompt_open(window, cx))),
             )
