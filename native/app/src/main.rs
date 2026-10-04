@@ -12,6 +12,8 @@ mod console;
 mod decompiler;
 mod disassembly;
 mod functions;
+mod graph;
+mod graph_layout;
 mod layout;
 mod menus;
 mod nav;

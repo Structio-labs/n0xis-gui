@@ -64,6 +64,12 @@ moved and opened again without losing what it holds.
 - Decompiler: three styles, C colouring, a read-only editor with selection and copy.
 - Disassembly: bounded by the function's extent; the selected instruction is highlighted,
   and a branch or call whose target the engine resolved is followed with a click.
+- Graph: the control flow of the selected function (`ir build`), laid out in rows with
+  edges routed at right angles and coloured by the kind the engine gives them (its own
+  names are the legend). Wheel zooms around the pointer, drag pans, a block can be dragged
+  and put back, a click on a block goes to it, and the view fits itself until you move
+  it. Functions over 400 blocks are not drawn, and the view says so. Known limit: an edge
+  that skips several rows runs down a side lane, so very wide functions get long lanes.
 - Cross-references: who references the selection (`xref to`), and for a function the calls
   it makes as the engine resolved them (`ir build`).
 - Triage: the image's own headers (`profile --exports`): sections, exports with forwarders
@@ -88,6 +94,5 @@ engine's function list, and only where the list states the function's extent; ot
 the address is shown as an address.
 
 Every view shows only what the engine returned; an empty or failed view says so. Still
-open from `docs/CURRENT-UI.md` §12: the linear listing, the control-flow graph, the memory
-scanner, editing (rename, comment, types of variables) with undo, go to and history, and
+open from `docs/CURRENT-UI.md` §12: the linear listing, the memory scanner, editing (rename, comment, types of variables) with undo, go to and history, and
 the settings.

@@ -17,6 +17,7 @@ use crate::console::ConsoleView;
 use crate::decompiler::DecompilerView;
 use crate::disassembly::DisassemblyView;
 use crate::functions::FunctionList;
+use crate::graph::GraphView;
 use crate::search::SearchView;
 use crate::triage::TriageView;
 use crate::types::TypesView;
@@ -31,6 +32,7 @@ pub enum PanelKind {
     Functions,
     Decompiler,
     Disassembly,
+    Graph,
     Xrefs,
     Triage,
     Bookmarks,
@@ -40,10 +42,11 @@ pub enum PanelKind {
 }
 
 impl PanelKind {
-    pub const ALL: [PanelKind; 9] = [
+    pub const ALL: [PanelKind; 10] = [
         Self::Functions,
         Self::Decompiler,
         Self::Disassembly,
+        Self::Graph,
         Self::Xrefs,
         Self::Triage,
         Self::Bookmarks,
@@ -59,6 +62,7 @@ impl PanelKind {
             Self::Functions => "functions",
             Self::Decompiler => "decompiler",
             Self::Disassembly => "disassembly",
+            Self::Graph => "graph",
             Self::Xrefs => "xrefs",
             Self::Triage => "triage",
             Self::Bookmarks => "bookmarks",
@@ -73,6 +77,7 @@ impl PanelKind {
             Self::Functions => "Functions",
             Self::Decompiler => "Decompiler",
             Self::Disassembly => "Disassembly",
+            Self::Graph => "Graph",
             Self::Xrefs => "Cross-references",
             Self::Triage => "Triage",
             Self::Bookmarks => "Bookmarks",
@@ -88,6 +93,7 @@ impl PanelKind {
             Self::Functions => AppIcon::Strings,
             Self::Decompiler => AppIcon::Decomp,
             Self::Disassembly => AppIcon::Disasm,
+            Self::Graph => AppIcon::Graph,
             Self::Xrefs => AppIcon::Xref,
             Self::Triage => AppIcon::Chip,
             Self::Bookmarks => AppIcon::Bookmark,
@@ -121,6 +127,7 @@ pub struct Views {
     pub functions: Entity<FunctionList>,
     pub decompiler: Entity<DecompilerView>,
     pub disassembly: Entity<DisassemblyView>,
+    pub graph: Entity<GraphView>,
     pub xrefs: Entity<XrefsView>,
     pub triage: Entity<TriageView>,
     pub bookmarks: Entity<BookmarksView>,
@@ -137,6 +144,7 @@ impl Views {
             PanelKind::Functions => panel_handle(self.functions.clone()),
             PanelKind::Decompiler => panel_handle(self.decompiler.clone()),
             PanelKind::Disassembly => panel_handle(self.disassembly.clone()),
+            PanelKind::Graph => panel_handle(self.graph.clone()),
             PanelKind::Xrefs => panel_handle(self.xrefs.clone()),
             PanelKind::Triage => panel_handle(self.triage.clone()),
             PanelKind::Bookmarks => panel_handle(self.bookmarks.clone()),
@@ -152,6 +160,7 @@ impl Views {
             PanelKind::Functions => self.functions.entity_id(),
             PanelKind::Decompiler => self.decompiler.entity_id(),
             PanelKind::Disassembly => self.disassembly.entity_id(),
+            PanelKind::Graph => self.graph.entity_id(),
             PanelKind::Xrefs => self.xrefs.entity_id(),
             PanelKind::Triage => self.triage.entity_id(),
             PanelKind::Bookmarks => self.bookmarks.entity_id(),
@@ -185,7 +194,7 @@ pub fn default_layout(views: &Views, cx: &App) -> DockLayout {
             DockLayout::v_split()
                 .child(
                     DockLayout::h_split()
-                        .child(tabs(views, &[Decompiler], cx), None)
+                        .child(tabs(views, &[Decompiler, Graph], cx), None)
                         .child(tabs(views, &[Xrefs, Bookmarks, Find], cx), Some(px(430.))),
                     None,
                 )

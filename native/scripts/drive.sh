@@ -13,6 +13,7 @@
 #   type <text>           type text
 #   key <keysym>          press a key (e.g. Return, ctrl+q)
 #   drag <x1> <y1> <x2> <y2>  press at the first point, move in steps, release at the second
+#   wheel <x> <y> <up|down> <n>  turn the mouse wheel n notches over a point
 #   shot <name>           save <out-prefix>-<name>.png
 #
 # Example:
@@ -44,6 +45,12 @@ while read -r cmd arg rest; do
                 sleep 0.05
             done
             DISPLAY="$disp" xdotool mouseup 1
+            ;;
+        wheel)
+            read -r y dir n <<<"$rest"
+            button=4
+            [ "$dir" = down ] && button=5
+            DISPLAY="$disp" xdotool mousemove "$arg" "$y" click --repeat "$n" --delay 80 "$button"
             ;;
         shot)
             DISPLAY="$disp" import -window root "$prefix-$arg.png" 2>/dev/null

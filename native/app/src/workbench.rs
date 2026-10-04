@@ -23,6 +23,7 @@ use crate::console::ConsoleView;
 use crate::decompiler::DecompilerView;
 use crate::disassembly::DisassemblyView;
 use crate::functions::{FunctionList, FunctionSelected};
+use crate::graph::GraphView;
 use crate::assets::AppIcon;
 use crate::layout::{self, History, PanelKind, ShowPanel, Views};
 use crate::nav::{Location, Navigate, hex};
@@ -78,6 +79,7 @@ impl Workbench {
             functions: cx.new(|cx| FunctionList::new(window, cx)),
             decompiler: cx.new(|cx| DecompilerView::new(window, cx)),
             disassembly: cx.new(DisassemblyView::new),
+            graph: cx.new(GraphView::new),
             xrefs: cx.new(XrefsView::new),
             triage: cx.new(|cx| TriageView::new(window, cx)),
             bookmarks: cx.new(BookmarksView::new),
@@ -115,6 +117,7 @@ impl Workbench {
         // Every view that can send the user somewhere says so the same way.
         let mut navigation = vec![
             cx.subscribe_in(&views.disassembly, window, Self::on_navigate),
+            cx.subscribe_in(&views.graph, window, Self::on_navigate),
             cx.subscribe_in(&views.xrefs, window, Self::on_navigate),
             cx.subscribe_in(&views.triage, window, Self::on_navigate),
             cx.subscribe_in(&views.bookmarks, window, Self::on_navigate),
@@ -228,6 +231,7 @@ impl Workbench {
         let e = || Some(Arc::clone(&engine));
         v.decompiler.update(cx, |view, cx| view.set_engine(e(), cx));
         v.disassembly.update(cx, |view, cx| view.set_engine(e(), cx));
+        v.graph.update(cx, |view, cx| view.set_engine(e(), cx));
         v.xrefs.update(cx, |view, cx| view.set_engine(e(), cx));
         v.triage.update(cx, |view, cx| view.set_engine(e(), cx));
         v.bookmarks.update(cx, |view, cx| view.set_engine(e(), cx));
@@ -246,6 +250,7 @@ impl Workbench {
         v.functions.update(cx, |list, cx| list.reveal(location.va, cx));
         v.decompiler.update(cx, |view, cx| view.show(&location, window, cx));
         v.disassembly.update(cx, |view, cx| view.show(&location, cx));
+        v.graph.update(cx, |view, cx| view.show(&location, window, cx));
         v.xrefs.update(cx, |view, cx| view.show(&location, cx));
         self.location = Some(location);
         cx.notify();
