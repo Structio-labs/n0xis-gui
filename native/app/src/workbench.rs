@@ -4,25 +4,30 @@
 //! The window's root view: the open target, its engine, and the views over it.
 
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::status_bar::StatusBar;
+use gpui_kit::component::dock::{DockArea, DockAreaState, DockEvent, DockSkin};
 use gpui_kit::component::menu::AppMenuBar;
-use gpui_kit::component::{
-    ActiveTheme as _, IconName, TitleBar, WindowExt as _, h_flex, h_resizable, resizable_panel, v_flex, v_resizable,
-};
+use gpui_kit::component::{ActiveTheme as _, IconName, TitleBar, WindowExt as _, h_flex, v_flex};
 use gpui_kit::*;
 use n0xis_client::{Engine, EngineCommand, EngineStatus, FunctionEntry};
 
 use crate::decompiler::DecompilerView;
 use crate::disassembly::DisassemblyView;
 use crate::functions::{FunctionList, FunctionSelected};
-use crate::{About, Open, menus, project};
+use crate::layout::{self, History, Views};
+use crate::{About, Open, RedoLayout, ResetLayout, UndoLayout, menus, project};
 
 /// How often the status bar re-reads the engine's state.
 const STATUS_POLL: Duration = Duration::from_millis(300);
+
+/// A drag reports a layout change on every step. Wait this long for it to
+/// settle, then record one undo step and save once.
+const LAYOUT_SETTLE: Duration = Duration::from_millis(400);
 
 struct Target {
     path: PathBuf,
@@ -42,6 +47,17 @@ pub struct Workbench {
     disassembly: Entity<DisassemblyView>,
     menu_bar: Entity<AppMenuBar>,
     focus_handle: FocusHandle,
+    dock_area: Entity<DockArea>,
+    _dock_skin: Rc<DockSkin>,
+    history: History,
+    /// Set once a save of the layout has failed, so the user is told once.
+    layout_save_failed: bool,
+    /// The next settled layout comes from loading a snapshot (start-up, undo,
+    /// redo), not from the user: it replaces the current history entry instead
+    /// of adding one. A loaded layout is laid out again on the next frame and
+    /// its sizes shift, so comparing snapshots cannot tell the two apart.
+    next_change_is_load: bool,
+    _layout_settle: Option<Task<()>>,
     _status_poll: Task<()>,
     _subscriptions: Vec<Subscription>,
 }
@@ -51,6 +67,30 @@ impl Workbench {
         let functions = cx.new(|cx| FunctionList::new(window, cx));
         let decompiler = cx.new(|cx| DecompilerView::new(window, cx));
         let disassembly = cx.new(DisassemblyView::new);
+        let views = Views { functions: functions.clone(), decompiler: decompiler.clone(), disassembly: disassembly.clone() };
+        cx.set_global(views.clone());
+        let (dock_area, dock_skin) = DockSkin::dock_area(layout::AREA_ID, Some(layout::LAYOUT_VERSION), window, cx);
+        let restore_note = match layout::read_saved() {
+            Ok(state) => match dock_area.update(cx, |area, cx| area.load(state, window, cx)) {
+                Ok(()) => None,
+                Err(e) => Some(format!("The saved panel layout could not be restored ({e}); using the default.")),
+            },
+            Err(reason) => reason.explain().or(Some(String::new())),
+        };
+        // Anything but a clean restore falls back to the default; only a real
+        // problem (not a first run) is worth a message.
+        if let Some(note) = restore_note {
+            dock_area.update(cx, |area, cx| area.set_center(layout::default_layout(&views, cx), window, cx));
+            if !note.is_empty() {
+                window.defer(cx, move |window, cx| window.push_notification(SharedString::from(note), cx));
+            }
+        }
+        let history = History::default();
+        let layout_changes = cx.subscribe_in(&dock_area, window, |this, _, event: &DockEvent, window, cx| {
+            if matches!(event, DockEvent::LayoutChanged) {
+                this.layout_changed(window, cx);
+            }
+        });
         let selection = cx.subscribe_in(&functions, window, |this, _, FunctionSelected(function), window, cx| {
             this.selected = Some(function.clone());
             this.decompiler.update(cx, |view, cx| view.show(function.clone(), window, cx));
@@ -82,9 +122,18 @@ impl Workbench {
             disassembly,
             menu_bar: menus::init(cx),
             focus_handle: cx.focus_handle(),
+            dock_area,
+            _dock_skin: dock_skin,
+            history,
+            layout_save_failed: false,
+            next_change_is_load: true,
+            _layout_settle: None,
             _status_poll: status_poll,
-            _subscriptions: vec![selection],
+            _subscriptions: vec![selection, layout_changes],
         };
+        // The first entry of the layout history is the layout as first laid
+        // out, taken once it has settled.
+        workbench.layout_changed(window, cx);
         if let Some(path) = target {
             workbench.open(path, window, cx);
         }
@@ -148,6 +197,53 @@ impl Workbench {
             }
         })
         .detach();
+    }
+
+    fn layout_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self._layout_settle = Some(cx.spawn_in(window, async move |this, cx| {
+            cx.background_executor().timer(LAYOUT_SETTLE).await;
+            this.update_in(cx, |wb, window, cx| {
+                let state = wb.dock_area.read(cx).dump(cx);
+                if std::mem::take(&mut wb.next_change_is_load) {
+                    wb.history.replace_current(state.clone());
+                } else {
+                    wb.history.record(state.clone());
+                }
+                if let Err(e) = layout::write(&state)
+                    && !wb.layout_save_failed
+                {
+                    wb.layout_save_failed = true;
+                    window.push_notification(SharedString::from(format!("The panel layout could not be saved: {e}")), cx);
+                }
+            })
+            .ok();
+        }));
+    }
+
+    fn apply_layout(&mut self, state: DockAreaState, window: &mut Window, cx: &mut Context<Self>) {
+        match self.dock_area.update(cx, |area, cx| area.load(state, window, cx)) {
+            Ok(()) => self.next_change_is_load = true,
+            Err(e) => window.push_notification(SharedString::from(format!("That layout could not be restored: {e}")), cx),
+        }
+    }
+
+    fn on_undo_layout(&mut self, _: &UndoLayout, window: &mut Window, cx: &mut Context<Self>) {
+        match self.history.undo() {
+            Some(state) => self.apply_layout(state, window, cx),
+            None => window.push_notification("Nothing to undo in the layout.", cx),
+        }
+    }
+
+    fn on_redo_layout(&mut self, _: &RedoLayout, window: &mut Window, cx: &mut Context<Self>) {
+        match self.history.redo() {
+            Some(state) => self.apply_layout(state, window, cx),
+            None => window.push_notification("Nothing to redo in the layout.", cx),
+        }
+    }
+
+    fn on_reset_layout(&mut self, _: &ResetLayout, window: &mut Window, cx: &mut Context<Self>) {
+        let views = cx.global::<Views>().clone();
+        self.dock_area.update(cx, |area, cx| area.set_center(layout::default_layout(&views, cx), window, cx));
     }
 
     fn on_open(&mut self, _: &Open, window: &mut Window, cx: &mut Context<Self>) {
@@ -242,19 +338,7 @@ impl Render for Workbench {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let (background, foreground) = (cx.theme().background, cx.theme().foreground);
         let main = if self.target.is_some() {
-            h_resizable("workbench")
-                .child(
-                    resizable_panel()
-                        .size(px(340.))
-                        .size_range(px(220.)..px(640.))
-                        .child(self.functions.clone()),
-                )
-                .child(
-                    v_resizable("code")
-                        .child(resizable_panel().child(self.decompiler.clone()))
-                        .child(resizable_panel().size(px(280.)).child(self.disassembly.clone())),
-                )
-                .into_any_element()
+            self.dock_area.clone().into_any_element()
         } else {
             self.render_empty(cx).into_any_element()
         };
@@ -264,6 +348,9 @@ impl Render for Workbench {
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::on_open))
             .on_action(cx.listener(Self::on_about))
+            .on_action(cx.listener(Self::on_undo_layout))
+            .on_action(cx.listener(Self::on_redo_layout))
+            .on_action(cx.listener(Self::on_reset_layout))
             .bg(background)
             .text_color(foreground)
             .child(self.render_title_bar(cx))

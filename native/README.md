@@ -46,7 +46,9 @@ engine. The protocol tests need Python for the stand-in engine.
 
 ## Status (2026-10-04)
 
-Done: one title bar (on Linux the window draws its own frame and controls) with a menu that
+Done: a dock (panels in tab groups; drag a tab onto another group or an edge; zoom with
+Shift+Esc; the arrangement is saved to `~/.config/n0xis/ui-layout.json` and restored, with
+undo/redo of layout changes on Ctrl+Shift+Z / Ctrl+Shift+Y and Window ▸ Reset Layout); one title bar (on Linux the window draws its own frame and controls) with a menu that
 lists only working actions (Open, Quit, Copy, Select All, About); open a target (argument or file dialog), function list from the unwind table or
 a prologue scan (virtualized, filtered), decompiler (three styles, C colouring,
 read-only editor with selection and copy), disassembly bounded by the function's

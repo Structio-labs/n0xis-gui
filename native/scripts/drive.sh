@@ -12,6 +12,7 @@
 #   click <x> <y>         left click at window coordinates
 #   type <text>           type text
 #   key <keysym>          press a key (e.g. Return, ctrl+q)
+#   drag <x1> <y1> <x2> <y2>  press at the first point, move in steps, release at the second
 #   shot <name>           save <out-prefix>-<name>.png
 #
 # Example:
@@ -35,6 +36,15 @@ while read -r cmd arg rest; do
         click) DISPLAY="$disp" xdotool mousemove "$arg" "$rest" click 1 ;;
         type) DISPLAY="$disp" xdotool type --delay 60 "$arg${rest:+ $rest}" ;;
         key) DISPLAY="$disp" xdotool key "$arg" ;;
+        drag)
+            read -r y1 x2 y2 <<<"$rest"
+            DISPLAY="$disp" xdotool mousemove "$arg" "$y1" mousedown 1
+            for i in 1 2 3 4 5 6 7 8; do
+                DISPLAY="$disp" xdotool mousemove $((arg + (x2 - arg) * i / 8)) $((y1 + (y2 - y1) * i / 8))
+                sleep 0.05
+            done
+            DISPLAY="$disp" xdotool mouseup 1
+            ;;
         shot)
             DISPLAY="$disp" import -window root "$prefix-$arg.png" 2>/dev/null
             echo "shot $prefix-$arg.png"

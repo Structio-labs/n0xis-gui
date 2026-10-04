@@ -10,6 +10,8 @@ use std::sync::Arc;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Editor, EditorState};
 use gpui_kit::base::Selectable as _;
+use gpui_kit::base::dock::{Panel as DockBehavior, PanelEvent};
+use gpui_kit::component::dock::Panel as DockPresentation;
 use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use n0xis_client::{ClientError, DecompStyle, Decompile, Engine, FunctionEntry};
@@ -27,13 +29,22 @@ pub struct DecompilerView {
     function: Option<FunctionEntry>,
     style: DecompStyle,
     state: ViewState,
+    focus_handle: FocusHandle,
     _request: Option<Task<()>>,
 }
 
 impl DecompilerView {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let editor = cx.new(|cx| EditorState::new(window, cx).language("c").line_number(true).soft_wrap(false));
-        Self { engine: None, editor, function: None, style: DecompStyle::default(), state: ViewState::Empty, _request: None }
+        Self {
+            engine: None,
+            editor,
+            function: None,
+            style: DecompStyle::default(),
+            state: ViewState::Empty,
+            focus_handle: cx.focus_handle(),
+            _request: None,
+        }
     }
 
     pub fn set_engine(&mut self, engine: Option<Arc<Engine>>, cx: &mut Context<Self>) {
@@ -136,7 +147,32 @@ impl Render for DecompilerView {
         };
         v_flex()
             .size_full()
+            .track_focus(&self.focus_handle)
             .child(self.render_header(cx))
             .child(div().flex_1().min_h_0().child(body))
+    }
+}
+
+impl Focusable for DecompilerView {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
+impl EventEmitter<PanelEvent> for DecompilerView {}
+
+impl DockBehavior for DecompilerView {
+    fn panel_name(&self) -> &'static str {
+        crate::layout::DECOMPILER_PANEL
+    }
+
+    fn closable(&self, _: &App) -> bool {
+        false
+    }
+}
+
+impl DockPresentation for DecompilerView {
+    fn title(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        "Decompiler"
     }
 }

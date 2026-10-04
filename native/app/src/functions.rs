@@ -7,6 +7,8 @@
 use std::ops::Range;
 use std::sync::Arc;
 
+use gpui_kit::base::dock::{Panel as DockBehavior, PanelEvent};
+use gpui_kit::component::dock::Panel as DockPresentation;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::{ActiveTheme as _, Icon, IconName, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -101,6 +103,7 @@ pub struct FunctionList {
     selected: Option<String>,
     filter: Entity<InputState>,
     scroll: UniformListScrollHandle,
+    focus_handle: FocusHandle,
     _load: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -125,6 +128,7 @@ impl FunctionList {
             selected: None,
             filter,
             scroll: UniformListScrollHandle::new(),
+            focus_handle: cx.focus_handle(),
             _load: None,
             _subscriptions: vec![subscription],
         }
@@ -274,19 +278,11 @@ impl Render for FunctionList {
         let failed = matches!(self.state, LoadState::Failed(_));
         v_flex()
             .size_full()
-            .child(
-                h_flex()
-                    .px_2()
-                    .pt_2()
-                    .pb_1()
-                    .text_sm()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child("Functions"),
-            )
+            .track_focus(&self.focus_handle)
             .child(
                 div()
                     .px_2()
-                    .pb_2()
+                    .py_2()
                     .child(Input::new(&self.filter).small().prefix(Icon::new(IconName::Search).small())),
             )
             .child(
@@ -310,6 +306,31 @@ impl Render for FunctionList {
                     .text_color(if failed { theme.danger } else { theme.muted_foreground })
                     .child(self.footer_text()),
             )
+    }
+}
+
+impl Focusable for FunctionList {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
+impl EventEmitter<PanelEvent> for FunctionList {}
+
+impl DockBehavior for FunctionList {
+    fn panel_name(&self) -> &'static str {
+        crate::layout::FUNCTIONS_PANEL
+    }
+
+    /// There is one function list; closing it would leave no way back.
+    fn closable(&self, _: &App) -> bool {
+        false
+    }
+}
+
+impl DockPresentation for FunctionList {
+    fn title(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        "Functions"
     }
 }
 

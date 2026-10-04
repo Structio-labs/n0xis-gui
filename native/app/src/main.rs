@@ -7,16 +7,18 @@
 mod decompiler;
 mod disassembly;
 mod functions;
+mod layout;
 mod menus;
 mod project;
 mod workbench;
 
 use std::path::PathBuf;
 
+use gpui_kit::component::dock::ToggleZoom;
 use gpui_kit::component::{Theme, ThemeMode, TitleBar};
 use gpui_kit::*;
 
-gpui_kit::actions!(n0xis, [Quit, Open, About]);
+gpui_kit::actions!(n0xis, [Quit, Open, About, ResetLayout, UndoLayout, RedoLayout]);
 
 fn main() {
     // `n0xis-ui <binary>` opens it straight away, from a terminal or a file manager.
@@ -24,7 +26,15 @@ fn main() {
     gpui_kit::application().with_assets(gpui_kit::assets::Assets).run(move |cx| {
         gpui_kit::init(cx);
         Theme::change(ThemeMode::Dark, None, cx);
-        cx.bind_keys([KeyBinding::new("ctrl-q", Quit, None), KeyBinding::new("ctrl-o", Open, None)]);
+        layout::register_panels(cx);
+        cx.bind_keys([
+            KeyBinding::new("ctrl-q", Quit, None),
+            KeyBinding::new("ctrl-o", Open, None),
+            // Text fields bind these to text undo and redo; inside one, theirs win.
+            KeyBinding::new("ctrl-shift-z", UndoLayout, None),
+            KeyBinding::new("ctrl-shift-y", RedoLayout, None),
+            KeyBinding::new("shift-escape", ToggleZoom, None),
+        ]);
         cx.on_action(|_: &Quit, cx: &mut App| cx.quit());
         // One window: closing it ends the app instead of leaving a headless process.
         cx.on_window_closed(|cx, _| {

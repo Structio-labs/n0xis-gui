@@ -6,6 +6,8 @@
 use std::ops::Range;
 use std::sync::Arc;
 
+use gpui_kit::base::dock::{Panel as DockBehavior, PanelEvent};
+use gpui_kit::component::dock::Panel as DockPresentation;
 use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::*;
 use n0xis_client::{ClientError, Disassemble, Engine, FunctionEntry, Instruction};
@@ -31,6 +33,7 @@ pub struct DisassemblyView {
     insns: Vec<Instruction>,
     state: ViewState,
     scroll: UniformListScrollHandle,
+    focus_handle: FocusHandle,
     _request: Option<Task<()>>,
 }
 
@@ -54,13 +57,14 @@ fn plan(function: &FunctionEntry) -> (u32, Option<u64>) {
 }
 
 impl DisassemblyView {
-    pub fn new(_: &mut Context<Self>) -> Self {
+    pub fn new(cx: &mut Context<Self>) -> Self {
         Self {
             engine: None,
             function: None,
             insns: Vec::new(),
             state: ViewState::Empty,
             scroll: UniformListScrollHandle::new(),
+            focus_handle: cx.focus_handle(),
             _request: None,
         }
     }
@@ -131,7 +135,6 @@ impl Render for DisassemblyView {
             .gap_2()
             .border_b_1()
             .border_color(theme.border)
-            .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child("Disassembly"))
             .child(div().flex_1())
             .child(div().text_xs().text_color(theme.muted_foreground).child(match &self.state {
                 ViewState::Ready => format!("{} instructions", self.insns.len()),
@@ -161,7 +164,35 @@ impl Render for DisassemblyView {
             .size_full()
             .into_any_element(),
         };
-        v_flex().size_full().child(header).child(div().flex_1().min_h_0().child(body))
+        v_flex()
+            .size_full()
+            .track_focus(&self.focus_handle)
+            .child(header)
+            .child(div().flex_1().min_h_0().child(body))
+    }
+}
+
+impl Focusable for DisassemblyView {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
+impl EventEmitter<PanelEvent> for DisassemblyView {}
+
+impl DockBehavior for DisassemblyView {
+    fn panel_name(&self) -> &'static str {
+        crate::layout::DISASSEMBLY_PANEL
+    }
+
+    fn closable(&self, _: &App) -> bool {
+        false
+    }
+}
+
+impl DockPresentation for DisassemblyView {
+    fn title(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        "Disassembly"
     }
 }
 

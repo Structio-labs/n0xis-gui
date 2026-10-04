@@ -8,7 +8,7 @@ use gpui_kit::component::menu::AppMenuBar;
 use gpui_kit::component::{GlobalState, input};
 use gpui_kit::{App, Entity, Menu, MenuItem};
 
-use crate::{About, Open, Quit};
+use crate::{About, Open, Quit, RedoLayout, ResetLayout, UndoLayout};
 
 /// Register the menus with the platform (the macOS menu bar) and with the
 /// in-window menu bar that Linux and Windows show in the title bar.
@@ -30,6 +30,16 @@ fn build() -> Vec<Menu> {
         Menu {
             name: "Edit".into(),
             items: vec![MenuItem::action("Copy", input::Copy), MenuItem::action("Select All", input::SelectAll)],
+            disabled: false,
+        },
+        Menu {
+            name: "Window".into(),
+            items: vec![
+                MenuItem::action("Undo Layout Change", UndoLayout),
+                MenuItem::action("Redo Layout Change", RedoLayout),
+                MenuItem::separator(),
+                MenuItem::action("Reset Layout", ResetLayout),
+            ],
             disabled: false,
         },
         Menu { name: "Help".into(), items: vec![MenuItem::action("About N0xis", About)], disabled: false },
