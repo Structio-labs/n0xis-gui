@@ -276,12 +276,18 @@ Layout
 - [ ] Change-widget menu, close, undo / redo per workspace, saved layouts
 - [ ] Four default workspaces; add-widget palette (click and drag)
 
-Views (engine-backed first)
+Views (engine-backed first). Done in the native front end (`native/`, 2026-10-05); what each
+one shows and how it was checked is in `native/README.md` and the commit messages.
 
-- [ ] Functions (virtualized, filter, footer) · Decompiler (3 styles) · Disassembly
-- [ ] Linear listing (window, exact function ends, Asm / Pseudo, minimap, range selection)
-- [ ] Control-flow graph (layout, orthogonal routing, colours, pan / zoom / fit, block drag)
-- [ ] Triage · Console · Xrefs · Bookmarks · Types · Memory scanner · Find in image
+- [x] Functions (virtualized, filter, footer) · Decompiler (3 styles) · Disassembly
+- [x] Linear listing (window, exact function ends, Asm / Pseudo, minimap, range selection)
+- [x] Control-flow graph (layout, orthogonal routing, colours, pan / zoom / fit, block drag)
+- [x] Triage · Console · Xrefs · Bookmarks · Types · Memory scanner · Find in image
+
+Not ported, on purpose: the catalog widgets that had no engine behind them in this build
+(Code, Hex, Copilot, Details, Output, Registers, Watchpoints, Live memory, Watchlist, Stack,
+Strings, Notes) and Variables, which the GUI derived itself (§11.1, §11.5). Each comes back
+only with an engine result to show.
 
 Editing and navigation
 
