@@ -7,13 +7,15 @@
 use std::ops::Range;
 use std::sync::Arc;
 
-use gpui_kit::base::dock::{Panel as DockBehavior, PanelEvent};
-use gpui_kit::component::dock::Panel as DockPresentation;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::{ActiveTheme as _, Icon, IconName, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use n0xis_client::{ClientError, DiscoverFunctions, Engine, FunctionEntry};
+
+use crate::layout::PanelKind;
+use crate::nav::parse_va;
+use crate::panel::dock_panel;
 
 /// Functions asked for per request. Large enough to fill the list quickly,
 /// small enough that one answer stays a few megabytes.
@@ -34,6 +36,9 @@ pub struct FunctionIndex {
     haystack: Vec<String>,
     query: String,
     visible: Vec<usize>,
+    /// (start, entry index), sorted by start, for finding the function an
+    /// address lies in.
+    by_start: Vec<(u64, usize)>,
 }
 
 impl FunctionIndex {
@@ -59,14 +64,41 @@ impl FunctionIndex {
     }
 
     pub fn extend(&mut self, page: Vec<FunctionEntry>) {
+        let was_sorted_to = self.by_start.len();
         for f in page {
             let hay = format!("{} {}", f.name, f.va).to_lowercase();
             if hay.contains(&self.query) {
                 self.visible.push(self.entries.len());
             }
+            if let Some(start) = parse_va(&f.va) {
+                self.by_start.push((start, self.entries.len()));
+            }
             self.haystack.push(hay);
             self.entries.push(f);
         }
+        // The engine lists in address order; sort only if a page did not.
+        if !self.by_start[was_sorted_to.saturating_sub(1)..].is_sorted() {
+            self.by_start.sort_unstable();
+        }
+    }
+
+    /// The function `va` lies in: the one starting there, or the nearest one
+    /// below whose stated end is past `va`. A function with no stated end
+    /// covers only its own start; how far it reaches is not guessed here.
+    pub fn function_at(&self, va: u64) -> Option<&FunctionEntry> {
+        let below = self.by_start.partition_point(|&(start, _)| start <= va);
+        let &(start, ix) = self.by_start.get(below.checked_sub(1)?)?;
+        let f = self.entries.get(ix)?;
+        if start == va {
+            return Some(f);
+        }
+        let end = f.end.as_deref().and_then(parse_va)?;
+        (va < end).then_some(f)
+    }
+
+    /// The row a function is shown on under the current filter.
+    pub fn visible_row(&self, va: u64) -> Option<usize> {
+        self.visible.iter().position(|&i| self.entries.get(i).and_then(|f| parse_va(&f.va)) == Some(va))
     }
 
     pub fn set_query(&mut self, query: &str) {
@@ -203,6 +235,20 @@ impl FunctionList {
         more
     }
 
+    pub fn index(&self) -> &FunctionIndex {
+        &self.index
+    }
+
+    /// Mark the function starting at `va` as selected and scroll it into view,
+    /// without announcing it: the selection came from elsewhere.
+    pub fn reveal(&mut self, va: u64, cx: &mut Context<Self>) {
+        self.selected = self.index.function_at(va).map(|f| f.va.clone());
+        if let Some(row) = self.selected.as_deref().and_then(parse_va).and_then(|start| self.index.visible_row(start)) {
+            self.scroll.scroll_to_item(row, ScrollStrategy::Center);
+        }
+        cx.notify();
+    }
+
     fn select(&mut self, entry: FunctionEntry, cx: &mut Context<Self>) {
         self.selected = Some(entry.va.clone());
         cx.emit(FunctionSelected(entry));
@@ -309,30 +355,7 @@ impl Render for FunctionList {
     }
 }
 
-impl Focusable for FunctionList {
-    fn focus_handle(&self, _: &App) -> FocusHandle {
-        self.focus_handle.clone()
-    }
-}
-
-impl EventEmitter<PanelEvent> for FunctionList {}
-
-impl DockBehavior for FunctionList {
-    fn panel_name(&self) -> &'static str {
-        crate::layout::FUNCTIONS_PANEL
-    }
-
-    /// There is one function list; closing it would leave no way back.
-    fn closable(&self, _: &App) -> bool {
-        false
-    }
-}
-
-impl DockPresentation for FunctionList {
-    fn title(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        "Functions"
-    }
-}
+dock_panel!(FunctionList, PanelKind::Functions);
 
 #[cfg(test)]
 mod tests {
@@ -365,6 +388,30 @@ mod tests {
         ix.extend(vec![f("late_init", "0x3")]);
         assert_eq!(ix.visible_len(), 2);
         assert_eq!(ix.len(), 3);
+    }
+
+    #[test]
+    fn an_address_belongs_to_a_function_only_inside_its_stated_extent() {
+        let mut ix = FunctionIndex::default();
+        ix.extend(vec![
+            FunctionEntry { name: "a".into(), va: "0x1000".into(), end: Some("0x1040".into()) },
+            FunctionEntry { name: "b".into(), va: "0x2000".into(), end: None },
+        ]);
+        assert_eq!(ix.function_at(0x1000).map(|f| f.name.as_str()), Some("a"));
+        assert_eq!(ix.function_at(0x103f).map(|f| f.name.as_str()), Some("a"));
+        assert_eq!(ix.function_at(0x1040), None, "the end is exclusive");
+        assert_eq!(ix.function_at(0x2000).map(|f| f.name.as_str()), Some("b"));
+        assert_eq!(ix.function_at(0x2001), None, "no stated end: no guess at the extent");
+        assert_eq!(ix.function_at(0x0fff), None);
+    }
+
+    #[test]
+    fn pages_out_of_address_order_are_still_found() {
+        let mut ix = FunctionIndex::default();
+        ix.extend(vec![f("late", "0x3000")]);
+        ix.extend(vec![f("early", "0x1000")]);
+        assert_eq!(ix.function_at(0x1000).map(|f| f.name.as_str()), Some("early"));
+        assert_eq!(ix.function_at(0x3000).map(|f| f.name.as_str()), Some("late"));
     }
 
     #[test]

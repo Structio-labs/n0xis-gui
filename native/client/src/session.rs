@@ -77,7 +77,7 @@ impl Session {
 
         let mut session =
             Self { child, stdin, stdout: BufReader::new(stdout), stderr_tail, json_argv: false, label: String::new() };
-        let banner = session.read_envelope()?;
+        let banner = session.read_envelope(false)?;
         if !banner.ok {
             return Err(ClientError::Engine(banner.error.unwrap_or_else(|| EngineError {
                 code: "unknown".into(),
@@ -118,20 +118,49 @@ impl Session {
         } else {
             text_request(args)?
         };
+        self.send_line(&line, false)
+    }
+
+    /// Send a line exactly as typed, for the engine to read as it reads any
+    /// request (text, or a JSON argument array when it starts with `[`). The
+    /// console uses this so that how a typed command splits into arguments is
+    /// the engine's rule, not a second copy of it here.
+    pub fn call_line(&mut self, line: &str) -> Result<Envelope, ClientError> {
+        // A blank line is how a session is told to end, so it is not a request.
+        if line.trim().is_empty() {
+            return Err(ClientError::Unsendable("an empty request would end the session".into()));
+        }
+        if line.contains(['\n', '\r']) {
+            return Err(ClientError::Unsendable("a request is one line; this one holds a line break".into()));
+        }
+        self.send_line(line, true)
+    }
+
+    fn send_line(&mut self, line: &str, keep_raw: bool) -> Result<Envelope, ClientError> {
         if writeln!(self.stdin, "{line}").and_then(|()| self.stdin.flush()).is_err() {
             return Err(self.closed());
         }
-        self.read_envelope()
+        self.read_envelope(keep_raw)
     }
 
-    fn read_envelope(&mut self) -> Result<Envelope, ClientError> {
+    fn read_envelope(&mut self, keep_raw: bool) -> Result<Envelope, ClientError> {
         let mut line = String::new();
         match self.stdout.read_line(&mut line) {
             Ok(0) | Err(_) => Err(self.closed()),
-            Ok(_) => serde_json::from_str(line.trim()).map_err(|e| {
-                let shown: String = line.trim().chars().take(200).collect();
-                ClientError::Protocol(format!("not an envelope ({e}): {shown}"))
-            }),
+            Ok(_) => {
+                let not_an_envelope = |e: serde_json::Error| {
+                    let shown: String = line.trim().chars().take(200).collect();
+                    ClientError::Protocol(format!("not an envelope ({e}): {shown}"))
+                };
+                if keep_raw {
+                    let raw: serde_json::Value = serde_json::from_str(line.trim()).map_err(not_an_envelope)?;
+                    let mut envelope: Envelope = serde_json::from_value(raw.clone()).map_err(not_an_envelope)?;
+                    envelope.raw = Some(raw);
+                    Ok(envelope)
+                } else {
+                    serde_json::from_str(line.trim()).map_err(not_an_envelope)
+                }
+            }
         }
     }
 

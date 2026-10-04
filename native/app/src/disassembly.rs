@@ -6,11 +6,14 @@
 use std::ops::Range;
 use std::sync::Arc;
 
-use gpui_kit::base::dock::{Panel as DockBehavior, PanelEvent};
-use gpui_kit::component::dock::Panel as DockPresentation;
 use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use n0xis_client::{ClientError, Disassemble, Engine, FunctionEntry, Instruction};
+
+use crate::layout::PanelKind;
+use crate::nav::{Location, Navigate, hex};
+use crate::panel::dock_panel;
 
 const ROW_HEIGHT: Pixels = px(20.);
 
@@ -30,6 +33,10 @@ enum ViewState {
 pub struct DisassemblyView {
     engine: Option<Arc<Engine>>,
     function: Option<FunctionEntry>,
+    /// Where the listing starts when no listed function covers the selection.
+    loose_start: Option<u64>,
+    /// The selected instruction, highlighted and kept in view.
+    focus_va: Option<u64>,
     insns: Vec<Instruction>,
     state: ViewState,
     scroll: UniformListScrollHandle,
@@ -37,9 +44,7 @@ pub struct DisassemblyView {
     _request: Option<Task<()>>,
 }
 
-fn parse_va(s: &str) -> Option<u64> {
-    u64::from_str_radix(s.trim_start_matches("0x").trim_start_matches("0X"), 16).ok()
-}
+use crate::nav::parse_va;
 
 /// How many instructions to ask for, and where the function stops. Instructions
 /// average a few bytes, so half the byte length is a safe over-ask; the answer
@@ -61,6 +66,8 @@ impl DisassemblyView {
         Self {
             engine: None,
             function: None,
+            loose_start: None,
+            focus_va: None,
             insns: Vec::new(),
             state: ViewState::Empty,
             scroll: UniformListScrollHandle::new(),
@@ -72,19 +79,37 @@ impl DisassemblyView {
     pub fn set_engine(&mut self, engine: Option<Arc<Engine>>, cx: &mut Context<Self>) {
         self.engine = engine;
         self.function = None;
+        self.loose_start = None;
+        self.focus_va = None;
         self.insns.clear();
         self.state = ViewState::Empty;
         self._request = None;
         cx.notify();
     }
 
-    pub fn show(&mut self, function: FunctionEntry, cx: &mut Context<Self>) {
+    /// Show the function the location lies in, from its start to its end,
+    /// with the location's instruction highlighted. An address no listed
+    /// function covers is disassembled from there, and labelled as such.
+    pub fn show(&mut self, location: &Location, cx: &mut Context<Self>) {
+        self.focus_va = Some(location.va);
+        if location.function.is_some() && location.function == self.function && matches!(self.state, ViewState::Ready) {
+            self.scroll_to_focus();
+            cx.notify();
+            return;
+        }
         let Some(engine) = self.engine.clone() else { return };
-        let (count, end) = plan(&function);
-        self.function = Some(function.clone());
+        let (addr, count, end) = match &location.function {
+            Some(f) => {
+                let (count, end) = plan(f);
+                (f.va.clone(), count, end)
+            }
+            None => (hex(location.va), UNKNOWN_EXTENT_COUNT, None),
+        };
+        self.function = location.function.clone();
+        self.loose_start = location.function.is_none().then_some(location.va);
         self.state = ViewState::Loading;
         cx.notify();
-        let pending = engine.send_latest("disassembly", &Disassemble { addr: function.va, count });
+        let pending = engine.send_latest("disassembly", &Disassemble { addr, count });
         self._request = Some(cx.spawn(async move |this, cx| {
             let result = pending.await;
             this.update(cx, |view, cx| {
@@ -97,6 +122,7 @@ impl DisassemblyView {
                             .collect();
                         view.state = ViewState::Ready;
                         view.scroll.scroll_to_item(0, ScrollStrategy::Top);
+                        view.scroll_to_focus();
                     }
                     Err(ClientError::Superseded) => return,
                     Err(e) => view.state = ViewState::Failed(e.to_string()),
@@ -107,24 +133,43 @@ impl DisassemblyView {
         }));
     }
 
+    fn scroll_to_focus(&self) {
+        if let Some(row) = self.focus_va.and_then(|va| self.insns.iter().position(|i| parse_va(&i.va) == Some(va))) {
+            self.scroll.scroll_to_item(row, ScrollStrategy::Center);
+        }
+    }
+
     fn render_row(&self, row: usize, cx: &mut Context<Self>) -> AnyElement {
         let Some(insn) = self.insns.get(row) else { return div().h(ROW_HEIGHT).into_any_element() };
         let theme = cx.theme();
         let operands = insn.text.strip_prefix(insn.mnemonic.as_str()).unwrap_or(&insn.text).trim().to_string();
+        let va = parse_va(&insn.va);
+        let focused = va.is_some() && va == self.focus_va;
+        // A branch or call whose target the engine resolved can be followed.
+        let target = insn.target.as_deref().and_then(parse_va);
         h_flex()
+            .id(("insn", row))
             .w_full()
             .h(ROW_HEIGHT)
             .px_2()
             .gap_3()
             .font_family(theme.mono_font_family.clone())
             .text_xs()
+            .when(focused, |r| r.bg(theme.list_active))
             .child(div().w(px(150.)).flex_none().text_color(theme.muted_foreground).child(insn.va.clone()))
             .child(div().w(px(180.)).flex_none().truncate().text_color(theme.muted_foreground).child(insn.bytes.clone()))
             .child(div().w(px(70.)).flex_none().text_color(theme.primary).child(insn.mnemonic.clone()))
             .child(div().flex_1().min_w_0().truncate().child(operands))
+            .children(insn.comment.clone().map(|c| div().flex_none().text_color(theme.muted_foreground).child(format!("; {c}"))))
+            .when_some(target, |r, target| {
+                r.cursor_pointer()
+                    .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.emit(Navigate(target))))
+            })
             .into_any_element()
     }
 }
+
+impl EventEmitter<Navigate> for DisassemblyView {}
 
 impl Render for DisassemblyView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -137,7 +182,10 @@ impl Render for DisassemblyView {
             .border_color(theme.border)
             .child(div().flex_1())
             .child(div().text_xs().text_color(theme.muted_foreground).child(match &self.state {
-                ViewState::Ready => format!("{} instructions", self.insns.len()),
+                ViewState::Ready => match self.loose_start {
+                Some(va) => format!("{} instructions from {} · no listed function covers it", self.insns.len(), hex(va)),
+                None => format!("{} instructions", self.insns.len()),
+            },
                 ViewState::Loading => "disassembling…".into(),
                 _ => String::new(),
             }));
@@ -172,29 +220,7 @@ impl Render for DisassemblyView {
     }
 }
 
-impl Focusable for DisassemblyView {
-    fn focus_handle(&self, _: &App) -> FocusHandle {
-        self.focus_handle.clone()
-    }
-}
-
-impl EventEmitter<PanelEvent> for DisassemblyView {}
-
-impl DockBehavior for DisassemblyView {
-    fn panel_name(&self) -> &'static str {
-        crate::layout::DISASSEMBLY_PANEL
-    }
-
-    fn closable(&self, _: &App) -> bool {
-        false
-    }
-}
-
-impl DockPresentation for DisassemblyView {
-    fn title(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        "Disassembly"
-    }
-}
+dock_panel!(DisassemblyView, PanelKind::Disassembly);
 
 #[cfg(test)]
 mod tests {

@@ -44,19 +44,44 @@ The real-engine test compiles a small C function with planted constants and chec
 they appear in its decompilation. It skips, saying why, without a C compiler or an
 engine. The protocol tests need Python for the stand-in engine.
 
-## Status (2026-10-04)
+## Status (2026-10-05)
 
-Done: themes (the Tauri build's six, Midnight, Deep, Light, Nebula, Warm and Forest, generated
-from its stylesheet by `app/themes/build_themes.py`; your own GPUI Kit theme files in
-`~/.config/n0xis/themes/`, re-read when they change so a palette can be tuned with the window
-open, and reported when one cannot be read), View ▸ Theme, zoom (Ctrl+= / Ctrl+- / Ctrl+0),
-both kept in `~/.config/n0xis/ui-settings.json`; a dock (panels in tab groups; drag a tab onto another group or an edge; zoom with
-Shift+Esc; the arrangement is saved to `~/.config/n0xis/ui-layout.json` and restored, with
-undo/redo of layout changes on Ctrl+Shift+Z / Ctrl+Shift+Y and Window ▸ Reset Layout); one title bar (on Linux the window draws its own frame and controls) with a menu that
-lists only working actions (Open, Quit, Copy, Select All, About); open a target (argument or file dialog), function list from the unwind table or
-a prologue scan (virtualized, filtered), decompiler (three styles, C colouring,
-read-only editor with selection and copy), disassembly bounded by the function's
-extent, engine status in the status bar.
+Shell: one title bar (on Linux the window draws its own frame and controls) with a menu
+that lists only working actions; open a target from the command line or a file dialog;
+engine status and the selection in the status bar. Themes: the Tauri build's six,
+generated from its stylesheet by `app/themes/build_themes.py`, plus your own GPUI Kit
+theme files in `~/.config/n0xis/themes/`, re-read when they change and reported when one
+cannot be read; View ▸ Theme; zoom with Ctrl+= / Ctrl+- / Ctrl+0; both kept in
+`~/.config/n0xis/ui-settings.json`. Dock: panels in tab groups, drag a tab onto another
+group or an edge, Shift+Esc zooms one; the arrangement is saved to
+`~/.config/n0xis/ui-layout.json`, with layout undo/redo on Ctrl+Shift+Z / Ctrl+Shift+Y and
+Window ▸ Reset Layout.
 
-Every view shows only what the engine returned; an empty or failed view says so.
-The rest of the parity checklist in `docs/CURRENT-UI.md` §12 is still open.
+Panels. Every one is an ordinary widget: View ▸ Panels opens it, and it can be closed,
+moved and opened again without losing what it holds.
+
+- Functions: from the unwind table or a prologue scan, virtualized, filtered.
+- Decompiler: three styles, C colouring, a read-only editor with selection and copy.
+- Disassembly: bounded by the function's extent; the selected instruction is highlighted,
+  and a branch or call whose target the engine resolved is followed with a click.
+- Cross-references: who references the selection (`xref to`), and for a function the calls
+  it makes as the engine resolved them (`ir build`).
+- Triage: the image's own headers (`profile --exports`): sections, exports with forwarders
+  marked, and the engine's advisories.
+- Bookmarks: bookmarks first, then every other annotated address (`annotate list`).
+  Edit ▸ Toggle Bookmark (Ctrl+D).
+- Types: struct and enum definitions. Each edit sends the whole type, then reads the list
+  back, so what is shown is what the engine stored.
+- Find: text, UTF-16, byte patterns with wildcards, or escaped text (`find`); at most 300
+  matches, and it says when there are more.
+- Console: any engine command in the target's session, without `--file`; ↑ / ↓ history;
+  the engine's own JSON, with Copy.
+
+A click in any panel goes to that address. The function it lies in comes from the
+engine's function list, and only where the list states the function's extent; otherwise
+the address is shown as an address.
+
+Every view shows only what the engine returned; an empty or failed view says so. Still
+open from `docs/CURRENT-UI.md` §12: the linear listing, the control-flow graph, the memory
+scanner, editing (rename, comment, types of variables) with undo, go to and history, and
+the settings.

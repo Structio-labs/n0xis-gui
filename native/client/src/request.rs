@@ -15,6 +15,12 @@ pub mod schema {
     /// An archived `n0x.*` name: the decompiler kept its ported shape.
     pub const DECOMP_PSEUDO: &str = "n0x.decomp.pseudo.v1";
     pub const DECODE: &str = "n0xis.decode.v1";
+    pub const PROFILE: &str = "n0xis.profile.v1";
+    pub const XREF: &str = "n0xis.xref.v1";
+    pub const IR_CFG: &str = "n0xis.ir.cfg.v1";
+    pub const ANNOTATION: &str = "n0xis.annotation.v1";
+    pub const TYPES: &str = "n0xis.types.v1";
+    pub const FIND: &str = "n0xis.find.v1";
 }
 
 /// A request the engine answers with one payload shape.

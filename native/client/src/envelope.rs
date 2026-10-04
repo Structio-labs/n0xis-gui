@@ -18,6 +18,10 @@ pub struct Envelope {
     pub error: Option<EngineError>,
     #[serde(default)]
     pub meta: Meta,
+    /// The answer exactly as the engine wrote it, kept only where it is shown
+    /// as is (the console); typed views read the fields above.
+    #[serde(skip)]
+    pub raw: Option<Value>,
 }
 
 /// The engine's own report of a failure.

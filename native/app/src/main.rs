@@ -5,14 +5,22 @@
 //! `docs/CURRENT-UI.md`; the engine always runs as a separate process.
 
 mod appearance;
+mod bookmarks;
 mod config;
+mod console;
 mod decompiler;
 mod disassembly;
 mod functions;
 mod layout;
 mod menus;
+mod nav;
+mod panel;
 mod project;
+mod search;
+mod triage;
+mod types;
 mod workbench;
+mod xrefs;
 
 use std::path::PathBuf;
 
@@ -20,7 +28,7 @@ use gpui_kit::component::dock::ToggleZoom;
 use gpui_kit::component::{Theme, ThemeMode, TitleBar};
 use gpui_kit::*;
 
-gpui_kit::actions!(n0xis, [Quit, Open, About, ResetLayout, UndoLayout, RedoLayout]);
+gpui_kit::actions!(n0xis, [Quit, Open, About, ResetLayout, UndoLayout, RedoLayout, ToggleBookmark]);
 
 fn main() {
     // `n0xis-ui <binary>` opens it straight away, from a terminal or a file manager.
@@ -40,6 +48,11 @@ fn main() {
             KeyBinding::new("ctrl-+", appearance::ZoomIn, None),
             KeyBinding::new("ctrl--", appearance::ZoomOut, None),
             KeyBinding::new("ctrl-0", appearance::ResetZoom, None),
+            KeyBinding::new("ctrl-d", ToggleBookmark, None),
+            // In the console's command line, ↑ and ↓ walk its history instead
+            // of moving the caret.
+            KeyBinding::new("up", console::HistoryPrevious, Some("Console > Input")),
+            KeyBinding::new("down", console::HistoryNext, Some("Console > Input")),
         ]);
         let theme_problems = appearance::init(cx);
         cx.on_action(|_: &Quit, cx: &mut App| cx.quit());

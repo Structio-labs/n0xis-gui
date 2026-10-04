@@ -10,14 +10,18 @@ use std::sync::Arc;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Editor, EditorState};
 use gpui_kit::base::Selectable as _;
-use gpui_kit::base::dock::{Panel as DockBehavior, PanelEvent};
-use gpui_kit::component::dock::Panel as DockPresentation;
 use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use n0xis_client::{ClientError, DecompStyle, Decompile, Engine, FunctionEntry};
 
+use crate::layout::PanelKind;
+use crate::nav::Location;
+use crate::panel::dock_panel;
+
 enum ViewState {
     Empty,
+    /// The selection is an address no listed function covers.
+    NoFunction(u64),
     Loading,
     Ready { quality: Option<f64> },
     Failed(String),
@@ -55,9 +59,22 @@ impl DecompilerView {
         cx.notify();
     }
 
-    pub fn show(&mut self, function: FunctionEntry, window: &mut Window, cx: &mut Context<Self>) {
-        self.function = Some(function);
-        self.request(window, cx);
+    /// Decompile the function the location lies in. An address no listed
+    /// function covers is said to be one, not decompiled from a guessed start.
+    pub fn show(&mut self, location: &Location, window: &mut Window, cx: &mut Context<Self>) {
+        match &location.function {
+            Some(f) if self.function.as_ref() == Some(f) && !matches!(self.state, ViewState::Failed(_)) => {}
+            Some(f) => {
+                self.function = Some(f.clone());
+                self.request(window, cx);
+            }
+            None => {
+                self.function = None;
+                self._request = None;
+                self.state = ViewState::NoFunction(location.va);
+                cx.notify();
+            }
+        }
     }
 
     fn set_style(&mut self, style: DecompStyle, window: &mut Window, cx: &mut Context<Self>) {
@@ -134,6 +151,11 @@ impl Render for DecompilerView {
         };
         let body = match &self.state {
             ViewState::Empty => message("Select a function to decompile it.".into(), false).into_any_element(),
+            ViewState::NoFunction(va) => message(
+                format!("No listed function covers {}, so there is nothing to decompile here.", crate::nav::hex(*va)),
+                false,
+            )
+            .into_any_element(),
             ViewState::Loading => {
                 let name = self.function.as_ref().map_or(String::new(), |f| format!(" {}", f.name));
                 message(format!("Decompiling{name}…"), false).into_any_element()
@@ -153,26 +175,4 @@ impl Render for DecompilerView {
     }
 }
 
-impl Focusable for DecompilerView {
-    fn focus_handle(&self, _: &App) -> FocusHandle {
-        self.focus_handle.clone()
-    }
-}
-
-impl EventEmitter<PanelEvent> for DecompilerView {}
-
-impl DockBehavior for DecompilerView {
-    fn panel_name(&self) -> &'static str {
-        crate::layout::DECOMPILER_PANEL
-    }
-
-    fn closable(&self, _: &App) -> bool {
-        false
-    }
-}
-
-impl DockPresentation for DecompilerView {
-    fn title(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        "Decompiler"
-    }
-}
+dock_panel!(DecompilerView, PanelKind::Decompiler);

@@ -39,8 +39,15 @@ enum Msg {
     Shutdown,
 }
 
+/// What a job sends: an argument list the client encodes, or a line typed by
+/// the user that the engine reads as it is.
+enum Payload {
+    Args(Vec<String>),
+    Line(String),
+}
+
 struct Job {
-    args: Vec<String>,
+    payload: Payload,
     key: Option<String>,
     reply: oneshot::Sender<Result<Envelope, ClientError>>,
 }
@@ -74,19 +81,25 @@ impl Engine {
 
     /// Send raw arguments; the answer is the untyped envelope.
     pub fn call(&self, args: Vec<String>) -> Pending {
-        self.submit(None, args)
+        self.submit(None, Payload::Args(args))
+    }
+
+    /// Send a line as typed; the engine splits it into arguments by its own
+    /// rule. The answer is the untyped envelope.
+    pub fn call_line(&self, line: String) -> Pending {
+        self.submit(None, Payload::Line(line))
     }
 
     /// Send a typed request.
     pub fn send<R: Request>(&self, request: &R) -> TypedPending<R> {
-        TypedPending { inner: self.submit(None, request.args()), _request: PhantomData }
+        TypedPending { inner: self.submit(None, Payload::Args(request.args())), _request: PhantomData }
     }
 
     /// Send a typed request that replaces any not-yet-started request with the
     /// same key. Each view uses its own key, so when the selection moves faster
     /// than the engine answers, only the latest selection is computed.
     pub fn send_latest<R: Request>(&self, key: &str, request: &R) -> TypedPending<R> {
-        TypedPending { inner: self.submit(Some(key.to_string()), request.args()), _request: PhantomData }
+        TypedPending { inner: self.submit(Some(key.to_string()), Payload::Args(request.args())), _request: PhantomData }
     }
 
     /// Allow the session to start again after [`EngineStatus::GaveUp`].
@@ -94,9 +107,9 @@ impl Engine {
         let _ = self.tx.send(Msg::Restart);
     }
 
-    fn submit(&self, key: Option<String>, args: Vec<String>) -> Pending {
+    fn submit(&self, key: Option<String>, payload: Payload) -> Pending {
         let (reply, rx) = oneshot::channel();
-        if let Err(mpsc::SendError(Msg::Call(job))) = self.tx.send(Msg::Call(Job { args, key, reply })) {
+        if let Err(mpsc::SendError(Msg::Call(job))) = self.tx.send(Msg::Call(Job { payload, key, reply })) {
             let _ = job.reply.send(Err(ClientError::Shutdown));
         }
         Pending(rx)
@@ -269,7 +282,10 @@ fn run(
             }
         }
         let Some(s) = session.as_mut() else { continue };
-        let result = s.call(&job.args);
+        let result = match &job.payload {
+            Payload::Args(args) => s.call(args),
+            Payload::Line(line) => s.call_line(line),
+        };
         if let Err(ClientError::SessionClosed(reason)) = &result {
             // The request that ended the session is answered with that, never
             // re-sent: it may be exactly the input that kills the parser.

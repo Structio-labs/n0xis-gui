@@ -5,25 +5,97 @@
 //! the user's own arrangement is kept between runs.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
+use gpui_kit::base::dock::{PanelId, PanelView};
 use gpui_kit::component::dock::{DockAreaState, DockLayout, panel_handle, register_panel};
 use gpui_kit::*;
 
+use crate::bookmarks::BookmarksView;
+use crate::console::ConsoleView;
 use crate::decompiler::DecompilerView;
 use crate::disassembly::DisassemblyView;
 use crate::functions::FunctionList;
+use crate::search::SearchView;
+use crate::triage::TriageView;
+use crate::types::TypesView;
+use crate::xrefs::XrefsView;
 
-/// Names a saved layout knows the panels by. Once chosen, never change them:
-/// a renamed panel is a panel the saved layout no longer finds.
-pub const FUNCTIONS_PANEL: &str = "functions";
-pub const DECOMPILER_PANEL: &str = "decompiler";
-pub const DISASSEMBLY_PANEL: &str = "disassembly";
+/// Every panel the dock can hold. The one place a panel's saved name and title
+/// are written down; menus, the registry and the default layout all read them
+/// from here. None is special: any of them can be closed and opened again,
+/// and its view, with what it holds, outlives its tab (see [`Views`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PanelKind {
+    Functions,
+    Decompiler,
+    Disassembly,
+    Xrefs,
+    Triage,
+    Bookmarks,
+    Types,
+    Find,
+    Console,
+}
+
+impl PanelKind {
+    pub const ALL: [PanelKind; 9] = [
+        Self::Functions,
+        Self::Decompiler,
+        Self::Disassembly,
+        Self::Xrefs,
+        Self::Triage,
+        Self::Bookmarks,
+        Self::Types,
+        Self::Find,
+        Self::Console,
+    ];
+
+    /// The name a saved layout knows the panel by. Once chosen, never change
+    /// it: a renamed panel is one the saved layout no longer finds.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Functions => "functions",
+            Self::Decompiler => "decompiler",
+            Self::Disassembly => "disassembly",
+            Self::Xrefs => "xrefs",
+            Self::Triage => "triage",
+            Self::Bookmarks => "bookmarks",
+            Self::Types => "types",
+            Self::Find => "find",
+            Self::Console => "console",
+        }
+    }
+
+    pub const fn title(self) -> &'static str {
+        match self {
+            Self::Functions => "Functions",
+            Self::Decompiler => "Decompiler",
+            Self::Disassembly => "Disassembly",
+            Self::Xrefs => "Cross-references",
+            Self::Triage => "Triage",
+            Self::Bookmarks => "Bookmarks",
+            Self::Types => "Types",
+            Self::Find => "Find",
+            Self::Console => "Console",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|k| k.name() == name)
+    }
+}
+
+/// Show a panel: select its tab where the dock holds it, add it where it does not.
+#[derive(Clone, PartialEq, serde::Deserialize, Action)]
+#[action(namespace = n0xis, no_json)]
+pub struct ShowPanel(pub SharedString);
 
 /// The dock area's id, and the version of the default arrangement. Bump the
 /// version when the default changes in a way an old saved layout should not
 /// survive; a saved layout of another version is set aside, and the user told.
 pub const AREA_ID: &str = "n0xis-main";
-pub const LAYOUT_VERSION: usize = 1;
+pub const LAYOUT_VERSION: usize = 2;
 
 /// The one instance of each view. A restored layout names panels; the builders
 /// registered below return these instances rather than new ones, so what a
@@ -33,26 +105,75 @@ pub struct Views {
     pub functions: Entity<FunctionList>,
     pub decompiler: Entity<DecompilerView>,
     pub disassembly: Entity<DisassemblyView>,
+    pub xrefs: Entity<XrefsView>,
+    pub triage: Entity<TriageView>,
+    pub bookmarks: Entity<BookmarksView>,
+    pub types: Entity<TypesView>,
+    pub find: Entity<SearchView>,
+    pub console: Entity<ConsoleView>,
 }
 
 impl Global for Views {}
 
+impl Views {
+    pub fn handle(&self, kind: PanelKind) -> Arc<dyn PanelView> {
+        match kind {
+            PanelKind::Functions => panel_handle(self.functions.clone()),
+            PanelKind::Decompiler => panel_handle(self.decompiler.clone()),
+            PanelKind::Disassembly => panel_handle(self.disassembly.clone()),
+            PanelKind::Xrefs => panel_handle(self.xrefs.clone()),
+            PanelKind::Triage => panel_handle(self.triage.clone()),
+            PanelKind::Bookmarks => panel_handle(self.bookmarks.clone()),
+            PanelKind::Types => panel_handle(self.types.clone()),
+            PanelKind::Find => panel_handle(self.find.clone()),
+            PanelKind::Console => panel_handle(self.console.clone()),
+        }
+    }
+
+    /// The id the dock knows a panel by.
+    pub fn panel_id(&self, kind: PanelKind) -> PanelId {
+        let entity = match kind {
+            PanelKind::Functions => self.functions.entity_id(),
+            PanelKind::Decompiler => self.decompiler.entity_id(),
+            PanelKind::Disassembly => self.disassembly.entity_id(),
+            PanelKind::Xrefs => self.xrefs.entity_id(),
+            PanelKind::Triage => self.triage.entity_id(),
+            PanelKind::Bookmarks => self.bookmarks.entity_id(),
+            PanelKind::Types => self.types.entity_id(),
+            PanelKind::Find => self.find.entity_id(),
+            PanelKind::Console => self.console.entity_id(),
+        };
+        PanelId::from(entity)
+    }
+}
+
 /// Tell the dock how to rebuild each panel a saved layout names. The builders
 /// read [`Views`], which the workbench sets before any layout is loaded.
 pub fn register_panels(cx: &mut App) {
-    register_panel(cx, FUNCTIONS_PANEL, |_, _, cx| panel_handle(cx.global::<Views>().functions.clone()));
-    register_panel(cx, DECOMPILER_PANEL, |_, _, cx| panel_handle(cx.global::<Views>().decompiler.clone()));
-    register_panel(cx, DISASSEMBLY_PANEL, |_, _, cx| panel_handle(cx.global::<Views>().disassembly.clone()));
+    for kind in PanelKind::ALL {
+        register_panel(cx, kind.name(), move |_, _, cx| cx.global::<Views>().handle(kind));
+    }
 }
 
-/// Functions on the left; the decompiler above the disassembly on the right.
+fn tabs(views: &Views, kinds: &[PanelKind], cx: &App) -> DockLayout {
+    kinds.iter().fold(DockLayout::tabs(), |tabs, &kind| tabs.panel_view(views.handle(kind), cx))
+}
+
+/// Functions on the left; the code views in the middle over the disassembly
+/// and the console; references, bookmarks and search on the right.
 pub fn default_layout(views: &Views, cx: &App) -> DockLayout {
+    use PanelKind::*;
     DockLayout::h_split()
-        .child(DockLayout::tabs().panel_view(panel_handle(views.functions.clone()), cx), Some(px(340.)))
+        .child(tabs(views, &[Functions], cx), Some(px(300.)))
         .child(
             DockLayout::v_split()
-                .child(DockLayout::tabs().panel_view(panel_handle(views.decompiler.clone()), cx), None)
-                .child(DockLayout::tabs().panel_view(panel_handle(views.disassembly.clone()), cx), Some(px(280.))),
+                .child(
+                    DockLayout::h_split()
+                        .child(tabs(views, &[Decompiler], cx), None)
+                        .child(tabs(views, &[Xrefs, Bookmarks, Find], cx), Some(px(380.))),
+                    None,
+                )
+                .child(tabs(views, &[Disassembly, Console, Triage, Types], cx), Some(px(280.))),
             None,
         )
 }
@@ -166,7 +287,7 @@ impl History {
 #[cfg(test)]
 mod tests {
     // Not `super::*`: that would bring GPUI's `test` attribute over the built-in one.
-    use super::{History, LAYOUT_VERSION, SavedLayout, read_saved_from};
+    use super::{History, LAYOUT_VERSION, PanelKind, SavedLayout, read_saved_from};
     use gpui_kit::base::dock::{DockAreaState, PanelInfo, PanelState};
 
     /// A layout built from the dock's own state types; `tab` tells them apart.
@@ -195,6 +316,20 @@ mod tests {
         let err = read_saved_from(Some("{ not json")).unwrap_err();
         assert!(matches!(err, SavedLayout::Unreadable(_)), "{err:?}");
         assert_eq!(read_saved_from(None).unwrap_err().explain(), None, "no file is not worth a message");
+    }
+
+    #[test]
+    fn every_panel_has_its_own_saved_name_and_the_first_three_keep_theirs() {
+        let names: Vec<&str> = PanelKind::ALL.iter().map(|k| k.name()).collect();
+        let mut unique = names.clone();
+        unique.sort_unstable();
+        unique.dedup();
+        assert_eq!(unique.len(), names.len(), "{names:?}");
+        // Layouts saved before the other panels existed name these three.
+        assert_eq!(&names[..3], ["functions", "decompiler", "disassembly"]);
+        for kind in PanelKind::ALL {
+            assert_eq!(PanelKind::from_name(kind.name()), Some(kind));
+        }
     }
 
     #[test]

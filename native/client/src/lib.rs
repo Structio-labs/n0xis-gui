@@ -10,13 +10,24 @@
 //! dependency, so every part of it is testable without a window.
 
 mod envelope;
+mod find;
 mod locate;
+mod notes;
+mod profile;
+mod refs;
 mod request;
 mod session;
 mod worker;
 
 pub use envelope::{EngineError, Envelope, Meta};
+pub use find::{Find, FindMatch, FindQuery, FindResult};
 pub use locate::{ENGINE_ENV, EngineCommand};
+pub use notes::{
+    AnnotationRecord, Annotations, DefineEnum, DefineStruct, EnumDef, EnumMember, ListAnnotations, ListTypes,
+    RemoveType, SetBookmark, StructDef, StructField, TypeLibrary, Written,
+};
+pub use profile::{Advisory, EngineHint, Export, FoldedExports, ImageProfile, Profile, ProfileReport, Section};
+pub use refs::{Block, BuildCfg, CallSite, Cfg, CfgInstruction, Edge, Xref, Xrefs, XrefsTo};
 pub use request::{
     DecompStyle, Decompile, Decompiled, Disassemble, Disassembly, DiscoverFunctions, FunctionEntry, FunctionsPage,
     Instruction, Request, schema,

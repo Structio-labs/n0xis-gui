@@ -8,20 +8,28 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
+use gpui_kit::base::dock::DockPlacement;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::status_bar::StatusBar;
 use gpui_kit::component::dock::{DockArea, DockAreaState, DockEvent, DockSkin};
 use gpui_kit::component::menu::AppMenuBar;
 use gpui_kit::component::{ActiveTheme as _, IconName, TitleBar, WindowExt as _, h_flex, v_flex};
 use gpui_kit::*;
-use n0xis_client::{Engine, EngineCommand, EngineStatus, FunctionEntry};
+use n0xis_client::{Engine, EngineCommand, EngineStatus, SetBookmark};
 
+use crate::appearance::{self, ResetZoom, SelectTheme, ZoomIn, ZoomOut};
+use crate::bookmarks::BookmarksView;
+use crate::console::ConsoleView;
 use crate::decompiler::DecompilerView;
 use crate::disassembly::DisassemblyView;
 use crate::functions::{FunctionList, FunctionSelected};
-use crate::appearance::{self, ResetZoom, SelectTheme, ZoomIn, ZoomOut};
-use crate::layout::{self, History, Views};
-use crate::{About, Open, RedoLayout, ResetLayout, UndoLayout, menus, project};
+use crate::layout::{self, History, PanelKind, ShowPanel, Views};
+use crate::nav::{Location, Navigate, hex};
+use crate::search::SearchView;
+use crate::triage::TriageView;
+use crate::types::TypesView;
+use crate::xrefs::XrefsView;
+use crate::{About, Open, RedoLayout, ResetLayout, ToggleBookmark, UndoLayout, menus, project};
 
 /// How often the status bar re-reads the engine's state.
 const STATUS_POLL: Duration = Duration::from_millis(300);
@@ -42,10 +50,9 @@ pub struct Workbench {
     /// Why the last attempt to open a target failed, shown until the next one.
     open_error: Option<String>,
     engine_status: Option<EngineStatus>,
-    selected: Option<FunctionEntry>,
-    functions: Entity<FunctionList>,
-    decompiler: Entity<DecompilerView>,
-    disassembly: Entity<DisassemblyView>,
+    /// The one selection every view follows.
+    location: Option<Location>,
+    views: Views,
     menu_bar: Entity<AppMenuBar>,
     focus_handle: FocusHandle,
     dock_area: Entity<DockArea>,
@@ -66,10 +73,17 @@ pub struct Workbench {
 
 impl Workbench {
     pub fn new(target: Option<PathBuf>, theme_problems: Vec<String>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let functions = cx.new(|cx| FunctionList::new(window, cx));
-        let decompiler = cx.new(|cx| DecompilerView::new(window, cx));
-        let disassembly = cx.new(DisassemblyView::new);
-        let views = Views { functions: functions.clone(), decompiler: decompiler.clone(), disassembly: disassembly.clone() };
+        let views = Views {
+            functions: cx.new(|cx| FunctionList::new(window, cx)),
+            decompiler: cx.new(|cx| DecompilerView::new(window, cx)),
+            disassembly: cx.new(DisassemblyView::new),
+            xrefs: cx.new(XrefsView::new),
+            triage: cx.new(|cx| TriageView::new(window, cx)),
+            bookmarks: cx.new(BookmarksView::new),
+            types: cx.new(|cx| TypesView::new(window, cx)),
+            find: cx.new(|cx| SearchView::new(window, cx)),
+            console: cx.new(|cx| ConsoleView::new(window, cx)),
+        };
         cx.set_global(views.clone());
         let (dock_area, dock_skin) = DockSkin::dock_area(layout::AREA_ID, Some(layout::LAYOUT_VERSION), window, cx);
         let restore_note = match layout::read_saved() {
@@ -93,12 +107,18 @@ impl Workbench {
                 this.layout_changed(window, cx);
             }
         });
-        let selection = cx.subscribe_in(&functions, window, |this, _, FunctionSelected(function), window, cx| {
-            this.selected = Some(function.clone());
-            this.decompiler.update(cx, |view, cx| view.show(function.clone(), window, cx));
-            this.disassembly.update(cx, |view, cx| view.show(function.clone(), cx));
-            cx.notify();
+        let selection = cx.subscribe_in(&views.functions, window, |this, _, FunctionSelected(function), window, cx| {
+            let Some(va) = crate::nav::parse_va(&function.va) else { return };
+            this.select(Location { va, function: Some(function.clone()) }, window, cx);
         });
+        // Every view that can send the user somewhere says so the same way.
+        let mut navigation = vec![
+            cx.subscribe_in(&views.disassembly, window, Self::on_navigate),
+            cx.subscribe_in(&views.xrefs, window, Self::on_navigate),
+            cx.subscribe_in(&views.triage, window, Self::on_navigate),
+            cx.subscribe_in(&views.bookmarks, window, Self::on_navigate),
+            cx.subscribe_in(&views.find, window, Self::on_navigate),
+        ];
         let status_poll = cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor().timer(STATUS_POLL).await;
@@ -143,10 +163,8 @@ impl Workbench {
             target: None,
             open_error: None,
             engine_status: None,
-            selected: None,
-            functions,
-            decompiler,
-            disassembly,
+            location: None,
+            views,
             menu_bar: menus::init(cx),
             focus_handle: cx.focus_handle(),
             dock_area,
@@ -157,7 +175,10 @@ impl Workbench {
             _layout_settle: None,
             _theme_poll: theme_poll,
             _status_poll: status_poll,
-            _subscriptions: vec![selection, layout_changes],
+            _subscriptions: {
+                navigation.extend([selection, layout_changes]);
+                navigation
+            },
         };
         // The first entry of the layout history is the layout as first laid
         // out, taken once it has settled.
@@ -201,13 +222,82 @@ impl Workbench {
         let engine = Arc::new(Engine::start(command, path.clone(), project));
         self.target = Some(Target { path: path.clone(), engine: Arc::clone(&engine), engine_program });
         self.engine_status = Some(engine.status());
-        self.selected = None;
-        self.decompiler.update(cx, |view, cx| view.set_engine(Some(Arc::clone(&engine)), cx));
-        self.disassembly.update(cx, |view, cx| view.set_engine(Some(Arc::clone(&engine)), cx));
-        self.functions.update(cx, |list, cx| list.load(engine, cx));
+        self.location = None;
+        let v = &self.views;
+        let e = || Some(Arc::clone(&engine));
+        v.decompiler.update(cx, |view, cx| view.set_engine(e(), cx));
+        v.disassembly.update(cx, |view, cx| view.set_engine(e(), cx));
+        v.xrefs.update(cx, |view, cx| view.set_engine(e(), cx));
+        v.triage.update(cx, |view, cx| view.set_engine(e(), cx));
+        v.bookmarks.update(cx, |view, cx| view.set_engine(e(), cx));
+        v.types.update(cx, |view, cx| view.set_engine(e(), cx));
+        v.find.update(cx, |view, cx| view.set_engine(e(), cx));
+        v.console.update(cx, |view, cx| view.set_engine(e(), cx));
+        v.functions.update(cx, |list, cx| list.load(engine, cx));
         let name = path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
         window.set_window_title(&format!("{name} — N0xis"));
         cx.notify();
+    }
+
+    /// Make `location` the selection, and show it in every view.
+    fn select(&mut self, location: Location, window: &mut Window, cx: &mut Context<Self>) {
+        let v = self.views.clone();
+        v.functions.update(cx, |list, cx| list.reveal(location.va, cx));
+        v.decompiler.update(cx, |view, cx| view.show(&location, window, cx));
+        v.disassembly.update(cx, |view, cx| view.show(&location, cx));
+        v.xrefs.update(cx, |view, cx| view.show(&location, cx));
+        self.location = Some(location);
+        cx.notify();
+    }
+
+    /// Go to an address some view asked for: the function it lies in, when the
+    /// engine's list says which one.
+    fn go_to(&mut self, va: u64, window: &mut Window, cx: &mut Context<Self>) {
+        let function = self.views.functions.read(cx).index().function_at(va).cloned();
+        self.select(Location { va, function }, window, cx);
+    }
+
+    fn on_navigate<V>(&mut self, _: &Entity<V>, Navigate(va): &Navigate, window: &mut Window, cx: &mut Context<Self>) {
+        self.go_to(*va, window, cx);
+    }
+
+    fn on_show_panel(&mut self, action: &ShowPanel, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(kind) = PanelKind::from_name(&action.0) else { return };
+        let (id, handle) = (self.views.panel_id(kind), self.views.handle(kind));
+        self.dock_area.update(cx, |area, cx| {
+            if area.panel(id).is_some() {
+                area.select_panel(id, window, cx);
+            } else {
+                area.add_panel_view(handle, DockPlacement::Center, None, window, cx);
+            }
+        });
+    }
+
+    fn on_toggle_bookmark(&mut self, _: &ToggleBookmark, window: &mut Window, cx: &mut Context<Self>) {
+        let (Some(target), Some(location)) = (self.target.as_ref(), self.location.clone()) else {
+            window.push_notification("Select a function or an address to bookmark.", cx);
+            return;
+        };
+        let Some(marked) = self.views.bookmarks.read(cx).is_bookmarked(location.va) else {
+            window.push_notification("Bookmarks are still being read; try again in a moment.", cx);
+            return;
+        };
+        let pending = target.engine.send(&SetBookmark { addr: hex(location.va), on: !marked });
+        cx.spawn_in(window, async move |this, cx| {
+            let result = pending.await;
+            this.update_in(cx, |wb, window, cx| {
+                // Say what the engine now holds, not what was asked for.
+                let text = match result {
+                    Ok(record) if record.bookmark => format!("Bookmarked {}.", location.label()),
+                    Ok(_) => format!("Bookmark removed from {}.", location.label()),
+                    Err(e) => format!("The bookmark was not changed: {e}"),
+                };
+                window.push_notification(SharedString::from(text), cx);
+                wb.views.bookmarks.update(cx, |view, cx| view.refresh(cx));
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn prompt_open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -270,7 +360,7 @@ impl Workbench {
     }
 
     fn on_reset_layout(&mut self, _: &ResetLayout, window: &mut Window, cx: &mut Context<Self>) {
-        let views = cx.global::<Views>().clone();
+        let views = self.views.clone();
         self.dock_area.update(cx, |area, cx| area.set_center(layout::default_layout(&views, cx), window, cx));
     }
 
@@ -363,7 +453,7 @@ impl Workbench {
             Some(EngineStatus::GaveUp { reason }) => (format!("engine stopped: {}", first_line(reason)), theme.danger),
             Some(EngineStatus::Stopped) => ("engine stopped".to_string(), theme.muted_foreground),
         };
-        let selection = self.selected.as_ref().map(|f| format!("{} · {}", f.name, f.va)).unwrap_or_default();
+        let selection = self.location.as_ref().map(|l| format!("{} · {}", l.label(), hex(l.va))).unwrap_or_default();
         StatusBar::new()
             .left(div().text_xs().text_color(color).truncate().child(text))
             .right(div().text_xs().text_color(theme.muted_foreground).child(selection))
@@ -419,6 +509,8 @@ impl Render for Workbench {
             .on_action(cx.listener(Self::on_zoom_in))
             .on_action(cx.listener(Self::on_zoom_out))
             .on_action(cx.listener(Self::on_reset_zoom))
+            .on_action(cx.listener(Self::on_show_panel))
+            .on_action(cx.listener(Self::on_toggle_bookmark))
             .bg(background)
             .text_color(foreground)
             .child(self.render_title_bar(cx))

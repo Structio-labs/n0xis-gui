@@ -9,7 +9,8 @@ use gpui_kit::component::{GlobalState, input};
 use gpui_kit::{App, Entity, Menu, MenuItem};
 
 use crate::appearance::{self, ResetZoom, SelectTheme, ZoomIn, ZoomOut};
-use crate::{About, Open, Quit, RedoLayout, ResetLayout, UndoLayout};
+use crate::layout::{PanelKind, ShowPanel};
+use crate::{About, Open, Quit, RedoLayout, ResetLayout, ToggleBookmark, UndoLayout};
 
 /// Create the in-window menu bar (Linux and Windows show it in the title bar)
 /// and register the menus with the platform (the macOS menu bar).
@@ -36,6 +37,10 @@ fn build(cx: &App) -> Vec<Menu> {
         .iter()
         .map(|t| MenuItem::action(t.name.clone(), SelectTheme(t.name.clone())).checked(t.name == current))
         .collect();
+    let panels = PanelKind::ALL
+        .into_iter()
+        .map(|kind| MenuItem::action(kind.title(), ShowPanel(kind.name().into())))
+        .collect();
     vec![
         Menu {
             name: "File".into(),
@@ -44,12 +49,18 @@ fn build(cx: &App) -> Vec<Menu> {
         },
         Menu {
             name: "Edit".into(),
-            items: vec![MenuItem::action("Copy", input::Copy), MenuItem::action("Select All", input::SelectAll)],
+            items: vec![
+                MenuItem::action("Copy", input::Copy),
+                MenuItem::action("Select All", input::SelectAll),
+                MenuItem::separator(),
+                MenuItem::action("Toggle Bookmark", ToggleBookmark),
+            ],
             disabled: false,
         },
         Menu {
             name: "View".into(),
             items: vec![
+                MenuItem::Submenu(Menu { name: "Panels".into(), items: panels, disabled: false }),
                 MenuItem::Submenu(Menu { name: "Theme".into(), items: themes, disabled: false }),
                 MenuItem::separator(),
                 MenuItem::action("Zoom In", ZoomIn),
