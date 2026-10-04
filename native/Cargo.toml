@@ -1,0 +1,29 @@
+# The native N0xis GUI (GPUI). Lives beside the Tauri build until it reaches
+# parity with docs/CURRENT-UI.md; the engine stays a separate process.
+[workspace]
+resolver = "3"
+members = ["client", "app"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "PolyForm-Noncommercial-1.0.0"
+publish = false
+
+[workspace.dependencies]
+n0xis-client = { path = "client" }
+# Pinned exactly: GPUI moves weekly, and gpui-kit pins its matching GPUI snapshot.
+gpui-kit = { version = "=0.7.0", features = ["tree-sitter-c"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+futures-channel = "0.3"
+
+# GPUI is slow when unoptimised: optimise dependencies once, keep our own crates
+# quick to rebuild.
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+strip = true

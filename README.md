@@ -69,6 +69,7 @@ cargo tauri dev        # from repo root, or: cd src-tauri && cargo run
 | `ui/bridge.js` | the thin-client seam: Tauri detection + engine calls + graceful fallback |
 | `src-tauri/` | the Rust backend: window + engine bridge commands |
 | `src-tauri/src/lib.rs` | `n0x_run`, `engine_info`, `pick_file` |
+| `native/` | the next front end, on GPUI, growing toward parity with this one: see [`native/README.md`](native/README.md) and the inventory it works from, [`docs/CURRENT-UI.md`](docs/CURRENT-UI.md) |
 
 ## Credits
 
