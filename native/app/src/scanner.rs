@@ -16,6 +16,7 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
+use gpui_kit::component::menu::ContextMenuExt as _;
 use gpui_kit::*;
 use n0xis_client::{
     ClientError, EngineCommand, ListProcesses, MemoryMap, Narrow, ProcessInfo, SCAN_TYPES, ScanFilter, ScanResult, ScanValue,
@@ -227,7 +228,9 @@ impl ScannerView {
         let Load::Ready(r) = &self.result else { return div().into_any_element() };
         let Some(m) = r.matches.get(row) else { return div().h(ROW_HEIGHT).into_any_element() };
         let theme = cx.theme();
-        h_flex()
+        let (address, value) = (m.addr.clone(), m.value.to_string());
+        let line = h_flex()
+            .id(("scan-match", row))
             .w_full()
             .h(ROW_HEIGHT)
             .px_2()
@@ -235,7 +238,12 @@ impl ScannerView {
             .font_family(theme.mono_font_family.clone())
             .text_xs()
             .child(div().w(px(160.)).child(m.addr.clone()))
-            .child(div().text_color(theme.primary).child(m.value.to_string()))
+            .child(div().text_color(theme.primary).child(m.value.to_string()));
+        crate::context::row_with_menu(("scan-match-menu", row), line)
+            .context_menu(move |menu, _, _| {
+                let menu = crate::context::copy(menu.label(address.clone()), "Copy Address", address.clone());
+                crate::context::copy(menu, "Copy Value", value.clone())
+            })
             .into_any_element()
     }
 

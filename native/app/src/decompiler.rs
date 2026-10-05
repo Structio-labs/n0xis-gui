@@ -8,14 +8,18 @@
 use std::sync::Arc;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Editor, EditorState};
+use gpui_kit::component::input::{self, Editor, EditorState};
+use gpui_kit::component::native_menu::NativeMenu;
+use gpui_kit::component::Icon;
 use gpui_kit::base::Selectable as _;
 use gpui_kit::component::{ActiveTheme as _, Sizable as _, WindowExt as _, h_flex, v_flex};
 use gpui_kit::*;
 use n0xis_client::{ClientError, DecompStyle, Decompile, Engine, FunctionEntry, Variable};
 
+use crate::assets::AppIcon;
+use crate::context::{EditAt, EditKind, ShowAt};
 use crate::layout::PanelKind;
-use crate::nav::Location;
+use crate::nav::{Location, parse_va};
 use crate::panel::dock_panel;
 use crate::{Rename, SetType};
 
@@ -66,13 +70,23 @@ pub struct DecompilerView {
     variables: Option<Vec<Variable>>,
     style: DecompStyle,
     state: ViewState,
+    /// The variable under the caret, kept as the caret moves. The right-click
+    /// menu is built while the editor is busy and cannot be read, so it reads this.
+    at_caret: Option<Variable>,
     focus_handle: FocusHandle,
     _request: Option<Task<()>>,
+    _caret: Subscription,
 }
 
 impl DecompilerView {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let editor = cx.new(|cx| EditorState::new(window, cx).language("c").line_number(true).soft_wrap(false));
+        let caret = cx.observe(&editor, |view, _, cx| {
+            view.at_caret = match view.pointed(cx) {
+                Pointed::Variable(variable) => Some(variable),
+                _ => None,
+            };
+        });
         Self {
             engine: None,
             editor,
@@ -80,8 +94,10 @@ impl DecompilerView {
             variables: None,
             style: DecompStyle::default(),
             state: ViewState::Empty,
+            at_caret: None,
             focus_handle: cx.focus_handle(),
             _request: None,
+            _caret: caret,
         }
     }
 
@@ -245,6 +261,18 @@ impl DecompilerView {
             .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).truncate().child(title))
             .child(div().flex_1())
             .child(div().text_xs().text_color(theme.muted_foreground).child(note))
+            .children(self.function.as_ref().and_then(|f| parse_va(&f.va)).map(|va| {
+                // The Tauri build's "CFG ↗": the same function as a graph.
+                Button::new("show-graph")
+                    .icon(Icon::new(AppIcon::Graph))
+                    .label("Graph")
+                    .xsmall()
+                    .ghost()
+                    .tooltip("Show this function's control-flow graph")
+                    .on_click(move |_, window, cx| {
+                        window.dispatch_action(Box::new(ShowAt { va, panel: Some(PanelKind::Graph.name().into()) }), cx);
+                    })
+            }))
             .children(DecompStyle::ALL.into_iter().map(|style| {
                 Button::new(SharedString::from(format!("style-{}", style.as_str())))
                     .label(style.as_str())
@@ -283,6 +311,10 @@ impl Render for DecompilerView {
                 .readonly(true)
                 .bordered(false)
                 .size_full()
+                .context_menu({
+                    let view = cx.entity().downgrade();
+                    move |menu, _, cx| code_menu(menu, &view, cx)
+                })
                 .into_any_element(),
         };
         v_flex()
@@ -297,6 +329,44 @@ impl Render for DecompilerView {
 }
 
 impl EventEmitter<EditVariable> for DecompilerView {}
+
+/// The code's menu. A right click moves the caret, so a variable under it is
+/// offered by name; the rest is about the function shown.
+fn code_menu(menu: NativeMenu, view: &WeakEntity<DecompilerView>, cx: &App) -> NativeMenu {
+    let copying = |menu: NativeMenu| menu.menu_with_icon("Copy", Icon::new(AppIcon::Copy), Box::new(input::Copy)).menu("Select All", Box::new(input::SelectAll));
+    let Some(view) = view.upgrade() else { return copying(menu) };
+    let view = view.read(cx);
+    let mut menu = menu;
+    if let Some(variable) = view.at_caret.clone() {
+        menu = menu.menu_with_icon(format!("Rename Variable {}…", variable.name), Icon::new(AppIcon::Rename), Box::new(Rename));
+        if variable.kind.takes_a_type() {
+            menu = menu.menu_with_icon(format!("Set Type of {}…", variable.name), Icon::new(AppIcon::Type), Box::new(SetType));
+        }
+        menu = menu.separator();
+    }
+    let start = view.function.as_ref().and_then(|f| parse_va(&f.va).map(|va| (f.name.clone(), va)));
+    let Some((name, va)) = start else { return copying(menu) };
+    let edit = |label: String, icon: AppIcon, edit: EditKind| (label, icon, Box::new(EditAt { va, edit }) as Box<dyn Action>);
+    for (label, icon, action) in [
+        edit(format!("Rename Function {name}…"), AppIcon::Rename, EditKind::Rename),
+        edit("Set Return Type…".into(), AppIcon::Type, EditKind::ReturnType),
+        edit("Comment…".into(), AppIcon::Comment, EditKind::Comment),
+        edit("Toggle Bookmark".into(), AppIcon::Bookmark, EditKind::Bookmark),
+    ] {
+        menu = menu.menu_with_icon(label, Icon::new(icon), action);
+    }
+    menu = copying(menu.separator()).separator();
+    for (label, panel) in [
+        ("Show in Graph", PanelKind::Graph),
+        ("Show in Disassembly", PanelKind::Disassembly),
+        ("Show in Linear Listing", PanelKind::Linear),
+        ("Show Bytes in Hex", PanelKind::Hex),
+        ("Show References", PanelKind::Xrefs),
+    ] {
+        menu = menu.menu_with_icon(label, Icon::new(panel.icon()), Box::new(ShowAt { va, panel: Some(panel.name().into()) }));
+    }
+    menu
+}
 
 dock_panel!(DecompilerView, PanelKind::Decompiler);
 

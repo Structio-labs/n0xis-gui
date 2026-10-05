@@ -16,11 +16,12 @@ use gpui_kit::component::dock::ToggleZoom;
 use gpui_kit::*;
 use serde::{Deserialize, Serialize};
 
-use crate::appearance::{ResetZoom, ZoomIn, ZoomOut};
+use crate::appearance::{ResetZoom, ToggleRoundedEdges, ZoomIn, ZoomOut};
 use crate::config;
 use crate::{
-    Comment, GoBack, GoForward, GoTo, Open, OpenSettings, Quit, RedoEdit, RedoLayout, Rename, ToggleBookmark, UndoEdit,
-    UndoLayout,
+    About, ClearAnnotations, CloseTarget, CommandPalette, Comment, FindInImage, GoBack, GoForward, GoTo, KeyboardShortcuts,
+    Open, OpenSettings, Quit, RecognizeConstants, RedoEdit, RedoLayout, Rename, ResetLayout, RunAnalysis, ScanProcess,
+    SetReturnType, SetType, ToggleBookmark, UndoEdit, UndoLayout,
 };
 
 const FILE_NAME: &str = "keybindings.json";
@@ -38,6 +39,8 @@ pub struct Command {
     /// The menu it lives in.
     pub group: &'static str,
     pub defaults: &'static [&'static str],
+    /// The action the command runs, for the command palette.
+    pub action: fn() -> Box<dyn Action>,
     /// Every context the command is bound in. `None` is everywhere.
     contexts: &'static [Option<&'static str>],
     /// The command's bindings for a keystroke, in the given contexts.
@@ -54,6 +57,7 @@ macro_rules! command {
             label: $label,
             group: $group,
             defaults: &[$($key),*],
+            action: || Box::new($action),
             contexts: &[$($ctx),*],
             bind: |key, context| KeyBinding::new(key, $action, context),
         }
@@ -62,23 +66,47 @@ macro_rules! command {
 
 pub static COMMANDS: &[Command] = &[
     command!("open", "Open…", "File", ["ctrl-o"], Open),
+    command!("close_target", "Close target", "File", [], CloseTarget),
+    command!("scan_process", "Scan a running process…", "File", [], ScanProcess),
     command!("settings", "Settings…", "File", ["ctrl-,"], OpenSettings),
     command!("quit", "Quit", "File", ["ctrl-q"], Quit),
     command!("undo_edit", "Undo edit", "Edit", ["ctrl-z"], UndoEdit, [None, Some(DECOMPILER_INPUT)]),
     command!("redo_edit", "Redo edit", "Edit", ["ctrl-y"], RedoEdit, [None, Some(DECOMPILER_INPUT)]),
     command!("rename", "Rename…", "Edit", ["f2"], Rename),
     command!("comment", "Comment…", "Edit", ["ctrl-/"], Comment),
+    command!("set_type", "Set type…", "Edit", [], SetType),
+    command!("set_return_type", "Set return type…", "Edit", [], SetReturnType),
     command!("toggle_bookmark", "Toggle bookmark", "Edit", ["ctrl-d"], ToggleBookmark),
+    command!("clear_annotations", "Clear annotations here", "Edit", [], ClearAnnotations),
     command!("go_to", "Go to address or name…", "Go", ["ctrl-g"], GoTo),
+    command!("find", "Find in image…", "Go", ["ctrl-f"], FindInImage),
     command!("go_back", "Back", "Go", ["alt-left"], GoBack),
     command!("go_forward", "Forward", "Go", ["alt-right"], GoForward),
+    command!("run_analysis", "Run analysis", "Analyze", [], RunAnalysis),
+    command!("recognize_constants", "Identify constants in this function", "Analyze", [], RecognizeConstants),
+    command!("palette", "Command palette", "View", ["ctrl-shift-p", "ctrl-p", "f1"], CommandPalette),
     command!("zoom_in", "Zoom in", "View", ["ctrl-=", "ctrl-+"], ZoomIn),
     command!("zoom_out", "Zoom out", "View", ["ctrl--"], ZoomOut),
     command!("reset_zoom", "Reset zoom", "View", ["ctrl-0"], ResetZoom),
+    command!("rounded_edges", "Graph: round the edges' corners", "View", [], ToggleRoundedEdges),
     command!("undo_layout", "Undo layout change", "Window", ["ctrl-shift-z"], UndoLayout),
     command!("redo_layout", "Redo layout change", "Window", ["ctrl-shift-y"], RedoLayout),
+    command!("reset_layout", "Reset layout", "Window", [], ResetLayout),
     command!("zoom_panel", "Zoom the panel", "Window", ["shift-escape"], ToggleZoom),
+    command!("keyboard_shortcuts", "Keyboard shortcuts…", "Help", [], KeyboardShortcuts),
+    command!("about", "About N0xis", "Help", [], About),
 ];
+
+/// The menus the commands are kept under, in the order they first appear.
+pub fn groups() -> Vec<&'static str> {
+    let mut groups: Vec<&'static str> = Vec::new();
+    for command in COMMANDS {
+        if !groups.contains(&command.group) {
+            groups.push(command.group);
+        }
+    }
+    groups
+}
 
 /// The user's changes to the defaults, by command id. An empty list unbinds.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]

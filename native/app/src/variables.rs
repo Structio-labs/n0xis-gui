@@ -9,9 +9,12 @@
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
+use gpui_kit::component::menu::{ContextMenuExt as _, PopupMenuItem};
+use gpui_kit::component::Icon;
 use gpui_kit::*;
 use n0xis_client::{Variable, VariableKind};
 
+use crate::assets::AppIcon;
 use crate::decompiler::{DecompilerView, EditVariable, VariableIntent};
 use crate::layout::PanelKind;
 use crate::panel::{dock_panel, header, message, mono};
@@ -49,7 +52,8 @@ impl VariablesView {
         };
         let renamed = variable.name != variable.key;
         let typed = variable.kind.takes_a_type();
-        let (rename, set_type) = (variable.clone(), variable.clone());
+        let (rename, set_type, pointed) = (variable.clone(), variable.clone(), variable.clone());
+        let view = cx.entity().downgrade();
         h_flex()
             .id(("variable", ix))
             .w_full()
@@ -75,6 +79,21 @@ impl VariablesView {
                     .label("Type…")
                     .on_click(cx.listener(move |view, _: &ClickEvent, _, cx| view.edit(set_type.clone(), VariableIntent::SetType, cx)))
             }))
+            .context_menu(move |menu, _, _| {
+                let menu = menu.label(format!("{} · {kind}", pointed.name));
+                let item = |label: &'static str, intent: VariableIntent| {
+                    let (view, variable) = (view.clone(), pointed.clone());
+                    PopupMenuItem::new(label)
+                        .icon(Icon::new(if intent == VariableIntent::Rename { AppIcon::Rename } else { AppIcon::Type }))
+                        .on_click(move |_, _, cx| {
+                            view.update(cx, |view, cx| view.edit(variable.clone(), intent, cx)).ok();
+                        })
+                };
+                let menu = menu.item(item("Rename…", VariableIntent::Rename));
+                let menu = if typed { menu.item(item("Set Type…", VariableIntent::SetType)) } else { menu };
+                let menu = crate::context::copy(menu.separator(), "Copy Name", pointed.name.clone());
+                if renamed { crate::context::copy(menu, "Copy Engine's Name", pointed.key.clone()) } else { menu }
+            })
             .into_any_element()
     }
 }

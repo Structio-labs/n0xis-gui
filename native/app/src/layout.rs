@@ -14,6 +14,7 @@ use gpui_kit::*;
 
 use crate::assets::AppIcon;
 use crate::bookmarks::BookmarksView;
+use crate::skin::SavedStrip;
 use crate::console::ConsoleView;
 use crate::decompiler::DecompilerView;
 use crate::disassembly::DisassemblyView;
@@ -400,6 +401,21 @@ impl SavedLayout {
     }
 }
 
+/// A workspace as it was left: the dock's own layout, and where each group's
+/// tabs run, which the dock does not know about.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Arrangement {
+    pub dock: DockAreaState,
+    pub strips: Vec<SavedStrip>,
+}
+
+impl Arrangement {
+    /// A layout whose groups all have their tabs along the top.
+    pub fn plain(dock: DockAreaState) -> Self {
+        Self { dock, strips: Vec::new() }
+    }
+}
+
 /// What `ui-layout.json` holds: the layout of each workspace that has one,
 /// and the workspace in use.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -407,14 +423,34 @@ pub struct SavedWorkspaces {
     pub workspaces_version: u32,
     pub current: Workspace,
     pub layouts: BTreeMap<Workspace, DockAreaState>,
+    /// Each workspace's groups whose tabs do not run along the top. A file
+    /// written before tabs could go elsewhere has none, and reads as such.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub strips: BTreeMap<Workspace, Vec<SavedStrip>>,
 }
 
 /// The shape of [`SavedWorkspaces`].
 const WORKSPACES_VERSION: u32 = 1;
 
 impl SavedWorkspaces {
-    pub fn new(current: Workspace, layouts: BTreeMap<Workspace, DockAreaState>) -> Self {
-        Self { workspaces_version: WORKSPACES_VERSION, current, layouts }
+    pub fn new(current: Workspace, arrangements: BTreeMap<Workspace, Arrangement>) -> Self {
+        let mut layouts = BTreeMap::new();
+        let mut strips = BTreeMap::new();
+        for (workspace, arrangement) in arrangements {
+            if !arrangement.strips.is_empty() {
+                strips.insert(workspace, arrangement.strips);
+            }
+            layouts.insert(workspace, arrangement.dock);
+        }
+        Self { workspaces_version: WORKSPACES_VERSION, current, layouts, strips }
+    }
+
+    /// Each workspace's layout with its strips.
+    pub fn arrangements(mut self) -> BTreeMap<Workspace, Arrangement> {
+        self.layouts
+            .into_iter()
+            .map(|(workspace, dock)| (workspace, Arrangement { dock, strips: self.strips.remove(&workspace).unwrap_or_default() }))
+            .collect()
     }
 }
 
@@ -431,6 +467,7 @@ pub fn read_workspaces_from(json: Option<&str>) -> Result<(SavedWorkspaces, Opti
         let stale: Vec<Workspace> = saved.layouts.iter().filter(|(_, s)| s.version != Some(LAYOUT_VERSION)).map(|(w, _)| *w).collect();
         for w in &stale {
             saved.layouts.remove(w);
+            saved.strips.remove(w);
         }
         let note = (!stale.is_empty()).then(|| {
             let names: Vec<&str> = stale.iter().map(|w| w.title()).collect();
@@ -440,7 +477,7 @@ pub fn read_workspaces_from(json: Option<&str>) -> Result<(SavedWorkspaces, Opti
     }
     // One layout, as saved before there were workspaces.
     let single = read_saved_from(Some(json))?;
-    Ok((SavedWorkspaces::new(Workspace::Decompile, BTreeMap::from([(Workspace::Decompile, single)])), None))
+    Ok((SavedWorkspaces::new(Workspace::Decompile, BTreeMap::from([(Workspace::Decompile, Arrangement::plain(single))])), None))
 }
 
 pub fn read_workspaces() -> Result<(SavedWorkspaces, Option<String>), SavedLayout> {
@@ -468,14 +505,14 @@ pub fn read_saved_from(json: Option<&str>) -> Result<DockAreaState, SavedLayout>
 }
 
 
-/// Layout changes, for undo and redo. Entries are whole layout snapshots;
-/// identical neighbours are never stored, so loading a snapshot (which reports
-/// a change) does not add a step.
+/// Layout changes, for undo and redo. Entries are whole arrangements, tabs'
+/// sides included; identical neighbours are never stored, so loading a
+/// snapshot (which reports a change) does not add a step.
 #[derive(Default)]
 pub struct History {
-    past: Vec<DockAreaState>,
-    future: Vec<DockAreaState>,
-    current: Option<DockAreaState>,
+    past: Vec<Arrangement>,
+    future: Vec<Arrangement>,
+    current: Option<Arrangement>,
 }
 
 /// How many layout steps undo can go back.
@@ -483,7 +520,7 @@ pub const HISTORY_DEPTH: usize = 80;
 
 impl History {
     /// Record the layout as it is now; a new edit forks history.
-    pub fn record(&mut self, now: DockAreaState) {
+    pub fn record(&mut self, now: Arrangement) {
         if self.current.as_ref() == Some(&now) {
             return;
         }
@@ -499,12 +536,12 @@ impl History {
     /// After loading a snapshot, the dock's own account of what it now holds
     /// replaces the snapshot, so a load that normalizes the layout does not
     /// read as one more edit.
-    pub fn replace_current(&mut self, now: DockAreaState) {
+    pub fn replace_current(&mut self, now: Arrangement) {
         self.current = Some(now);
     }
 
     /// The layout to go back to, if any.
-    pub fn undo(&mut self) -> Option<DockAreaState> {
+    pub fn undo(&mut self) -> Option<Arrangement> {
         let previous = self.past.pop()?;
         if let Some(current) = self.current.replace(previous.clone()) {
             self.future.push(current);
@@ -513,7 +550,7 @@ impl History {
     }
 
     /// The layout to go forward to, if any.
-    pub fn redo(&mut self) -> Option<DockAreaState> {
+    pub fn redo(&mut self) -> Option<Arrangement> {
         let next = self.future.pop()?;
         if let Some(current) = self.current.replace(next.clone()) {
             self.past.push(current);
@@ -525,7 +562,8 @@ impl History {
 #[cfg(test)]
 mod tests {
     // Not `super::*`: that would bring GPUI's `test` attribute over the built-in one.
-    use super::{History, LAYOUT_VERSION, PanelKind, SavedLayout, SavedWorkspaces, Workspace, read_saved_from, read_workspaces_from};
+    use super::{Arrangement, History, LAYOUT_VERSION, PanelKind, SavedLayout, SavedWorkspaces, Workspace, read_saved_from, read_workspaces_from};
+    use crate::skin::{Labels, SavedStrip, Side, Strip};
     use std::collections::BTreeMap;
     use gpui_kit::base::dock::{DockAreaState, PanelInfo, PanelState};
 
@@ -571,9 +609,18 @@ mod tests {
         }
     }
 
+    /// `state(version, tab)` with no group's tabs moved.
+    fn plain(version: usize, tab: usize) -> Arrangement {
+        Arrangement::plain(state(version, tab))
+    }
+
+    fn strip(panels: &[&str], side: Side) -> SavedStrip {
+        SavedStrip { panels: panels.iter().map(|p| p.to_string()).collect(), strip: Strip { side, labels: Labels::Auto } }
+    }
+
     #[test]
     fn undo_and_redo_walk_the_recorded_layouts() {
-        let (a, b, c) = (state(LAYOUT_VERSION, 1), state(LAYOUT_VERSION, 2), state(LAYOUT_VERSION, 3));
+        let (a, b, c) = (plain(LAYOUT_VERSION, 1), plain(LAYOUT_VERSION, 2), plain(LAYOUT_VERSION, 3));
         let mut h = History::default();
         h.record(a.clone());
         h.record(b.clone());
@@ -589,6 +636,35 @@ mod tests {
     }
 
     #[test]
+    fn moving_a_groups_tabs_is_a_step_of_its_own() {
+        let top = plain(LAYOUT_VERSION, 1);
+        let left = Arrangement { strips: vec![strip(&["bookmarks", "xrefs"], Side::Left)], ..top.clone() };
+        let mut h = History::default();
+        h.record(top.clone());
+        h.record(left.clone());
+        assert_eq!(h.undo(), Some(top), "the same dock layout with the tabs back on top");
+        assert_eq!(h.redo(), Some(left));
+    }
+
+    #[test]
+    fn strips_are_kept_per_workspace_and_a_file_without_them_still_reads() {
+        let decompile = Arrangement { strips: vec![strip(&["console", "hex"], Side::Bottom)], ..plain(LAYOUT_VERSION, 1) };
+        let arrangements = BTreeMap::from([(Workspace::Decompile, decompile.clone()), (Workspace::Graph, plain(LAYOUT_VERSION, 2))]);
+        let json = serde_json::to_string(&SavedWorkspaces::new(Workspace::Graph, arrangements)).unwrap();
+        let (saved, _) = read_workspaces_from(Some(&json)).unwrap();
+        let back = saved.arrangements();
+        assert_eq!(back.get(&Workspace::Decompile), Some(&decompile));
+        assert_eq!(back.get(&Workspace::Graph), Some(&plain(LAYOUT_VERSION, 2)));
+        // Written before tabs could move: no `strips` at all.
+        let old = format!(
+            r#"{{"workspaces_version":1,"current":"static","layouts":{{"static":{}}}}}"#,
+            serde_json::to_string(&state(LAYOUT_VERSION, 1)).unwrap()
+        );
+        let (saved, _) = read_workspaces_from(Some(&old)).unwrap();
+        assert_eq!(saved.arrangements().get(&Workspace::Static), Some(&plain(LAYOUT_VERSION, 1)));
+    }
+
+    #[test]
     fn a_layout_saved_before_workspaces_becomes_the_decompile_workspace() {
         let single = state(LAYOUT_VERSION, 2);
         let json = serde_json::to_string(&single).unwrap();
@@ -600,12 +676,14 @@ mod tests {
 
     #[test]
     fn workspaces_read_back_and_a_stale_one_starts_from_its_default() {
-        let layouts = BTreeMap::from([(Workspace::Static, state(LAYOUT_VERSION, 1)), (Workspace::Graph, state(LAYOUT_VERSION + 1, 1))]);
+        let graph = Arrangement { strips: vec![strip(&["graph"], Side::Right)], ..plain(LAYOUT_VERSION + 1, 1) };
+        let layouts = BTreeMap::from([(Workspace::Static, plain(LAYOUT_VERSION, 1)), (Workspace::Graph, graph)]);
         let json = serde_json::to_string(&SavedWorkspaces::new(Workspace::Static, layouts)).unwrap();
         let (saved, note) = read_workspaces_from(Some(&json)).unwrap();
         assert_eq!(saved.current, Workspace::Static);
         assert!(saved.layouts.contains_key(&Workspace::Static));
         assert!(!saved.layouts.contains_key(&Workspace::Graph), "a layout of another version is not loaded");
+        assert!(!saved.strips.contains_key(&Workspace::Graph), "nor the strips that went with it");
         assert!(note.unwrap().contains("Graph"));
         for w in Workspace::ALL {
             assert_eq!(Workspace::from_name(w.name()), Some(w));

@@ -16,9 +16,13 @@ use gpui_kit::base::Selectable as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex, input, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
+use gpui_kit::component::menu::{ContextMenuExt as _, PopupMenu};
+use gpui_kit::component::Icon;
 use gpui_kit::*;
 use n0xis_client::{ClientError, DecompStyle, Decompile, Disassemble, Engine, FunctionEntry};
 
+use crate::assets::AppIcon;
+use crate::context;
 use crate::layout::{PanelKind, Views};
 use crate::nav::{Location, Navigate, hex, parse_va};
 use crate::panel::{dock_panel, header, message};
@@ -441,7 +445,11 @@ impl LinearView {
                 .child(div().text_color(theme.muted_foreground).font_family(theme.mono_font_family.clone()).child(span))
                 .on_mouse_down(MouseButton::Left, cx.listener(move |view, e: &MouseDownEvent, window, cx| {
                     view.click(header_at, Some(start), e.modifiers.shift, window, cx)
-                })),
+                }))
+                .context_menu({
+                    let name = function.name.clone();
+                    move |menu, _, _| copy_selection(context::function(menu, &name, start, Some(PanelKind::Linear)).separator())
+                }),
         );
         match self.bodies.get(&start) {
             None => {
@@ -464,6 +472,10 @@ impl LinearView {
                         .text_xs()
                         .when(self.selected(at), |r| r.bg(theme.list_active))
                         .when(is_here && !self.selected(at), |r| r.bg(theme.list_hover));
+                    let copied = match (self.mode, va) {
+                        (Mode::Asm, Some(va)) => format!("{}  {} {}", hex(va), line.mnemonic, line.text),
+                        _ => line.text.to_string(),
+                    };
                     let row = match self.mode {
                         Mode::Asm => row
                             .child(div().w(px(130.)).flex_none().text_color(theme.muted_foreground).child(va.map(hex).unwrap_or_default()))
@@ -472,9 +484,26 @@ impl LinearView {
                             .child(div().flex_1().min_w_0().truncate().child(line.text.clone())),
                         Mode::Pseudo => row.child(div().whitespace_nowrap().child(line.text.clone())),
                     };
-                    item = item.child(row.on_mouse_down(MouseButton::Left, cx.listener(move |view, e: &MouseDownEvent, window, cx| {
+                    let row = row.on_mouse_down(MouseButton::Left, cx.listener(move |view, e: &MouseDownEvent, window, cx| {
                         view.click(at, va, e.modifiers.shift, window, cx)
-                    })));
+                    }));
+                    let row = context::row_with_menu(("linear-line-menu", i), row)
+                        .context_menu(move |menu, _, _| {
+                            let menu = match va {
+                                Some(va) => {
+                                    let menu = context::views(menu.label(hex(va)), va, Some(PanelKind::Linear)).separator();
+                                    context::annotations(menu, va).separator()
+                                }
+                                None => menu,
+                            };
+                            let menu = context::copy(menu, "Copy Line", copied.clone());
+                            let menu = copy_selection(menu);
+                            match va {
+                                Some(va) => context::copy(menu, "Copy Address", hex(va)),
+                                None => menu,
+                            }
+                        });
+                    item = item.child(row);
                 }
             }
         }
@@ -577,6 +606,11 @@ impl LinearView {
         )
         .size_full()
     }
+}
+
+/// The listing's own copy: the lines selected (click, then Shift+click).
+fn copy_selection(menu: PopupMenu) -> PopupMenu {
+    menu.menu_with_icon("Copy Selected Lines", Icon::new(AppIcon::Copy), Box::new(input::Copy))
 }
 
 impl Render for LinearView {

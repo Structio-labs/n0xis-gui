@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use gpui_kit::base::Disableable as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::setting::{NumberFieldOptions, SettingField, SettingGroup, SettingItem, SettingPage, Settings};
+use gpui_kit::component::setting::{NumberFieldOptions, SelectIndex, SettingField, SettingGroup, SettingItem, SettingPage, Settings};
 use gpui_kit::component::{ActiveTheme as _, Sizable as _, WindowExt as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -32,17 +32,43 @@ impl Global for CacheUsageNow {}
 /// Open the settings window. `engine` is the open target's session, for its
 /// cache usage; without one the cache section says there is no target.
 pub fn open(engine: Option<Arc<Engine>>, window: &mut Window, cx: &mut App) {
+    open_at(engine, 0, window, cx);
+}
+
+/// Open the settings window at its key bindings.
+pub fn open_keys(engine: Option<Arc<Engine>>, window: &mut Window, cx: &mut App) {
+    open_at(engine, KEYS_PAGE, window, cx);
+}
+
+/// Where the key bindings are among the pages (see `pages`).
+const KEYS_PAGE: usize = 3;
+
+fn open_at(engine: Option<Arc<Engine>>, page: usize, window: &mut Window, cx: &mut App) {
     cx.set_global(CacheUsageNow::default());
     if let Some(engine) = engine.clone() {
         ask_usage(engine, false, cx);
     }
     window.open_dialog(cx, move |dialog, _, _| {
         let engine = engine.clone();
-        dialog
-            .title("Settings")
-            .w(px(900.))
-            .child(div().h(px(560.)).child(Settings::new("n0xis-settings").pages(pages(engine))))
+        let settings = Settings::new("n0xis-settings").pages(pages(engine)).default_selected_index(SelectIndex { page_ix: page, group_ix: None });
+        dialog.title("Settings").w(px(900.)).child(div().h(px(560.)).child(settings))
     });
+}
+
+/// Clear the open target's caches from outside the settings window (the
+/// command palette), and say what the engine reported.
+pub fn clear_caches(engine: Arc<Engine>, window: &mut Window, cx: &mut App) {
+    let pending = engine.send(&CacheUsage { clear: true });
+    window
+        .spawn(cx, async move |cx| {
+            let text = match pending.await {
+                Ok(r) if r.failures.is_empty() => format!("Cleared {} from this target's caches.", size(r.freed)),
+                Ok(r) => format!("Cleared {}; {} file(s) could not be removed: {}", size(r.freed), r.failures.len(), r.failures.join("; ")),
+                Err(e) => format!("The caches were not cleared: {e}"),
+            };
+            cx.update(|window, cx| window.push_notification(SharedString::from(text), cx)).ok();
+        })
+        .detach();
 }
 
 /// Ask the engine what the caches take, clearing them first when `clear`.
@@ -69,6 +95,7 @@ fn change(cx: &mut App, edit: impl FnOnce(&mut Prefs)) {
     }
 }
 
+/// The pages, in order; the keys are at [`KEYS_PAGE`].
 fn pages(engine: Option<Arc<Engine>>) -> Vec<SettingPage> {
     vec![analysis_page(), projects_page(engine), appearance_page(), keys_page()]
 }
@@ -83,7 +110,7 @@ struct Recording {
 impl Global for Recording {}
 
 fn keys_page() -> SettingPage {
-    let groups = ["File", "Edit", "Go", "View", "Window"].map(|group| {
+    let groups = keymap::groups().into_iter().map(|group| {
         SettingGroup::new()
             .title(group)
             .items(COMMANDS.iter().filter(move |c| c.group == group).map(|command| SettingItem::render(move |_, _, cx| key_row(command, cx))))
@@ -386,6 +413,43 @@ fn appearance_page() -> SettingPage {
             ),
         )
         .description("Ctrl+= and Ctrl+- change it too; Ctrl+0 resets it."),
+        SettingItem::render(|_, _, cx| {
+            let now = appearance::scale(cx);
+            v_flex().gap_1().child(div().text_sm().child("Interface scale")).child(h_flex().gap_1().children(appearance::SCALES.into_iter().map(|percent| {
+                Button::new(SharedString::from(format!("scale-{percent}")))
+                    .small()
+                    .when(now == percent, |b| b.primary())
+                    .when(now != percent, |b| b.ghost())
+                    .label(format!("{percent}%"))
+                    .on_click(move |_, _, cx| {
+                        appearance::set_scale(percent, cx);
+                        if let Err(e) = appearance::save(cx) {
+                            let text = SharedString::from(format!("The appearance could not be saved: {e}"));
+                            if let Some(window) = cx.active_window() {
+                                window.update(cx, |_, window, cx| window.push_notification(text, cx)).ok();
+                            }
+                        }
+                        cx.refresh_windows();
+                    })
+            })))
+        }),
+        SettingItem::new(
+            "Round the corners of graph edges",
+            SettingField::switch(
+                |cx| cx.try_global::<appearance::GraphLook>().is_some_and(|look| look.rounded_edges),
+                |on, cx| {
+                    cx.set_global(appearance::GraphLook { rounded_edges: on });
+                    if let Err(e) = appearance::save(cx) {
+                        let text = SharedString::from(format!("The appearance could not be saved: {e}"));
+                        if let Some(window) = cx.active_window() {
+                            window.update(cx, |_, window, cx| window.push_notification(text, cx)).ok();
+                        }
+                    }
+                    cx.refresh_windows();
+                },
+            ),
+        )
+        .description("The edges keep their routes; only where they turn is drawn as a curve."),
     ]))
 }
 

@@ -12,6 +12,7 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
+use gpui_kit::component::menu::ContextMenuExt as _;
 use gpui_kit::*;
 use n0xis_client::{ClientError, Engine};
 
@@ -164,7 +165,9 @@ impl ConsoleView {
             Some(a) => (clip(&a.text, OUTPUT_CLIP), if a.ok { theme.foreground } else { theme.danger }),
         };
         let full = entry.answer.as_ref().map(|a| a.text.clone());
+        let (command, output) = (entry.line.clone(), full.clone());
         v_flex()
+            .id(("console-entry", ix))
             .px_2()
             .py_1()
             .gap_1()
@@ -196,6 +199,13 @@ impl ConsoleView {
                     }),
             )
             .child(div().font_family(theme.mono_font_family.clone()).text_xs().text_color(color).child(text))
+            .context_menu(move |menu, _, _| {
+                let menu = crate::context::copy(menu, "Copy Command", command.clone());
+                match &output {
+                    Some(output) => crate::context::copy(menu, "Copy Answer", output.clone()),
+                    None => menu,
+                }
+            })
     }
 }
 

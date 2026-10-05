@@ -11,10 +11,12 @@ use gpui_kit::base::Selectable as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
+use gpui_kit::component::menu::ContextMenuExt as _;
 use gpui_kit::*;
 use n0xis_client::{Engine, Find, FindMatch, FindQuery, FindResult};
 
 use crate::assets::AppIcon;
+use crate::context;
 use crate::layout::{PanelKind, Views};
 use crate::nav::{Location, Navigate, parse_va};
 use crate::panel::{dock_panel, header, message};
@@ -115,6 +117,11 @@ impl SearchView {
         cx.notify();
     }
 
+    /// The query field, for Ctrl+F to put the caret in.
+    pub fn query_focus(&self, cx: &App) -> FocusHandle {
+        self.query.read(cx).focus_handle(cx)
+    }
+
     fn search(&mut self, cx: &mut Context<Self>) {
         let Some(engine) = self.engine.clone() else { return };
         let text = self.query.read(cx).value().to_string();
@@ -156,6 +163,7 @@ impl SearchView {
                 functions.index().function_at(va).map(|f| Location { va, function: Some(f.clone()) }.label())
             })
             .unwrap_or_default();
+        let title = format!("{} {place}", m.va);
         let mut row = h_flex()
             .id(("match", ix))
             .w_full()
@@ -166,13 +174,12 @@ impl SearchView {
             .child(div().w(px(130.)).flex_none().font_family(theme.mono_font_family.clone()).child(m.va.clone()))
             .child(div().w(px(80.)).flex_none().text_color(theme.muted_foreground).child(m.section.clone().unwrap_or_default()))
             .child(div().flex_1().min_w_0().truncate().child(place));
-        if let Some(va) = va {
-            row = row
-                .cursor_pointer()
-                .hover(|s| s.bg(theme.list_hover))
-                .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.emit(Navigate(va))));
-        }
-        row.into_any_element()
+        let Some(va) = va else { return row.into_any_element() };
+        row = row
+            .cursor_pointer()
+            .hover(|s| s.bg(theme.list_hover))
+            .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.emit(Navigate(va))));
+        row.context_menu(move |menu, _, _| context::address(menu, title.clone(), va, Some(PanelKind::Find))).into_any_element()
     }
 
     fn summary(&self) -> String {

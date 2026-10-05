@@ -28,6 +28,7 @@ pub mod schema {
     pub const PROJECT_CACHE: &str = "n0xis.project.cache.v1";
     pub const MEM_SPAN: &str = "n0xis.mem.span.v1";
     pub const STRINGS: &str = "n0xis.strings.v1";
+    pub const CONST_IDENTIFY: &str = "n0xis.const.identify.v1";
 }
 
 /// A request the engine answers with one payload shape.

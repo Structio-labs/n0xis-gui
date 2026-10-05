@@ -8,12 +8,14 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::menu::ContextMenuExt as _;
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use n0xis_client::{ClientError, DiscoverFunctions, Engine, FunctionEntry};
 
 use crate::assets::AppIcon;
+use crate::context;
 use crate::layout::PanelKind;
 use crate::nav::parse_va;
 use crate::panel::dock_panel;
@@ -255,6 +257,18 @@ impl FunctionList {
         }
     }
 
+    /// Forget the list: the target was closed.
+    pub fn clear(&mut self, cx: &mut Context<Self>) {
+        self._load = None;
+        self._names = None;
+        self.index = FunctionIndex::default();
+        self.total = None;
+        self.source = None;
+        self.state = LoadState::Idle;
+        self.selected = None;
+        cx.notify();
+    }
+
     /// Page the whole list in from `engine`. The unwind table is tried first; an
     /// image without one (any non-PE, or a PE that has none) is scanned instead.
     pub fn load(&mut self, engine: Arc<Engine>, cx: &mut Context<Self>) {
@@ -407,7 +421,8 @@ impl FunctionList {
         let theme = cx.theme();
         let selected = self.selected.as_deref() == Some(entry.va.as_str());
         let unnamed = entry.name.starts_with("sub_");
-        h_flex()
+        let (name, start) = (entry.name.clone(), parse_va(&entry.va));
+        let row = h_flex()
             .id(ElementId::Name(entry.va.clone().into()))
             .w_full()
             .h(ROW_HEIGHT)
@@ -432,8 +447,11 @@ impl FunctionList {
                     .text_color(theme.muted_foreground)
                     .child(entry.va.clone()),
             )
-            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.select(entry.clone(), cx)))
-            .into_any_element()
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.select(entry.clone(), cx)));
+        match start {
+            Some(va) => row.context_menu(move |menu, _, _| context::function(menu, &name, va, None)).into_any_element(),
+            None => row.into_any_element(),
+        }
     }
 
     fn footer_text(&self) -> String {

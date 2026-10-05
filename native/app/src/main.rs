@@ -9,6 +9,7 @@ mod assets;
 mod bookmarks;
 mod config;
 mod console;
+mod context;
 mod decompiler;
 mod disassembly;
 mod edits;
@@ -21,6 +22,7 @@ mod layout;
 mod linear;
 mod menus;
 mod nav;
+mod palette;
 mod panel;
 mod prefs;
 mod project;
@@ -29,6 +31,7 @@ mod recent;
 mod scanner;
 mod search;
 mod settings;
+mod skin;
 mod strings;
 mod triage;
 mod types;
@@ -63,6 +66,13 @@ gpui_kit::actions!(
         GoForward,
         OpenSettings,
         RunAnalysis,
+        CommandPalette,
+        CloseTarget,
+        FindInImage,
+        RecognizeConstants,
+        KeyboardShortcuts,
+        ScanProcess,
+        ClearCaches,
     ]
 );
 

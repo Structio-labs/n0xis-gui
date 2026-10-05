@@ -12,9 +12,11 @@ use gpui_kit::base::Disableable as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
+use gpui_kit::component::menu::ContextMenuExt as _;
 use gpui_kit::*;
 use n0xis_client::{ClientError, Engine, MemSpan, Span};
 
+use crate::context;
 use crate::layout::PanelKind;
 use crate::nav::{Location, hex};
 use crate::panel::{dock_panel, header, message};
@@ -151,13 +153,17 @@ impl HexView {
                 .child(byte.map_or_else(|| NO_BYTE.to_string(), |b| format!("{b:02x}")))
         });
         let text: String = addresses
+            .clone()
             .map(|va| match span.byte_at(va) {
                 Some(b) if (0x20..0x7f).contains(&b) => b as char,
                 Some(_) => '.',
                 None => ' ',
             })
             .collect();
-        h_flex()
+        // What a copy of the row gives: the bytes that are there, a gap as the view shows it.
+        let bytes: Vec<String> = addresses.map(|va| span.byte_at(va).map_or_else(|| NO_BYTE.to_string(), |b| format!("{b:02x}"))).collect();
+        let (bytes, copied_text) = (bytes.join(" "), text.clone());
+        let line = h_flex()
             .id(("hex-row", row))
             .w_full()
             .h(ROW_HEIGHT)
@@ -168,7 +174,16 @@ impl HexView {
             .when(marked.is_some(), |r| r.bg(theme.list_hover))
             .child(div().w(px(130.)).flex_none().text_color(theme.muted_foreground).child(hex(base)))
             .child(h_flex().gap_0p5().children(cells))
-            .child(div().flex_none().text_color(theme.muted_foreground).child(text))
+            .child(div().flex_none().text_color(theme.muted_foreground).child(text));
+        context::row_with_menu(("hex-row-menu", row), line)
+            .context_menu(move |menu, _, _| {
+                let menu = context::go(menu.label(hex(base)), "Go To", base);
+                let menu = context::views(menu, base, Some(PanelKind::Hex)).separator();
+                let menu = context::annotations(menu, base).separator();
+                let menu = context::copy(menu, "Copy Bytes", bytes.clone());
+                let menu = context::copy(menu, "Copy Text", copied_text.trim_end().to_string());
+                context::copy(menu, "Copy Address", hex(base))
+            })
             .into_any_element()
     }
 }

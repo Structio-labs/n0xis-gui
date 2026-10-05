@@ -13,10 +13,13 @@ use std::sync::Arc;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
+use gpui_kit::component::menu::{ContextMenuExt as _, PopupMenu, PopupMenuItem};
+use gpui_kit::component::Icon;
 use gpui_kit::*;
 use n0xis_client::{BuildCfg, Cfg, ClientError, Engine, FunctionEntry};
 
 use crate::assets::AppIcon;
+use crate::context;
 use crate::graph_layout::{self, EdgeIn, Layout, Rect};
 use crate::layout::PanelKind;
 use crate::nav::{Location, Navigate, hex, parse_va};
@@ -130,6 +133,9 @@ pub struct GraphView {
     moved: HashMap<usize, (f32, f32)>,
     /// Where the drawing area was last painted, in window coordinates.
     bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
+    /// The block a right click landed on, taken by the menu it opens; `None`
+    /// when it landed beside the blocks.
+    pressed: Rc<Cell<Option<usize>>>,
     focus_handle: FocusHandle,
     _request: Option<Task<()>>,
 }
@@ -150,6 +156,7 @@ impl GraphView {
             drag: None,
             moved: HashMap::new(),
             bounds: Rc::new(Cell::new(None)),
+            pressed: Rc::default(),
             focus_handle: cx.focus_handle(),
             _request: None,
         }
@@ -416,6 +423,7 @@ impl GraphView {
         }
         let bounds_cell = Rc::clone(&self.bounds);
         let view = cx.entity_id();
+        let rounded = cx.try_global::<crate::appearance::GraphLook>().is_some_and(|look| look.rounded_edges);
         let edges = canvas(
             move |bounds, _, cx| {
                 // The size is known only once laid out. When it changes, draw
@@ -438,8 +446,11 @@ impl GraphView {
                         path = path.dash_array(&[px(5. * zoom), px(4. * zoom)]);
                     }
                     path.move_to(to_screen(pts[0]));
-                    for &p in &pts[1..] {
-                        path.line_to(to_screen(p));
+                    for step in trace(pts, if rounded { CORNER_RADIUS } else { 0. }) {
+                        match step {
+                            Step::Line(to) => path.line_to(to_screen(to)),
+                            Step::Curve { to, ctrl } => path.curve_to(to_screen(to), to_screen(ctrl)),
+                        }
                     }
                     if let Ok(path) = path.build() {
                         window.paint_path(path, *color);
@@ -491,7 +502,11 @@ impl GraphView {
                 .text_size(px(FONT * zoom))
                 .line_height(px(LINE * zoom))
                 .cursor_pointer()
-                .on_mouse_down(MouseButton::Left, cx.listener(move |view, e: &MouseDownEvent, window, cx| view.on_block_down(index, e, window, cx)));
+                .on_mouse_down(MouseButton::Left, cx.listener(move |view, e: &MouseDownEvent, window, cx| view.on_block_down(index, e, window, cx)))
+                .on_mouse_down(MouseButton::Right, {
+                    let pressed = self.pressed.clone();
+                    move |_, _, _| pressed.set(Some(index))
+                });
             for (i, line) in block.lines.iter().enumerate() {
                 let muted = i == 0 || line.starts_with('+') || line.starts_with('→');
                 body = body.child(
@@ -517,7 +532,88 @@ impl GraphView {
             .on_scroll_wheel(cx.listener(Self::on_scroll))
             .child(edges)
             .children(blocks)
+            .context_menu({
+                let (view, pressed) = (cx.entity().downgrade(), self.pressed.clone());
+                move |menu, _, cx| graph_menu(menu, &view, pressed.take(), cx)
+            })
             .into_any_element()
+    }
+}
+
+/// How far before and after a bend a rounded edge starts to turn, in layout units.
+const CORNER_RADIUS: f32 = 8.;
+
+/// One piece of an edge's path after its first point.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Step {
+    Line((f32, f32)),
+    /// A quadratic curve through a bend: `ctrl` is the bend itself.
+    Curve { to: (f32, f32), ctrl: (f32, f32) },
+}
+
+/// The path through `points` (the route the layout gave, unchanged), with
+/// each bend cut by a curve that starts `radius` before it, or less where a
+/// leg is too short. A radius of zero is the route itself.
+fn trace(points: &[(f32, f32)], radius: f32) -> Vec<Step> {
+    let mut steps = Vec::new();
+    if points.len() < 2 {
+        return steps;
+    }
+    let toward = |from: (f32, f32), to: (f32, f32), by: f32| {
+        let (dx, dy) = (to.0 - from.0, to.1 - from.1);
+        let len = (dx * dx + dy * dy).sqrt();
+        if len <= f32::EPSILON { from } else { (from.0 + dx / len * by, from.1 + dy / len * by) }
+    };
+    let length = |a: (f32, f32), b: (f32, f32)| ((b.0 - a.0).powi(2) + (b.1 - a.1).powi(2)).sqrt();
+    for i in 1..points.len() - 1 {
+        let (a, b, c) = (points[i - 1], points[i], points[i + 1]);
+        let r = radius.min(length(a, b) / 2.).min(length(b, c) / 2.);
+        if r <= 0. {
+            steps.push(Step::Line(b));
+            continue;
+        }
+        steps.push(Step::Line(toward(b, a, r)));
+        steps.push(Step::Curve { to: toward(b, c, r), ctrl: b });
+    }
+    steps.push(Step::Line(points[points.len() - 1]));
+    steps
+}
+
+/// The graph's menu: about the block a right click landed on, or about the
+/// drawing and the function when it landed beside the blocks.
+fn graph_menu(menu: PopupMenu, view: &WeakEntity<GraphView>, block: Option<usize>, cx: &App) -> PopupMenu {
+    let Some(graph) = view.upgrade() else { return menu };
+    let graph = graph.read(cx);
+    let Some(model) = graph.model() else { return menu };
+    if let Some(b) = block.and_then(|ix| model.blocks.get(ix)) {
+        let start = b.start;
+        let text = b.lines.iter().map(SharedString::as_ref).collect::<Vec<&str>>().join("\n");
+        let menu = context::go(menu.label(format!("Block {}", hex(start))), "Go To Block", start);
+        let menu = context::views(menu, start, Some(PanelKind::Graph)).separator();
+        let menu = context::annotations(menu, start).separator();
+        let menu = context::copy(menu, "Copy Block Address", hex(start));
+        return context::copy(menu, "Copy Block Text", text);
+    }
+    let act = |label: &'static str, icon: AppIcon, f: fn(&mut GraphView, &mut Context<GraphView>)| {
+        let view = view.clone();
+        PopupMenuItem::new(label).icon(Icon::new(icon)).on_click(move |_, _, cx| {
+            view.update(cx, |graph, cx| {
+                f(graph, cx);
+                cx.notify();
+            })
+            .ok();
+        })
+    };
+    let mut menu = menu
+        .item(act("Fit to View", AppIcon::Fit, |graph, _| graph.auto_fit = true))
+        .item(act("Zoom In", AppIcon::Add, |graph, cx| graph.zoom_by(ZOOM_STEP, None, cx)))
+        .item(act("Zoom Out", AppIcon::Min, |graph, cx| graph.zoom_by(1. / ZOOM_STEP, None, cx)));
+    if !graph.moved.is_empty() {
+        menu = menu.item(act("Put Moved Blocks Back", AppIcon::Reset, |graph, _| graph.moved.clear()));
+    }
+    match parse_va(&model.function.va) {
+        Some(start) => context::function(menu.separator(), &model.function.name, start, Some(PanelKind::Graph)),
+        None => menu,
     }
 }
 
@@ -612,8 +708,30 @@ dock_panel!(GraphView, PanelKind::Graph, on_active);
 #[cfg(test)]
 mod tests {
     // Not `super::*`: that would bring GPUI's `test` attribute over the built-in one.
-    use super::{EdgeKind, build_model};
+    use super::{EdgeKind, Step, build_model, trace};
     use n0xis_client::{Block, Cfg, CfgInstruction, Edge, FunctionEntry};
+
+    #[test]
+    fn a_rounded_edge_keeps_its_ends_and_turns_at_each_bend() {
+        // Down, right, down: two bends.
+        let route = [(0., 0.), (0., 40.), (30., 40.), (30., 80.)];
+        let square = trace(&route, 0.);
+        assert_eq!(square, vec![Step::Line((0., 40.)), Step::Line((30., 40.)), Step::Line((30., 80.))], "no radius is the route itself");
+        let round = trace(&route, 8.);
+        assert_eq!(round.last(), Some(&Step::Line((30., 80.))), "it ends where the route ends");
+        let curves: Vec<_> = round.iter().filter_map(|s| match s { Step::Curve { ctrl, .. } => Some(*ctrl), _ => None }).collect();
+        assert_eq!(curves, vec![(0., 40.), (30., 40.)], "one curve per bend, pulled toward the bend");
+        assert_eq!(round[0], Step::Line((0., 32.)), "the turn starts the radius before the bend");
+    }
+
+    #[test]
+    fn a_short_leg_takes_a_smaller_curve_rather_than_overshooting() {
+        // The middle leg is 6 long: each curve may take at most half of it.
+        let route = [(0., 0.), (0., 40.), (6., 40.), (6., 80.)];
+        let round = trace(&route, 8.);
+        assert_eq!(round[1], Step::Curve { to: (3., 40.), ctrl: (0., 40.) });
+        assert_eq!(round[2], Step::Line((3., 40.)));
+    }
 
     fn block(id: u32, start: &str, end: &str, succ: &[(&str, &str)]) -> Block {
         Block {

@@ -8,12 +8,13 @@ use gpui_kit::component::menu::AppMenuBar;
 use gpui_kit::component::{GlobalState, input};
 use gpui_kit::{App, Entity, Menu, MenuItem};
 
-use crate::appearance::{self, ResetZoom, SelectTheme, ZoomIn, ZoomOut};
+use crate::appearance::{self, ResetZoom, SelectTheme, ToggleRoundedEdges, ZoomIn, ZoomOut};
 use crate::layout::{PanelKind, ShowPanel, SwitchWorkspace, Workspace};
 use crate::recent::{OpenRecent, Recent};
 use crate::{
-    About, ClearAnnotations, Comment, GoBack, GoForward, GoTo, Open, OpenSettings, Quit, RedoEdit, RedoLayout, Rename,
-    ResetLayout, RunAnalysis, SetReturnType, SetType, ToggleBookmark, UndoEdit, UndoLayout,
+    About, ClearAnnotations, CloseTarget, CommandPalette, Comment, FindInImage, GoBack, GoForward, GoTo, KeyboardShortcuts,
+    Open, OpenSettings, Quit, RecognizeConstants, RedoEdit, RedoLayout, Rename, ResetLayout, RunAnalysis, ScanProcess,
+    SetReturnType, SetType, ToggleBookmark, UndoEdit, UndoLayout,
 };
 
 /// Create the in-window menu bar (Linux and Windows show it in the title bar)
@@ -35,6 +36,7 @@ pub fn refresh(bar: &Entity<AppMenuBar>, cx: &mut App) {
 
 fn build(cx: &App) -> Vec<Menu> {
     let current = appearance::current_theme(cx);
+    let rounded = cx.try_global::<appearance::GraphLook>().is_some_and(|look| look.rounded_edges);
     let themes = cx
         .global::<appearance::Themes>()
         .list()
@@ -58,8 +60,12 @@ fn build(cx: &App) -> Vec<Menu> {
             items: vec![
                 MenuItem::action("Open…", Open),
                 MenuItem::Submenu(Menu { name: "Open Recent".into(), disabled: recent.is_empty(), items: recent }),
+                MenuItem::action("Close Target", CloseTarget),
+                MenuItem::separator(),
+                MenuItem::action("Scan a Running Process…", ScanProcess),
                 MenuItem::separator(),
                 MenuItem::action("Settings…", OpenSettings),
+                MenuItem::action("Keyboard Shortcuts…", KeyboardShortcuts),
                 MenuItem::separator(),
                 MenuItem::action("Quit", Quit),
             ],
@@ -86,8 +92,11 @@ fn build(cx: &App) -> Vec<Menu> {
         Menu {
             name: "View".into(),
             items: vec![
+                MenuItem::action("Command Palette…", CommandPalette),
+                MenuItem::separator(),
                 MenuItem::Submenu(Menu { name: "Panels".into(), items: panels, disabled: false }),
                 MenuItem::Submenu(Menu { name: "Theme".into(), items: themes, disabled: false }),
+                MenuItem::action("Round Graph Edge Corners", ToggleRoundedEdges).checked(rounded),
                 MenuItem::separator(),
                 MenuItem::action("Zoom In", ZoomIn),
                 MenuItem::action("Zoom Out", ZoomOut),
@@ -97,13 +106,14 @@ fn build(cx: &App) -> Vec<Menu> {
         },
         Menu {
             name: "Analyze".into(),
-            items: vec![MenuItem::action("Run Analysis", RunAnalysis)],
+            items: vec![MenuItem::action("Run Analysis", RunAnalysis), MenuItem::action("Identify Constants in This Function", RecognizeConstants)],
             disabled: false,
         },
         Menu {
             name: "Go".into(),
             items: vec![
                 MenuItem::action("Go to Address or Name…", GoTo),
+                MenuItem::action("Find in Image…", FindInImage),
                 MenuItem::separator(),
                 MenuItem::action("Back", GoBack),
                 MenuItem::action("Forward", GoForward),
@@ -122,6 +132,10 @@ fn build(cx: &App) -> Vec<Menu> {
             ],
             disabled: false,
         },
-        Menu { name: "Help".into(), items: vec![MenuItem::action("About N0xis", About)], disabled: false },
+        Menu {
+            name: "Help".into(),
+            items: vec![MenuItem::action("Keyboard Shortcuts…", KeyboardShortcuts), MenuItem::separator(), MenuItem::action("About N0xis", About)],
+            disabled: false,
+        },
     ]
 }

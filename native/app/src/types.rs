@@ -12,6 +12,8 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
+use gpui_kit::component::menu::{ContextMenuExt as _, PopupMenu, PopupMenuItem};
+use gpui_kit::component::Icon;
 use gpui_kit::*;
 use n0xis_client::{
     ClientError, DefineEnum, DefineStruct, Engine, EnumDef, ListTypes, RemoveType, StructDef, TypeLibrary, Written,
@@ -312,6 +314,7 @@ impl TypesView {
         let (active, hover, muted, border) = (theme.list_active, theme.list_hover, theme.muted_foreground, theme.border);
         let item = |label: String, kind: &'static str, sel: Selected, ix: usize, cx: &mut Context<Self>| {
             let selected = self.selected.as_ref() == Some(&sel);
+            let name = label.clone();
             h_flex()
                 .id((kind, ix))
                 .px_2()
@@ -323,11 +326,18 @@ impl TypesView {
                 .when(!selected, |r| r.hover(|s| s.bg(hover)))
                 .child(div().w(px(42.)).flex_none().text_color(muted).child(kind))
                 .child(div().flex_1().min_w_0().truncate().child(label))
-                .on_click(cx.listener(move |view, _: &ClickEvent, _, cx| {
-                    view.selected = Some(sel.clone());
-                    view.note = None;
-                    cx.notify();
+                .on_click(cx.listener({
+                    let sel = sel.clone();
+                    move |view, _: &ClickEvent, _, cx| {
+                        view.selected = Some(sel.clone());
+                        view.note = None;
+                        cx.notify();
+                    }
                 }))
+                .context_menu({
+                    let view = cx.entity().downgrade();
+                    move |menu, _, _| type_menu(menu, &view, &sel, &name, kind)
+                })
         };
         let mut list = v_flex().id("type-list").w(px(200.)).flex_none().h_full().overflow_y_scroll().border_r_1().border_color(border);
         for (ix, s) in lib.structs.iter().enumerate() {
@@ -414,6 +424,34 @@ impl TypesView {
         }
         message("Select a type, or create one.", false, cx).into_any_element()
     }
+}
+
+/// A type's menu: open it, add to it, copy its name, delete it.
+fn type_menu(menu: PopupMenu, view: &WeakEntity<TypesView>, sel: &Selected, name: &str, kind: &'static str) -> PopupMenu {
+    // Every item acts on the type the menu was opened on: it is selected first.
+    let act = |label: String, icon: AppIcon, f: fn(&mut TypesView, &mut Window, &mut Context<TypesView>)| {
+        let (view, sel) = (view.clone(), sel.clone());
+        PopupMenuItem::new(label).icon(Icon::new(icon)).on_click(move |_, window, cx| {
+            view.update(cx, |view, cx| {
+                view.selected = Some(sel.clone());
+                view.note = None;
+                f(view, window, cx);
+                cx.notify();
+            })
+            .ok();
+        })
+    };
+    let adds = match sel {
+        Selected::Struct(_) => act("Add Field…".into(), AppIcon::Add, |view, window, cx| view.add_field(window, cx)),
+        Selected::Enum(_) => act("Add Member…".into(), AppIcon::Add, |view, window, cx| view.add_member(window, cx)),
+    };
+    let menu = menu
+        .label(format!("{kind} {name}"))
+        .item(act("Open".into(), AppIcon::Type, |_, _, _| {}))
+        .item(adds)
+        .separator();
+    let menu = crate::context::copy(menu, "Copy Name", name.to_string()).separator();
+    menu.item(act(format!("Delete {kind} {name}"), AppIcon::Trash, |view, _, cx| view.delete_selected(cx)))
 }
 
 impl Render for TypesView {

@@ -8,9 +8,11 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
+use gpui_kit::component::menu::ContextMenuExt as _;
 use gpui_kit::*;
 use n0xis_client::{AnnotationRecord, Engine, ListAnnotations};
 
+use crate::context;
 use crate::layout::{PanelKind, Views};
 use crate::nav::{Location, Navigate, parse_va};
 use crate::panel::{dock_panel, header, message};
@@ -138,17 +140,18 @@ impl BookmarksView {
                     })
                     .unwrap_or_default()
                 });
+                let menu_title = format!("{} {title}", r.va);
                 let mut row = base
                     .child(div().w(px(130.)).flex_none().font_family(theme.mono_font_family.clone()).child(r.va.clone()))
                     .child(div().w(px(180.)).flex_none().truncate().child(title))
                     .child(div().flex_1().min_w_0().truncate().text_color(theme.muted_foreground).child(Self::summary(&r)));
-                if let Some(va) = va {
-                    row = row
-                        .cursor_pointer()
-                        .hover(|s| s.bg(theme.list_hover))
-                        .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.emit(Navigate(va))));
-                }
-                row.into_any_element()
+                let Some(va) = va else { return row.into_any_element() };
+                row = row
+                    .cursor_pointer()
+                    .hover(|s| s.bg(theme.list_hover))
+                    .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.emit(Navigate(va))));
+                row.context_menu(move |menu, _, _| context::address(menu, menu_title.clone(), va, Some(PanelKind::Bookmarks)))
+                    .into_any_element()
             }
         }
     }

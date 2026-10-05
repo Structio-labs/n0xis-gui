@@ -8,9 +8,11 @@ use std::sync::Arc;
 
 use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
+use gpui_kit::component::menu::ContextMenuExt as _;
 use gpui_kit::*;
 use n0xis_client::{ClientError, Disassemble, Engine, FunctionEntry, Instruction};
 
+use crate::context;
 use crate::layout::PanelKind;
 use crate::nav::{Location, Navigate, Point, hex};
 use crate::panel::dock_panel;
@@ -148,6 +150,7 @@ impl DisassemblyView {
     }
 
     fn render_row(&self, row: usize, cx: &mut Context<Self>) -> AnyElement {
+        let row_ix = row;
         let Some(insn) = self.insns.get(row) else { return div().h(ROW_HEIGHT).into_any_element() };
         let theme = cx.theme();
         let operands = insn.text.strip_prefix(insn.mnemonic.as_str()).unwrap_or(&insn.text).trim().to_string();
@@ -156,7 +159,8 @@ impl DisassemblyView {
         // A click selects the instruction; a double click on a branch or call
         // whose target the engine resolved follows it.
         let target = insn.target.as_deref().and_then(parse_va);
-        h_flex()
+        let (text, bytes) = (insn.text.clone(), insn.bytes.clone());
+        let row = h_flex()
             .id(("insn", row))
             .w_full()
             .h(ROW_HEIGHT)
@@ -176,8 +180,21 @@ impl DisassemblyView {
                     Some(target) if event.click_count() >= 2 => cx.emit(Navigate(target)),
                     _ => cx.emit(Point(here)),
                 }))
-            })
-            .into_any_element()
+            });
+        let Some(here) = va else { return row.into_any_element() };
+        context::row_with_menu(("insn-menu", row_ix), row).context_menu(move |menu, _, _| {
+            let menu = menu.label(hex(here));
+            let menu = match target {
+                Some(to) => context::go(menu, format!("Follow to {}", hex(to)), to),
+                None => menu,
+            };
+            let menu = context::views(menu, here, Some(PanelKind::Disassembly)).separator();
+            let menu = context::annotations(menu, here).separator();
+            let menu = context::copy(menu, "Copy Instruction", text.clone());
+            let menu = context::copy(menu, "Copy Bytes", bytes.clone());
+            context::copy(menu, "Copy Address", hex(here))
+        })
+        .into_any_element()
     }
 }
 

@@ -10,9 +10,11 @@ use std::sync::Arc;
 
 use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
+use gpui_kit::component::menu::ContextMenuExt as _;
 use gpui_kit::*;
 use n0xis_client::{BuildCfg, CallSite, ClientError, Engine, Xref, XrefsTo};
 
+use crate::context;
 use crate::layout::{PanelKind, Views};
 use crate::nav::{Location, Navigate, hex, parse_va};
 use crate::panel::{dock_panel, header, message};
@@ -272,7 +274,9 @@ impl XrefsView {
             Row::Ref(r) => {
                 let from = parse_va(&r.from);
                 let place = from.map(|va| Self::place(va, cx)).unwrap_or_default();
-                base.child(mono(r.from.clone()).w(px(130.)).flex_none())
+                let (title, text) = (format!("{} {place}", r.from), r.text.clone());
+                let row = base
+                    .child(mono(r.from.clone()).w(px(130.)).flex_none())
                     .child(div().w(px(160.)).flex_none().truncate().child(place))
                     .child(div().w(px(40.)).flex_none().text_color(theme.muted_foreground).child(r.kind.clone()))
                     .child(mono(r.text.clone()).flex_1().min_w_0().truncate().text_color(theme.muted_foreground))
@@ -280,8 +284,16 @@ impl XrefsView {
                         row.cursor_pointer()
                             .hover(|s| s.bg(theme.list_hover))
                             .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.emit(Navigate(va))))
-                    })
-                    .into_any_element()
+                    });
+                match from {
+                    Some(va) => row
+                        .context_menu(move |menu, _, _| {
+                            let menu = context::address(menu, title.clone(), va, Some(PanelKind::Xrefs));
+                            context::copy(menu, "Copy Instruction", text.clone())
+                        })
+                        .into_any_element(),
+                    None => row.into_any_element(),
+                }
             }
             Row::Call(c) => {
                 let target = c.target.as_deref().and_then(parse_va);
@@ -294,15 +306,39 @@ impl XrefsView {
                     (None, None) => "not resolved".into(),
                 };
                 let go = target.or_else(|| parse_va(&c.from));
-                base.child(mono(c.from.clone()).w(px(130.)).flex_none())
+                let site = parse_va(&c.from);
+                let title = format!("{} → {name}", c.from);
+                let row = base
+                    .child(mono(c.from.clone()).w(px(130.)).flex_none())
                     .child(div().w(px(60.)).flex_none().text_color(theme.muted_foreground).child(c.kind.clone()))
                     .child(div().flex_1().min_w_0().truncate().child(name))
                     .when_some(go, |row, va| {
                         row.cursor_pointer()
                             .hover(|s| s.bg(theme.list_hover))
                             .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.emit(Navigate(va))))
-                    })
-                    .into_any_element()
+                    });
+                match site {
+                    Some(site) => row
+                        .context_menu(move |menu, _, _| {
+                            let menu = menu.label(title.clone());
+                            let menu = match target {
+                                Some(to) => {
+                                    let menu = context::go(menu, "Go To Callee", to);
+                                    context::show_in(menu, "Decompile Callee", to, PanelKind::Decompiler)
+                                }
+                                None => menu,
+                            };
+                            let menu = context::go(menu, "Go To Call Site", site).separator();
+                            let menu = context::annotations(menu, site).separator();
+                            let menu = context::copy(menu, "Copy Call Site Address", hex(site));
+                            match target {
+                                Some(to) => context::copy(menu, "Copy Callee Address", hex(to)),
+                                None => menu,
+                            }
+                        })
+                        .into_any_element(),
+                    None => row.into_any_element(),
+                }
             }
         }
     }

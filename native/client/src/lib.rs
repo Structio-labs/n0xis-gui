@@ -11,6 +11,7 @@
 
 mod analysis;
 mod bytes;
+mod constants;
 mod envelope;
 mod find;
 mod live;
@@ -26,6 +27,7 @@ mod worker;
 
 pub use analysis::{Analysis, AnalysisReport, AnalysisState, Phase, Progress, WarmUp};
 pub use bytes::{MAX_WINDOW, MemSpan, Span};
+pub use constants::{ConstantHit, ConstantMatch, Constants, IdentifyConstants};
 pub use envelope::{EngineError, Envelope, Meta};
 pub use find::{Find, FindMatch, FindQuery, FindResult};
 pub use live::{

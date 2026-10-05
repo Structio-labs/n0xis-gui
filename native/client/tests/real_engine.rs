@@ -13,8 +13,8 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use n0xis_client::{
-    Analysis, AnalysisState, Annotate, DecompStyle, WarmUp, XrefsTo, Decompile, Disassemble, DiscoverFunctions, Engine, EngineCommand, EngineStatus, Note,
-    RenameVariable, SetVariableType, ShowAnnotations, TypeSubject, VariableKind,
+    Analysis, AnalysisState, Annotate, DecompStyle, WarmUp, XrefsTo, Decompile, Disassemble, DiscoverFunctions, Engine, EngineCommand, EngineStatus,
+    IdentifyConstants, Note, RenameVariable, SetVariableType, ShowAnnotations, TypeSubject, VariableKind,
 };
 
 const SOURCE: &str = r#"
@@ -85,6 +85,18 @@ fn the_decompilation_of_a_known_function_holds_its_planted_constants() {
 
     let disassembly = engine.send(&Disassemble { addr: mix.va.clone(), count: 8 }).wait().expect("disassembly");
     assert_eq!(disassembly.insns.first().map(|i| i.va.as_str()), Some(mix.va.as_str()), "it starts where asked");
+
+    // Analyze ▸ Identify Constants on the same function: the multiplier planted
+    // in the source is xxHash's first 32-bit prime (2654435761 = 0x9e3779b1);
+    // the xor value was made up for this test, and no table may claim it.
+    let constants = engine.send(&IdentifyConstants { addr: mix.va.clone() }).wait().expect("const identify");
+    let hit = |literal: &str| constants.hits.iter().find(|h| h.literal.eq_ignore_ascii_case(literal));
+    assert!(
+        hit("0x9e3779b1").is_some_and(|h| h.matches.iter().any(|m| m.algorithm == "xxHash")),
+        "the planted prime is named: {constants:?}"
+    );
+    assert!(hit("0x5eed1234").is_none(), "a made-up value is not named: {constants:?}");
+    assert_eq!(constants.identified as usize, constants.hits.len(), "the count says how many were named: {constants:?}");
 
     match engine.status() {
         EngineStatus::Ready { version, .. } => {

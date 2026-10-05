@@ -44,7 +44,7 @@ The real-engine test compiles a small C function with planted constants and chec
 they appear in its decompilation. It skips, saying why, without a C compiler or an
 engine. The protocol tests need Python for the stand-in engine.
 
-## Status (2026-10-05)
+## Status (2026-10-06)
 
 Shell: one title bar (on Linux the window draws its own frame and controls) with a menu
 that lists only working actions; open a target from the command line, a file dialog, or
@@ -55,9 +55,14 @@ generated from its stylesheet by `app/themes/build_themes.py`, plus your own GPU
 theme files in `~/.config/n0xis/themes/`, re-read when they change and reported when one
 cannot be read; View ▸ Theme; zoom with Ctrl+= / Ctrl+- / Ctrl+0; both kept in
 `~/.config/n0xis/ui-settings.json`. Dock: panels in tab groups, drag a tab onto another
-group or an edge, Shift+Esc zooms one; the arrangement is saved to
+group or an edge, Shift+Esc zooms one. A group's tabs run along any side of it, top, bottom,
+left or right, as icons or with names (a tab's right-click menu; a strip down a side shows
+icons and puts the shown panel's name in a header above the content); each tab and each
+group header has a close button, and the marker at the header's left puts another panel in
+the shown one's place. The arrangement, tab sides included, is saved to
 `~/.config/n0xis/ui-layout.json`, with layout undo/redo on Ctrl+Shift+Z / Ctrl+Shift+Y and
-Window ▸ Reset Layout.
+Window ▸ Reset Layout. The dock's behaviour is GPUI Kit's; its tab groups are drawn by
+`app/src/skin.rs` through the renderer the dock lets an application supply.
 
 Panels. Every one is an ordinary widget: View ▸ Panels opens it (back in the group it
 belongs with), and it can be closed, moved and opened again without losing what it holds.
@@ -165,6 +170,31 @@ commands (`app/src/keymap.rs`) drives both the bindings and this editor; changes
 `~/.config/n0xis/keybindings.json`. Letters and digits follow the physical key, so with a
 Ukrainian layout Ctrl and the key that prints `п` is Ctrl+G.
 
+Right-click menus. Every row that stands for an address has one: function rows, the
+decompiler (a parameter or local under the caret is offered by name), variables,
+instructions, linear lines and function headers, graph blocks and the graph around them,
+cross-references, bookmarks, strings, find results, hex rows, triage exports, types, scanner
+matches and console entries; the workspace bar has the menu the Tauri build gave empty
+space. A menu acts on the address it was opened on, whatever is selected: go there, show it
+in another view, rename, comment, bookmark, clear, identify the constants of its function,
+copy what the row shows. Only items that do something are listed.
+
+Command palette (Ctrl+Shift+P, Ctrl+P or F1): every command of the key table, the panels,
+the workspaces, the themes, and the yes/no settings with their values; type to filter,
+Enter runs. The commands are `app/src/keymap.rs`'s table, so the palette, the menus and
+Settings ▸ Keys cannot list different ones.
+
+More. File ▸ Close Target goes back to the start screen; File ▸ Scan a Running Process…
+opens the scanner. Ctrl+F opens Find with the caret in its query. Analyze ▸ Identify
+Constants names the known constants in the selected function (`const identify`): the
+algorithm, the value's role in it, and the formula, or that none of its literals is known.
+The decompiler's Graph button shows the function as a graph. The target's path in the title
+bar opens a menu (open another, close, triage, copy the path). View ▸ Round Graph Edge
+Corners draws the graph's edges with curved bends on the same routes. Settings ▸ Appearance
+has interface scale presets (90 to 125 %); Help ▸ Keyboard Shortcuts opens the keys page.
+
 Every view shows only what the engine returned; an empty or failed view says so. Every
-item of `docs/CURRENT-UI.md` §12 is done; the few parts left out on purpose are said there,
-with the reason.
+item of `docs/CURRENT-UI.md` §12 is done, views and interactions; the parts left out on
+purpose are said there, with the reason. Until 2026-10-06 that checklist listed views
+only, and this paragraph claimed the whole of it while right-click menus and tab strips on
+the sides were missing.

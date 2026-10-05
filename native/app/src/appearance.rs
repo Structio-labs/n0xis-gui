@@ -37,7 +37,18 @@ pub const THEME_POLL: Duration = Duration::from_secs(1);
 #[action(namespace = n0xis, no_json)]
 pub struct SelectTheme(pub SharedString);
 
-gpui_kit::actions!(n0xis, [ZoomIn, ZoomOut, ResetZoom]);
+gpui_kit::actions!(n0xis, [ZoomIn, ZoomOut, ResetZoom, ToggleRoundedEdges]);
+
+/// Interface scales offered as presets, in percent of the theme's own size.
+pub const SCALES: [u32; 4] = [90, 100, 110, 125];
+
+/// How the control-flow graph draws its edges: square corners, or rounded.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct GraphLook {
+    pub rounded_edges: bool,
+}
+
+impl Global for GraphLook {}
 
 /// A file in the themes folder, as last seen: its path, modification time and length.
 type FileStamp = (PathBuf, Option<SystemTime>, u64);
@@ -70,6 +81,9 @@ pub struct Settings {
     pub theme: Option<String>,
     #[serde(default)]
     pub font_size: Option<f32>,
+    /// Round the corners of the graph's edges.
+    #[serde(default)]
+    pub rounded_edges: bool,
 }
 
 pub fn user_themes_dir() -> Option<PathBuf> {
@@ -167,6 +181,7 @@ pub fn init(cx: &mut App) -> Vec<String> {
     if let Some(size) = settings.font_size {
         set_font_size(size, cx);
     }
+    cx.set_global(GraphLook { rounded_edges: settings.rounded_edges });
     problems
 }
 
@@ -211,9 +226,25 @@ pub fn reset_zoom(cx: &mut App) {
     set_font_size(base, cx);
 }
 
+/// The interface's size as a percentage of the theme's own, rounded.
+pub fn scale(cx: &App) -> u32 {
+    let base = cx.global::<Themes>().default_font_size;
+    (cx.theme().font_size.as_f32() / base * 100.).round() as u32
+}
+
+/// Size the interface at `percent` of the theme's own size.
+pub fn set_scale(percent: u32, cx: &mut App) {
+    let base = cx.global::<Themes>().default_font_size;
+    set_font_size(base * percent as f32 / 100., cx);
+}
+
 /// Keep the current choice for the next run.
 pub fn save(cx: &App) -> std::io::Result<()> {
-    let settings = Settings { theme: Some(current_theme(cx).to_string()), font_size: Some(cx.theme().font_size.as_f32()) };
+    let settings = Settings {
+        theme: Some(current_theme(cx).to_string()),
+        font_size: Some(cx.theme().font_size.as_f32()),
+        rounded_edges: cx.try_global::<GraphLook>().is_some_and(|look| look.rounded_edges),
+    };
     let path = settings_file().ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "no config directory"))?;
     let json = serde_json::to_string_pretty(&settings).map_err(std::io::Error::other)?;
     crate::config::write_atomic(&path, &json)

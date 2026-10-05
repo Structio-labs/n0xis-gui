@@ -88,6 +88,31 @@ impl Prefs {
     }
 }
 
+/// Turn one of the yes/no settings over, by the name `settings.json` keeps it
+/// under (`analyze_on_open`, `warm_up`, `keep_cache_on_close`).
+#[derive(Clone, PartialEq, serde::Deserialize, Action)]
+#[action(namespace = n0xis, no_json)]
+pub struct TogglePref(pub SharedString);
+
+/// The yes/no settings, by saved name, with what the palette calls them.
+pub const SWITCHES: [(&str, &str); 3] = [
+    ("analyze_on_open", "Run the analysis when a target opens"),
+    ("warm_up", "Warm the decompiler cache during the analysis"),
+    ("keep_cache_on_close", "Keep the cache when a target closes"),
+];
+
+impl Prefs {
+    /// The yes/no setting saved as `name`, to read or to turn over.
+    pub fn switch(&mut self, name: &str) -> Option<&mut bool> {
+        match name {
+            "analyze_on_open" => Some(&mut self.analyze_on_open),
+            "warm_up" => Some(&mut self.warm_up),
+            "keep_cache_on_close" => Some(&mut self.keep_cache_on_close),
+            _ => None,
+        }
+    }
+}
+
 /// Change the settings and keep them; a failed save is reported.
 pub fn update(cx: &mut App, change: impl FnOnce(&mut Prefs)) -> std::io::Result<()> {
     cx.update_global::<Prefs, _>(|prefs, _| change(prefs));
@@ -107,6 +132,19 @@ mod tests {
         assert!(json.contains(r#""kind":"folder""#), "the location says which kind it is: {json}");
         assert!(Prefs::parse("{}").is_err());
         assert!(Prefs::parse(r#"{"version":7}"#).unwrap_err().contains("version 7"));
+    }
+
+    #[test]
+    fn every_switch_names_a_field_of_the_saved_shape() {
+        let mut prefs = Prefs::default();
+        let json = serde_json::to_value(&prefs).unwrap();
+        for (name, _) in super::SWITCHES {
+            assert!(json.get(name).is_some_and(serde_json::Value::is_boolean), "{name} is not a saved yes/no setting");
+            let was = *prefs.switch(name).unwrap();
+            *prefs.switch(name).unwrap() = !was;
+            assert_eq!(serde_json::to_value(&prefs).unwrap().get(name), Some(&serde_json::Value::Bool(!was)), "{name} turns the field it names");
+        }
+        assert!(prefs.switch("project_location").is_none());
     }
 
     #[test]

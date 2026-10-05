@@ -10,10 +10,12 @@ use std::sync::Arc;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
+use gpui_kit::component::menu::ContextMenuExt as _;
 use gpui_kit::*;
 use n0xis_client::{Engine, Export, Profile, ProfileReport};
 
 use crate::assets::AppIcon;
+use crate::context;
 use crate::layout::PanelKind;
 use crate::nav::{Navigate, parse_va};
 use crate::panel::{dock_panel, header, message, mono};
@@ -137,7 +139,8 @@ impl TriageView {
             (None, None) => String::new(),
         };
         let go = if export.forwarder.is_none() { parse_va(&export.va) } else { None };
-        h_flex()
+        let (name, address, forwarded) = (export.name.clone(), export.va.clone(), destination.clone());
+        let row = h_flex()
             .id(("export", row))
             .w_full()
             .h(ROW_HEIGHT)
@@ -156,8 +159,22 @@ impl TriageView {
                 r.cursor_pointer()
                     .hover(|s| s.bg(theme.list_hover))
                     .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.emit(Navigate(va))))
-            })
-            .into_any_element()
+            });
+        row.context_menu(move |menu, _, _| {
+            let menu = menu.label(name.clone());
+            let menu = match go {
+                Some(va) => {
+                    let menu = context::go(menu, "Go To", va);
+                    let menu = context::views(menu, va, None).separator();
+                    context::annotations(menu, va).separator()
+                }
+                None => menu,
+            };
+            let menu = context::copy(menu, "Copy Name", name.clone());
+            let menu = if forwarded.is_empty() { menu } else { context::copy(menu, "Copy Destination", forwarded.trim_start_matches("→ ").to_string()) };
+            context::copy(menu, "Copy Address", address.clone())
+        })
+        .into_any_element()
     }
 
     fn render_report(&self, report: &ProfileReport, cx: &mut Context<Self>) -> AnyElement {

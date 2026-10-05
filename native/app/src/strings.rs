@@ -10,10 +10,12 @@ use std::sync::Arc;
 
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
+use gpui_kit::component::menu::ContextMenuExt as _;
 use gpui_kit::*;
 use n0xis_client::{ClientError, Engine, ImageString, ListStrings, StringEncoding};
 
 use crate::assets::AppIcon;
+use crate::context;
 use crate::layout::PanelKind;
 use crate::nav::{Navigate, parse_va};
 use crate::panel::{dock_panel, header, message};
@@ -159,6 +161,7 @@ impl StringsView {
         let Some(s) = self.strings.get(ix) else { return div().h(ROW_HEIGHT).into_any_element() };
         let theme = cx.theme();
         let va = parse_va(&s.address);
+        let (title, text) = (format!("{} · {}", s.address, s.section), s.text.clone());
         let mut row = h_flex()
             .id(("string", ix))
             .w_full()
@@ -176,13 +179,16 @@ impl StringsView {
                     .child(if s.encoding == StringEncoding::Utf8 { "" } else { s.encoding.label() }),
             )
             .child(div().flex_1().min_w_0().truncate().child(one_line(&s.text)));
-        if let Some(va) = va {
-            row = row
-                .cursor_pointer()
-                .hover(|style| style.bg(theme.list_hover))
-                .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.emit(Navigate(va))));
-        }
-        row.into_any_element()
+        let Some(va) = va else { return row.into_any_element() };
+        row = row
+            .cursor_pointer()
+            .hover(|style| style.bg(theme.list_hover))
+            .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.emit(Navigate(va))));
+        row.context_menu(move |menu, _, _| {
+            let menu = context::address(menu, title.clone(), va, Some(PanelKind::Strings));
+            context::copy(menu, "Copy Text", text.clone())
+        })
+        .into_any_element()
     }
 
     fn summary(&self) -> String {

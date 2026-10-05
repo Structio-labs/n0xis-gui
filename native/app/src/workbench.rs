@@ -4,25 +4,26 @@
 //! The window's root view: the open target, its engine, and the views over it.
 
 use std::path::PathBuf;
-use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
 use gpui_kit::base::Placement;
-use gpui_kit::base::dock::{DockPlacement, InsertTarget};
+use gpui_kit::base::dock::{DockPlacement, InsertTarget, PaneRef};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::status_bar::StatusBar;
 use gpui_kit::base::Selectable as _;
-use gpui_kit::component::dock::{AnyDrag, DockArea, DockAreaState, DockEvent, DockSkin};
+use gpui_kit::component::dock::{AnyDrag, DockArea, DockEvent};
 use gpui_kit::component::popover::Popover;
-use gpui_kit::component::menu::AppMenuBar;
+use gpui_kit::component::menu::{AppMenuBar, ContextMenuExt as _, DropdownMenu as _};
+use gpui_kit::component::Icon;
 use gpui_kit::component::{ActiveTheme as _, Sizable as _, TitleBar, WindowExt as _, h_flex, v_flex};
 use gpui_kit::*;
-use n0xis_client::{Analysis, AnalysisState, Engine, EngineCommand, EngineStatus, ShowAnnotations, WarmUp};
+use n0xis_client::{Analysis, AnalysisState, Constants, Engine, EngineCommand, EngineStatus, IdentifyConstants, ShowAnnotations, WarmUp};
 
-use crate::appearance::{self, ResetZoom, SelectTheme, ZoomIn, ZoomOut};
+use crate::appearance::{self, ResetZoom, SelectTheme, ToggleRoundedEdges, ZoomIn, ZoomOut};
 use crate::bookmarks::BookmarksView;
 use crate::console::ConsoleView;
+use crate::context::{EditAt, EditKind, RecognizeAt, ShowAt};
 use crate::decompiler::{DecompilerView, EditVariable, VariableIntent};
 use crate::disassembly::DisassemblyView;
 use crate::edits::{self, Change, Edit, Fact, Journal};
@@ -32,20 +33,24 @@ use crate::hex::HexView;
 use crate::strings::StringsView;
 use crate::linear::LinearView;
 use crate::assets::AppIcon;
-use crate::layout::{self, History, PanelKind, ReplacePanel, SavedWorkspaces, ShowPanel, SwitchWorkspace, Views, Workspace};
+use crate::layout::{self, Arrangement, History, PanelKind, ReplacePanel, SavedWorkspaces, ShowPanel, SwitchWorkspace, Views, Workspace};
 use crate::nav::{Location, NavHistory, Navigate, Point, hex, parse_va};
 use crate::prompt::{self, Prompt};
 use crate::recent::{self, OpenRecent, Recent};
 use crate::scanner::ScannerView;
+use crate::skin::{PanelDrag, SetTabStrip, Skin, Strips};
 use crate::search::SearchView;
 use crate::triage::TriageView;
 use crate::types::TypesView;
 use crate::variables::VariablesView;
 use crate::xrefs::XrefsView;
 use crate::prefs::{Prefs, ProjectLocation};
+use crate::palette::Palette;
+use crate::prefs::TogglePref;
 use crate::{
-    About, ClearAnnotations, Comment, GoBack, GoForward, GoTo, Open, OpenSettings, RedoEdit, RedoLayout, Rename,
-    ResetLayout, RunAnalysis, SetReturnType, SetType, ToggleBookmark, UndoEdit, UndoLayout, menus, project, settings,
+    About, ClearAnnotations, ClearCaches, CloseTarget, CommandPalette, Comment, FindInImage, GoBack, GoForward, GoTo,
+    KeyboardShortcuts, Open, OpenSettings, RecognizeConstants, RedoEdit, RedoLayout, Rename, ResetLayout, RunAnalysis,
+    ScanProcess, SetReturnType, SetType, ToggleBookmark, UndoEdit, UndoLayout, menus, project, settings,
 };
 
 /// How often the status bar re-reads the engine's state.
@@ -89,13 +94,17 @@ pub struct Workbench {
     menu_bar: Entity<AppMenuBar>,
     focus_handle: FocusHandle,
     dock_area: Entity<DockArea>,
-    _dock_skin: Rc<DockSkin>,
+    /// Where each group of the dock has its tabs; the skin draws from it.
+    strips: Strips,
     /// The workspace on screen; its layout lives in the dock.
     workspace: Workspace,
-    /// The layouts of the other workspaces, as they were left.
-    saved_layouts: std::collections::BTreeMap<Workspace, DockAreaState>,
+    /// The other workspaces, as they were left.
+    saved_layouts: std::collections::BTreeMap<Workspace, Arrangement>,
     /// Each workspace's own layout undo history.
     histories: std::collections::BTreeMap<Workspace, History>,
+    /// The command palette, while it is open, and where the caret was before.
+    palette: Option<Palette>,
+    palette_return: Option<FocusHandle>,
     /// Set once a save of the layout has failed, so the user is told once.
     layout_save_failed: bool,
     /// The same for the list of recent targets.
@@ -133,7 +142,8 @@ impl Workbench {
             strings: cx.new(|cx| StringsView::new(window, cx)),
         };
         cx.set_global(views.clone());
-        let (dock_area, dock_skin) = DockSkin::dock_area(layout::AREA_ID, Some(layout::LAYOUT_VERSION), window, cx);
+        let strips = Strips::default();
+        let dock_area = Skin::dock_area(layout::AREA_ID, Some(layout::LAYOUT_VERSION), strips.clone(), window, cx);
         // The workspaces as they were left: the current one into the dock, the
         // others kept for when they are switched to.
         let (saved, mut notes) = match layout::read_workspaces() {
@@ -141,10 +151,13 @@ impl Workbench {
             Err(reason) => (None, reason.explain().into_iter().collect()),
         };
         let workspace = saved.as_ref().map_or(Workspace::Decompile, |s| s.current);
-        let mut saved_layouts = saved.map(|s| s.layouts).unwrap_or_default();
+        let mut saved_layouts = saved.map(SavedWorkspaces::arrangements).unwrap_or_default();
         let restored = match saved_layouts.remove(&workspace) {
-            Some(state) => match dock_area.update(cx, |area, cx| area.load(state, window, cx)) {
-                Ok(()) => true,
+            Some(arrangement) => match dock_area.update(cx, |area, cx| area.load(arrangement.dock, window, cx)) {
+                Ok(()) => {
+                    strips.restore(&arrangement.strips, dock_area.read(cx), cx);
+                    true
+                }
                 Err(e) => {
                     notes.push(format!("The saved panel layout could not be restored ({e}); using the default."));
                     false
@@ -159,7 +172,10 @@ impl Workbench {
             window.defer(cx, move |window, cx| window.push_notification(SharedString::from(note), cx));
         }
         let layout_changes = cx.subscribe_in(&dock_area, window, |this, _, event: &DockEvent, window, cx| match event {
-            DockEvent::LayoutChanged => this.layout_changed(window, cx),
+            DockEvent::LayoutChanged => {
+                this.keep_focus_on_screen(window, cx);
+                this.layout_changed(window, cx);
+            }
             // A panel dragged in from the widget palette.
             DockEvent::DragDrop { item, target } => {
                 if let Some(kind) = item.value().downcast_ref::<PanelKind>() {
@@ -280,10 +296,12 @@ impl Workbench {
             menu_bar: menus::init(cx),
             focus_handle: cx.focus_handle(),
             dock_area,
-            _dock_skin: dock_skin,
+            strips,
             workspace,
             saved_layouts,
             histories: Default::default(),
+            palette: None,
+            palette_return: None,
             layout_save_failed: false,
             recent_save_failed: false,
             next_change_is_load: true,
@@ -715,7 +733,13 @@ impl Workbench {
     }
 
     fn on_rename(&mut self, _: &Rename, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(location) = self.selection(window, cx) else { return };
+        if let Some(location) = self.selection(window, cx) {
+            self.rename(location, window, cx);
+        }
+    }
+
+    /// Rename the function `location` lies in, or name the address when none does.
+    fn rename(&mut self, location: Location, window: &mut Window, cx: &mut Context<Self>) {
         let (fact, label, prompt, shown) = match &location.function {
             Some(f) => {
                 let Some(start) = parse_va(&f.va) else { return };
@@ -749,7 +773,12 @@ impl Workbench {
     }
 
     fn on_comment(&mut self, _: &Comment, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(location) = self.selection(window, cx) else { return };
+        if let Some(location) = self.selection(window, cx) {
+            self.comment(location, window, cx);
+        }
+    }
+
+    fn comment(&mut self, location: Location, window: &mut Window, cx: &mut Context<Self>) {
         let prompt = Prompt {
             title: format!("Comment at {}", location.label()),
             detail: Some("Shown in the disassembly. Leave it empty to remove it.".into()),
@@ -767,7 +796,12 @@ impl Workbench {
     }
 
     fn on_set_return_type(&mut self, _: &SetReturnType, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(location) = self.selection(window, cx) else { return };
+        if let Some(location) = self.selection(window, cx) {
+            self.set_return_type(location, window, cx);
+        }
+    }
+
+    fn set_return_type(&mut self, location: Location, window: &mut Window, cx: &mut Context<Self>) {
         let Some(f) = location.function.clone() else {
             window.push_notification("No listed function covers the selection, so it has no return type to set.", cx);
             return;
@@ -813,7 +847,12 @@ impl Workbench {
     }
 
     fn on_clear_annotations(&mut self, _: &ClearAnnotations, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(location) = self.selection(window, cx) else { return };
+        if let Some(location) = self.selection(window, cx) {
+            self.clear_annotations(location, window, cx);
+        }
+    }
+
+    fn clear_annotations(&mut self, location: Location, window: &mut Window, cx: &mut Context<Self>) {
         let Some(engine) = self.engine() else { return };
         if self.edit_busy {
             window.push_notification("The last change is still being written.", cx);
@@ -854,6 +893,34 @@ impl Workbench {
         self.go_to(*va, window, cx);
     }
 
+    /// From a right-click menu: go to an address, and bring a panel showing it forward.
+    fn on_show_at(&mut self, action: &ShowAt, window: &mut Window, cx: &mut Context<Self>) {
+        if self.target.is_none() {
+            window.push_notification("Open a target first.", cx);
+            return;
+        }
+        self.go_to(action.va, window, cx);
+        if let Some(panel) = &action.panel {
+            self.on_show_panel(&ShowPanel(panel.clone()), window, cx);
+        }
+    }
+
+    /// From a right-click menu: the Edit menu's change, at the address the menu was opened on.
+    fn on_edit_at(&mut self, action: &EditAt, window: &mut Window, cx: &mut Context<Self>) {
+        if self.target.is_none() {
+            window.push_notification("Open a target first.", cx);
+            return;
+        }
+        let location = self.locate(action.va, cx);
+        match action.edit {
+            EditKind::Rename => self.rename(location, window, cx),
+            EditKind::Comment => self.comment(location, window, cx),
+            EditKind::ReturnType => self.set_return_type(location, window, cx),
+            EditKind::Bookmark => self.toggle_bookmark(location, window, cx),
+            EditKind::Clear => self.clear_annotations(location, window, cx),
+        }
+    }
+
     fn on_show_panel(&mut self, action: &ShowPanel, window: &mut Window, cx: &mut Context<Self>) {
         let Some(kind) = PanelKind::from_name(&action.0) else { return };
         // A panel opened by name is wanted now, target or not (the scanner needs none).
@@ -881,7 +948,12 @@ impl Workbench {
     }
 
     fn on_toggle_bookmark(&mut self, _: &ToggleBookmark, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(location) = self.selection(window, cx) else { return };
+        if let Some(location) = self.selection(window, cx) {
+            self.toggle_bookmark(location, window, cx);
+        }
+    }
+
+    fn toggle_bookmark(&mut self, location: Location, window: &mut Window, cx: &mut Context<Self>) {
         let Some(engine) = self.engine() else { return };
         if self.edit_busy {
             window.push_notification("The last change is still being written.", cx);
@@ -928,18 +1000,42 @@ impl Workbench {
         .detach();
     }
 
+    /// A panel that held the caret was closed or hidden behind another tab:
+    /// the caret would stay with an element no longer drawn, and every key
+    /// would go nowhere. The workbench takes it instead. Checked when the
+    /// layout changes, while the last frame still knows where the caret was.
+    fn keep_focus_on_screen(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let area = self.dock_area.read(cx);
+        let mut shown = std::collections::HashSet::new();
+        for placement in [DockPlacement::Center, DockPlacement::Left, DockPlacement::Bottom, DockPlacement::Right] {
+            if let Some(tree) = area.layout(placement) {
+                tree.root().walk(&mut |node| {
+                    if let PaneRef::Tabs { panels, active_ix } = node.kind() {
+                        shown.extend(panels.get(active_ix).copied());
+                    }
+                });
+            }
+        }
+        let lost = PanelKind::ALL.into_iter().any(|kind| {
+            !shown.contains(&self.views.panel_id(kind)) && self.views.handle(kind).focus_handle(cx).contains_focused(window, cx)
+        });
+        if lost {
+            self.focus_handle.focus(window, cx);
+        }
+    }
+
     fn layout_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self._layout_settle = Some(cx.spawn_in(window, async move |this, cx| {
             cx.background_executor().timer(LAYOUT_SETTLE).await;
             this.update_in(cx, |wb, window, cx| {
-                let state = wb.dock_area.read(cx).dump(cx);
+                let arrangement = wb.arrangement(cx);
                 let history = wb.histories.entry(wb.workspace).or_default();
                 if std::mem::take(&mut wb.next_change_is_load) {
-                    history.replace_current(state.clone());
+                    history.replace_current(arrangement.clone());
                 } else {
-                    history.record(state.clone());
+                    history.record(arrangement.clone());
                 }
-                if let Err(e) = wb.save_workspaces(state)
+                if let Err(e) = wb.save_workspaces(arrangement)
                     && !wb.layout_save_failed
                 {
                     wb.layout_save_failed = true;
@@ -950,17 +1046,24 @@ impl Workbench {
         }));
     }
 
+    /// The workspace on screen as it is now: the dock's layout and its tabs' sides.
+    fn arrangement(&self, cx: &App) -> Arrangement {
+        let area = self.dock_area.read(cx);
+        Arrangement { dock: area.dump(cx), strips: self.strips.save(area, cx) }
+    }
+
     /// Keep every workspace's layout: `current` for the one on screen.
-    fn save_workspaces(&self, current: DockAreaState) -> std::io::Result<()> {
+    fn save_workspaces(&self, current: Arrangement) -> std::io::Result<()> {
         let mut layouts = self.saved_layouts.clone();
         layouts.insert(self.workspace, current);
         layout::write_workspaces(&SavedWorkspaces::new(self.workspace, layouts))
     }
 
-    /// Load `state` into the dock; false (and said) when it cannot be.
-    fn apply_layout(&mut self, state: DockAreaState, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        match self.dock_area.update(cx, |area, cx| area.load(state, window, cx)) {
+    /// Load `arrangement` into the dock; false (and said) when it cannot be.
+    fn apply_layout(&mut self, arrangement: Arrangement, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        match self.dock_area.update(cx, |area, cx| area.load(arrangement.dock, window, cx)) {
             Ok(()) => {
+                self.strips.restore(&arrangement.strips, self.dock_area.read(cx), cx);
                 self.next_change_is_load = true;
                 true
             }
@@ -982,17 +1085,18 @@ impl Workbench {
         if to == self.workspace {
             return;
         }
-        let leaving = self.dock_area.read(cx).dump(cx);
+        let leaving = self.arrangement(cx);
         self.saved_layouts.insert(self.workspace, leaving);
         self.workspace = to;
         self.dock_shown = true;
         let restored = match self.saved_layouts.remove(&to) {
-            Some(state) => self.apply_layout(state, window, cx),
+            Some(arrangement) => self.apply_layout(arrangement, window, cx),
             None => false,
         };
         if !restored {
             let views = self.views.clone();
             self.dock_area.update(cx, |area, cx| area.set_center(to.default_layout(&views, cx), window, cx));
+            self.strips.restore(&[], self.dock_area.read(cx), cx);
             self.next_change_is_load = true;
         }
         cx.notify();
@@ -1027,8 +1131,8 @@ impl Workbench {
 
     fn on_undo_layout(&mut self, _: &UndoLayout, window: &mut Window, cx: &mut Context<Self>) {
         match self.histories.entry(self.workspace).or_default().undo() {
-            Some(state) => {
-                self.apply_layout(state, window, cx);
+            Some(arrangement) => {
+                self.apply_layout(arrangement, window, cx);
             }
             None => window.push_notification("Nothing to undo in the layout.", cx),
         }
@@ -1036,8 +1140,8 @@ impl Workbench {
 
     fn on_redo_layout(&mut self, _: &RedoLayout, window: &mut Window, cx: &mut Context<Self>) {
         match self.histories.entry(self.workspace).or_default().redo() {
-            Some(state) => {
-                self.apply_layout(state, window, cx);
+            Some(arrangement) => {
+                self.apply_layout(arrangement, window, cx);
             }
             None => window.push_notification("Nothing to redo in the layout.", cx),
         }
@@ -1046,6 +1150,210 @@ impl Workbench {
     fn on_reset_layout(&mut self, _: &ResetLayout, window: &mut Window, cx: &mut Context<Self>) {
         let (views, workspace) = (self.views.clone(), self.workspace);
         self.dock_area.update(cx, |area, cx| area.set_center(workspace.default_layout(&views, cx), window, cx));
+        self.strips.restore(&[], self.dock_area.read(cx), cx);
+    }
+
+    /// A group's tabs go along another side, or show another way: a layout
+    /// change like any other, undone and kept the same way.
+    fn on_set_tab_strip(&mut self, action: &SetTabStrip, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(node) = Strips::node(self.dock_area.read(cx), action.group, cx) else { return };
+        let mut strip = self.strips.get(node);
+        if let Some(side) = action.side {
+            strip.side = side;
+        }
+        if let Some(labels) = action.labels {
+            strip.labels = labels;
+        }
+        if strip == self.strips.get(node) {
+            return;
+        }
+        self.strips.set(node, strip);
+        self.layout_changed(window, cx);
+        window.refresh();
+    }
+
+    fn on_command_palette(&mut self, _: &CommandPalette, window: &mut Window, cx: &mut Context<Self>) {
+        if self.palette.is_some() {
+            self.close_palette(window, cx);
+            return;
+        }
+        self.palette_return = window.focused(cx);
+        self.palette = Some(Palette::new(window, cx));
+        // The palette's field exists once drawn; the caret goes there then.
+        cx.on_next_frame(window, |wb, window, cx| {
+            if let Some(palette) = &wb.palette {
+                palette.focus(window, cx);
+            }
+        });
+        cx.notify();
+    }
+
+    /// Close the palette. The caret goes back where it was, unless the command
+    /// it ran put it somewhere else (a prompt, a field).
+    fn close_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(palette) = self.palette.take() else { return };
+        let back = self.palette_return.take();
+        if palette.has_focus(window, cx) {
+            match back {
+                Some(handle) => handle.focus(window, cx),
+                None => self.focus_handle.focus(window, cx),
+            }
+        }
+        cx.notify();
+    }
+
+    /// The palette over the window, when open.
+    fn render_palette(&self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let palette = self.palette.as_ref()?;
+        let this = cx.entity().downgrade();
+        let close = move |window: &mut Window, cx: &mut App| {
+            let this = this.clone();
+            // After the command has run and the palette's own handling is done.
+            window.defer(cx, move |window, cx| {
+                this.update(cx, |wb, cx| wb.close_palette(window, cx)).ok();
+            });
+        };
+        let command = palette.render(self.workspace, self.target.is_some(), close, cx);
+        let theme = cx.theme();
+        let _ = window;
+        Some(
+            deferred(
+                div()
+                    .id("palette-backdrop")
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size_full()
+                    .occlude()
+                    .on_mouse_down(MouseButton::Left, cx.listener(|wb, _: &MouseDownEvent, window, cx| wb.close_palette(window, cx)))
+                    .child(
+                        h_flex().absolute().top(px(72.)).left_0().right_0().justify_center().child(
+                            div()
+                                .id("palette")
+                                .w(px(620.))
+                                .bg(theme.popover)
+                                .border_1()
+                                .border_color(theme.border)
+                                .rounded_lg()
+                                .shadow_lg()
+                                .overflow_hidden()
+                                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                                .child(command),
+                        ),
+                    ),
+            )
+            .with_priority(1)
+            .into_any_element(),
+        )
+    }
+
+    /// Leave the open target and go back to the start screen.
+    fn on_close_target(&mut self, _: &CloseTarget, window: &mut Window, cx: &mut Context<Self>) {
+        if self.target.is_none() {
+            return;
+        }
+        self.close_target(cx);
+        self.engine_status = None;
+        self.analysis_state = None;
+        self.location = None;
+        self.nav.clear();
+        self.journal.clear();
+        self.edit_busy = false;
+        self.dock_shown = false;
+        let v = self.views.clone();
+        v.decompiler.update(cx, |view, cx| view.set_engine(None, cx));
+        v.disassembly.update(cx, |view, cx| view.set_engine(None, cx));
+        v.graph.update(cx, |view, cx| view.set_engine(None, cx));
+        v.linear.update(cx, |view, cx| view.set_engine(None, cx));
+        v.xrefs.update(cx, |view, cx| view.set_engine(None, cx));
+        v.triage.update(cx, |view, cx| view.set_engine(None, cx));
+        v.bookmarks.update(cx, |view, cx| view.set_engine(None, cx));
+        v.types.update(cx, |view, cx| view.set_engine(None, cx));
+        v.find.update(cx, |view, cx| view.set_engine(None, cx));
+        v.console.update(cx, |view, cx| view.set_engine(None, cx));
+        v.hex.update(cx, |view, cx| view.set_engine(None, cx));
+        v.strings.update(cx, |view, cx| view.set_engine(None, cx));
+        v.functions.update(cx, |list, cx| list.clear(cx));
+        window.set_window_title("N0xis");
+        cx.notify();
+    }
+
+    /// Ctrl+F: the Find panel, with the caret in its query.
+    fn on_find_in_image(&mut self, _: &FindInImage, window: &mut Window, cx: &mut Context<Self>) {
+        if self.target.is_none() {
+            window.push_notification("Open a target first.", cx);
+            return;
+        }
+        self.on_show_panel(&ShowPanel(PanelKind::Find.name().into()), window, cx);
+        let field = self.views.find.read(cx).query_focus(cx);
+        field.focus(window, cx);
+    }
+
+    fn on_scan_process(&mut self, _: &ScanProcess, window: &mut Window, cx: &mut Context<Self>) {
+        self.switch_workspace(Workspace::Dynamic, window, cx);
+        self.on_show_panel(&ShowPanel(PanelKind::Scanner.name().into()), window, cx);
+    }
+
+    fn on_keyboard_shortcuts(&mut self, _: &KeyboardShortcuts, window: &mut Window, cx: &mut Context<Self>) {
+        settings::open_keys(self.engine(), window, cx);
+    }
+
+    fn on_toggle_pref(&mut self, action: &TogglePref, window: &mut Window, cx: &mut Context<Self>) {
+        let name = action.0.to_string();
+        let saved = crate::prefs::update(cx, |prefs| {
+            if let Some(value) = prefs.switch(&name) {
+                *value = !*value;
+            }
+        });
+        if let Err(e) = saved {
+            window.push_notification(SharedString::from(format!("The settings could not be saved: {e}")), cx);
+        }
+        cx.notify();
+    }
+
+    fn on_clear_caches(&mut self, _: &ClearCaches, window: &mut Window, cx: &mut Context<Self>) {
+        match self.engine() {
+            Some(engine) => settings::clear_caches(engine, window, cx),
+            None => window.push_notification("Open a target first.", cx),
+        }
+    }
+
+    fn on_toggle_rounded_edges(&mut self, _: &ToggleRoundedEdges, window: &mut Window, cx: &mut Context<Self>) {
+        let rounded = !cx.global::<appearance::GraphLook>().rounded_edges;
+        cx.set_global(appearance::GraphLook { rounded_edges: rounded });
+        self.keep_appearance(window, cx);
+        self.refresh_menus(cx);
+        self.views.graph.update(cx, |_, cx| cx.notify());
+    }
+
+    fn on_recognize_constants(&mut self, _: &RecognizeConstants, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(location) = self.selection(window, cx) {
+            self.recognize_constants(location.subject(), window, cx);
+        }
+    }
+
+    fn on_recognize_at(&mut self, action: &RecognizeAt, window: &mut Window, cx: &mut Context<Self>) {
+        self.recognize_constants(action.va, window, cx);
+    }
+
+    /// Ask the engine which literals of the function at `va` are known
+    /// constants, and show its answer.
+    fn recognize_constants(&mut self, va: u64, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(engine) = self.engine() else {
+            window.push_notification("Open a target first.", cx);
+            return;
+        };
+        let location = self.locate(va, cx);
+        let pending = engine.send(&IdentifyConstants { addr: hex(location.subject()) });
+        cx.spawn_in(window, async move |_, cx| {
+            let answer = pending.await;
+            cx.update(|window, cx| match answer {
+                Ok(found) => show_constants(location.label(), found, window, cx),
+                Err(e) => window.push_notification(SharedString::from(format!("The constants of {} were not identified: {e}", location.label())), cx),
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn refresh_menus(&self, cx: &mut Context<Self>) {
@@ -1108,15 +1416,59 @@ impl Workbench {
 
     /// One strip: the menus, then the open target. On Linux it also carries
     /// the window controls, since the window draws its own frame.
-    fn render_title_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_title_bar(&self) -> impl IntoElement {
+        // The open target, as a button with what can be done to it (the Tauri
+        // build's target chip).
+        let target = self.target.as_ref().map(|t| t.path.display().to_string()).map(|path| {
+            let copied = path.clone();
+            Button::new("target-chip").xsmall().ghost().label(path).dropdown_menu(move |menu, _, _| {
+                let menu = menu
+                    .menu_with_icon("Open Another…", Icon::new(AppIcon::Open), Box::new(Open))
+                    .menu_with_icon("Close Target", Icon::new(AppIcon::X), Box::new(CloseTarget))
+                    .separator()
+                    .menu_with_icon("Show Triage", Icon::new(PanelKind::Triage.icon()), Box::new(ShowPanel(PanelKind::Triage.name().into())))
+                    .separator();
+                crate::context::copy(menu, "Copy Path", copied.clone())
+            })
+        });
+        TitleBar::new().child(h_flex().gap_3().min_w_0().child(self.menu_bar.clone()).children(target))
+    }
+
+    /// What the dock area shows with no panel in the workspace: a way back.
+    fn render_empty_workspace(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
-        let target = self.target.as_ref().map(|t| t.path.display().to_string()).unwrap_or_default();
-        TitleBar::new().child(
-            h_flex()
-                .gap_3()
-                .child(self.menu_bar.clone())
-                .child(div().text_xs().text_color(theme.muted_foreground).truncate().child(target)),
-        )
+        v_flex()
+            .id("empty-workspace")
+            .flex_1()
+            .items_center()
+            .justify_center()
+            .gap_3()
+            .child(div().text_lg().font_weight(FontWeight::SEMIBOLD).child(format!("The {} workspace is empty", self.workspace.title())))
+            .child(div().text_sm().text_color(theme.muted_foreground).child("Add a panel, or put the default layout back."))
+            .child(
+                h_flex()
+                    .gap_2()
+                    .child(widget_palette())
+                    .child(
+                        Button::new("empty-reset")
+                            .xsmall()
+                            .ghost()
+                            .icon(AppIcon::Reset)
+                            .label("Reset to Default")
+                            .on_click(cx.listener(|wb, _: &ClickEvent, window, cx| wb.on_reset_layout(&ResetLayout, window, cx))),
+                    ),
+            )
+            .context_menu(|menu, window, cx| {
+                menu.submenu_with_icon(Some(Icon::new(AppIcon::AddWidget)), "Add Panel", window, cx, |menu, _, _| {
+                    PanelKind::ALL.into_iter().fold(menu, |menu, kind| {
+                        menu.menu_with_icon(kind.title(), Icon::new(kind.icon()), Box::new(ShowPanel(kind.name().into())))
+                    })
+                })
+                .menu_with_icon("Reset Layout", Icon::new(AppIcon::Reset), Box::new(ResetLayout))
+                .separator()
+                .menu_with_icon("Command Palette…", Icon::new(AppIcon::Search), Box::new(CommandPalette))
+                .menu_with_icon("Settings…", Icon::new(AppIcon::Settings), Box::new(OpenSettings))
+            })
     }
 
     /// The workspaces, the widget palette, and layout undo and redo.
@@ -1154,6 +1506,23 @@ impl Workbench {
                     .tooltip("Redo layout change (Ctrl+Shift+Y)")
                     .on_click(cx.listener(|wb, _: &ClickEvent, window, cx| wb.on_redo_layout(&RedoLayout, window, cx))),
             )
+            // The Tauri build's menu for a click on empty space; here the
+            // strip is the space that belongs to no panel.
+            .id("workspace-bar")
+            .context_menu(|menu, window, cx| {
+                menu.submenu_with_icon(Some(Icon::new(AppIcon::AddWidget)), "Add Panel", window, cx, |menu, _, _| {
+                    PanelKind::ALL.into_iter().fold(menu, |menu, kind| {
+                        menu.menu_with_icon(kind.title(), Icon::new(kind.icon()), Box::new(ShowPanel(kind.name().into())))
+                    })
+                })
+                .separator()
+                .menu_with_icon("Undo Layout Change", Icon::new(AppIcon::LayoutUndo), Box::new(UndoLayout))
+                .menu_with_icon("Redo Layout Change", Icon::new(AppIcon::LayoutRedo), Box::new(RedoLayout))
+                .menu_with_icon("Reset Layout", Icon::new(AppIcon::Reset), Box::new(ResetLayout))
+                .separator()
+                .menu_with_icon("Command Palette…", Icon::new(AppIcon::Search), Box::new(CommandPalette))
+                .menu_with_icon("Settings…", Icon::new(AppIcon::Settings), Box::new(OpenSettings))
+            })
     }
 
     fn render_status_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1267,27 +1636,45 @@ fn widget_palette() -> impl IntoElement {
                     .on_drag(AnyDrag::new(kind), move |_, _, window, cx| {
                         // Out of the way, so the dock under it takes the drop.
                         on_drag.update(cx, |state, cx| state.dismiss(window, cx));
-                        cx.new(|_| PaletteDrag(kind))
+                        cx.new(|_| PanelDrag(Some(kind)))
                     })
             }))
         })
 }
 
-/// What follows the pointer while a panel is dragged out of the palette.
-struct PaletteDrag(PanelKind);
-
-impl Render for PaletteDrag {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+/// The engine's answer about a function's constants, in a dialog.
+fn show_constants(function: String, found: Constants, window: &mut Window, cx: &mut App) {
+    let title = format!("Constants in {function}");
+    window.open_dialog(cx, move |dialog, _, cx| {
         let theme = cx.theme();
-        div()
-            .px_2()
-            .py_1()
-            .rounded_md()
-            .border_1()
-            .border_color(theme.border)
-            .bg(theme.popover)
-            .child(crate::panel::tab_title(self.0))
-    }
+        let summary = match found.identified {
+            0 => format!("None of the {} literals in {function} is a constant the engine knows.", found.literals_scanned),
+            1 => format!("1 of the {} literals in {function} is a constant the engine knows.", found.literals_scanned),
+            n => format!("{n} of the {} literals in {function} are constants the engine knows.", found.literals_scanned),
+        };
+        let rows = found.hits.iter().flat_map(|hit| {
+            hit.matches.iter().map(move |m| {
+                let note = [Some(m.role.clone()), m.note.clone()].into_iter().flatten().collect::<Vec<_>>().join(" · ");
+                v_flex()
+                    .py_1()
+                    .gap_0p5()
+                    .border_b_1()
+                    .border_color(theme.border)
+                    .child(
+                        h_flex()
+                            .gap_3()
+                            .child(div().w(px(130.)).flex_none().font_family(theme.mono_font_family.clone()).text_sm().child(hit.literal.clone()))
+                            .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(format!("{} ({}-bit)", m.algorithm, m.width))),
+                    )
+                    .child(div().pl(px(142.)).text_xs().text_color(theme.muted_foreground).child(note))
+                    .children(m.formula.clone().map(|f| div().pl(px(142.)).text_xs().font_family(theme.mono_font_family.clone()).text_color(theme.muted_foreground).child(f)))
+            })
+        });
+        dialog
+            .title(title.clone())
+            .w(px(680.))
+            .child(v_flex().gap_2().child(div().text_sm().text_color(theme.muted_foreground).child(summary)).child(v_flex().id("constants").max_h(px(420.)).overflow_y_scroll().children(rows)))
+    });
 }
 
 /// Where the analysis is, in a few words.
@@ -1313,10 +1700,15 @@ fn first_line(s: &str) -> &str {
 }
 
 impl Render for Workbench {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let palette = self.render_palette(window, cx);
         let (background, foreground) = (cx.theme().background, cx.theme().foreground);
         let main = if self.target.is_some() || self.dock_shown {
-            self.dock_area.clone().into_any_element()
+            if self.dock_area.read(cx).is_empty(DockPlacement::Center, cx) {
+                self.render_empty_workspace(cx).into_any_element()
+            } else {
+                self.dock_area.clone().into_any_element()
+            }
         } else {
             self.render_empty(cx).into_any_element()
         };
@@ -1350,6 +1742,19 @@ impl Render for Workbench {
             .on_action(cx.listener(Self::on_go_forward))
             .on_action(cx.listener(Self::on_switch_workspace))
             .on_action(cx.listener(Self::on_replace_panel))
+            .on_action(cx.listener(Self::on_set_tab_strip))
+            .on_action(cx.listener(Self::on_show_at))
+            .on_action(cx.listener(Self::on_edit_at))
+            .on_action(cx.listener(Self::on_command_palette))
+            .on_action(cx.listener(Self::on_close_target))
+            .on_action(cx.listener(Self::on_find_in_image))
+            .on_action(cx.listener(Self::on_scan_process))
+            .on_action(cx.listener(Self::on_keyboard_shortcuts))
+            .on_action(cx.listener(Self::on_toggle_pref))
+            .on_action(cx.listener(Self::on_clear_caches))
+            .on_action(cx.listener(Self::on_toggle_rounded_edges))
+            .on_action(cx.listener(Self::on_recognize_constants))
+            .on_action(cx.listener(Self::on_recognize_at))
             // The mouse's back and forward buttons walk the same history.
             .on_mouse_down(
                 MouseButton::Navigate(NavigationDirection::Back),
@@ -1361,10 +1766,11 @@ impl Render for Workbench {
             )
             .bg(background)
             .text_color(foreground)
-            .child(self.render_title_bar(cx))
+            .child(self.render_title_bar())
             .children((self.target.is_some() || self.dock_shown).then(|| self.render_workspace_bar(cx)))
             .child(div().flex_1().min_h_0().flex().child(main))
             .child(self.render_status_bar(cx))
+            .children(palette)
     }
 }
 
