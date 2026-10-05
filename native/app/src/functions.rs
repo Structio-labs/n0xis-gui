@@ -153,6 +153,27 @@ impl FunctionIndex {
         true
     }
 
+    /// Take the engine's current names for the entries from `offset` on, where
+    /// the addresses still match. Answers how many changed.
+    pub fn rename_from(&mut self, offset: usize, page: Vec<FunctionEntry>) -> usize {
+        let mut changed = 0;
+        for (i, entry) in page.into_iter().enumerate() {
+            let ix = offset + i;
+            let Some(old) = self.entries.get(ix) else { break };
+            if old.va != entry.va || *old == entry {
+                continue;
+            }
+            self.haystack[ix] = format!("{} {}", entry.name, entry.va).to_lowercase();
+            self.entries[ix] = entry;
+            changed += 1;
+        }
+        if changed > 0 && !self.query.is_empty() {
+            let query = self.query.clone();
+            self.set_query(&query);
+        }
+        changed
+    }
+
     /// Every listed function called exactly `name`.
     pub fn named_exactly(&self, name: &str) -> Vec<&FunctionEntry> {
         self.entries.iter().filter(|f| f.name == name).collect()
@@ -196,9 +217,8 @@ pub struct FunctionList {
     /// The selected function's address: a domain id, not a row number, so a
     /// new filter cannot move the selection to another function.
     selected: Option<String>,
-    /// The list is being read again for new names: the selection stays where
-    /// the user put it instead of moving to the first function.
-    reloading: bool,
+    /// A pass reading the engine's current names into the loaded entries.
+    _names: Option<Task<()>>,
     filter: Entity<InputState>,
     scroll: UniformListScrollHandle,
     focus_handle: FocusHandle,
@@ -226,7 +246,7 @@ impl FunctionList {
             source: None,
             state: LoadState::Idle,
             selected: None,
-            reloading: false,
+            _names: None,
             filter,
             scroll: UniformListScrollHandle::new(),
             focus_handle: cx.focus_handle(),
@@ -239,18 +259,7 @@ impl FunctionList {
     /// image without one (any non-PE, or a PE that has none) is scanned instead.
     pub fn load(&mut self, engine: Arc<Engine>, cx: &mut Context<Self>) {
         self.selected = None;
-        self.reloading = false;
-        self.page_in(engine, cx);
-    }
-
-    /// Read the whole list again, as the engine now names it, keeping the
-    /// selection.
-    pub fn reload(&mut self, engine: Arc<Engine>, cx: &mut Context<Self>) {
-        self.reloading = true;
-        self.page_in(engine, cx);
-    }
-
-    fn page_in(&mut self, engine: Arc<Engine>, cx: &mut Context<Self>) {
+        self._names = None;
         self.index = FunctionIndex::default();
         self.total = None;
         self.source = None;
@@ -306,7 +315,7 @@ impl FunctionList {
         functions.truncate(MAX_FUNCTIONS.saturating_sub(self.index.len()));
         let was_empty = self.index.len() == 0;
         self.index.extend(functions);
-        if was_empty && !self.reloading && let Some(first) = self.index.first().cloned() {
+        if was_empty && let Some(first) = self.index.first().cloned() {
             self.selected = Some(first.va.clone());
             cx.emit(FunctionSelected(first));
         }
@@ -319,6 +328,33 @@ impl FunctionList {
 
     pub fn index(&self) -> &FunctionIndex {
         &self.index
+    }
+
+    /// Read the names of the entries loaded so far again, page by page, as the
+    /// engine now gives them (after an analysis found class or library names).
+    /// The list stays on screen and the selection where it is; pages still to
+    /// come arrive with the new names anyway.
+    pub fn refresh_names(&mut self, engine: Arc<Engine>, cx: &mut Context<Self>) {
+        let (Some(source), loaded) = (self.source, self.index.len()) else { return };
+        let from_unwind_table = source == ListSource::UnwindTable;
+        self._names = Some(cx.spawn(async move |this, cx| {
+            let mut offset = 0usize;
+            while offset < loaded {
+                let request = DiscoverFunctions { from_unwind_table, limit: PAGE_SIZE, offset: offset as u64 };
+                let Ok(page) = engine.send(&request).await else { return };
+                let returned = page.functions.len();
+                let alive = this.update(cx, |list, cx| {
+                    if list.index.rename_from(offset, page.functions) > 0 {
+                        cx.emit(FunctionsLoaded);
+                        cx.notify();
+                    }
+                });
+                if alive.is_err() || returned < PAGE_SIZE as usize {
+                    break;
+                }
+                offset += PAGE_SIZE as usize;
+            }
+        }));
     }
 
     /// Read the function starting at `va` again, from the same listing the
@@ -538,6 +574,20 @@ mod tests {
         assert!(!ix.replace(f("nowhere", "0x3000")), "no listed function there");
         assert_eq!(ix.listing_position(0x2000), Some(1));
         assert_eq!(ix.listing_position(0x2001), None);
+    }
+
+    #[test]
+    fn names_read_again_land_on_their_own_addresses_only() {
+        let mut ix = FunctionIndex::default();
+        ix.extend(vec![f("sub_1", "0x1"), f("sub_2", "0x2"), f("sub_3", "0x3")]);
+        ix.set_query("vtable");
+        // The second page lines up; an entry whose address moved is left alone.
+        let changed = ix.rename_from(1, vec![f("Widget::vtable_user", "0x2"), f("moved", "0x9"), f("past_the_end", "0x4")]);
+        assert_eq!(changed, 1);
+        assert_eq!(ix.named_exactly("Widget::vtable_user").len(), 1);
+        assert!(ix.named_exactly("moved").is_empty() && ix.named_exactly("past_the_end").is_empty());
+        assert_eq!(ix.visible_len(), 1, "the filter sees the new name");
+        assert_eq!(ix.len(), 3, "renaming never adds entries");
     }
 
     #[test]

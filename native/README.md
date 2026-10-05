@@ -131,6 +131,15 @@ index is written, Cross-references holds its `xref to` back and says so, rather 
 the session build the same index a second time and wait on it. When the pass found class
 or library names, the function list and the views that show names are read again.
 
+Settings (File ▸ Settings…, Ctrl+,), kept in `~/.config/n0xis/settings.json`: whether the
+analysis runs when a target opens, and whether it warms the decompiler cache (Analyze ▸ Run
+Analysis starts it by hand); where projects live (central, a `<file>.n0xis` folder beside
+the target, or a folder you choose; a place that cannot be used falls back to central and
+says so); whether caches are kept when a target closes; and what the open target's caches
+take, with a button that clears them. Which folders are caches is the engine's answer
+(`project cache`), so names, comments and types are never cleared. Theme and font size are
+there too.
+
 Every view shows only what the engine returned; an empty or failed view says so. Still
-open from `docs/CURRENT-UI.md` §12: the workspaces and the add-widget palette, and the
-settings.
+open from `docs/CURRENT-UI.md` §12: the workspaces and the add-widget palette, and editable
+key bindings.

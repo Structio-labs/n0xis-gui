@@ -20,11 +20,13 @@ mod linear;
 mod menus;
 mod nav;
 mod panel;
+mod prefs;
 mod project;
 mod prompt;
 mod recent;
 mod scanner;
 mod search;
+mod settings;
 mod triage;
 mod types;
 mod workbench;
@@ -56,6 +58,8 @@ gpui_kit::actions!(
         GoTo,
         GoBack,
         GoForward,
+        OpenSettings,
+        RunAnalysis,
     ]
 );
 
@@ -81,6 +85,7 @@ fn main() {
             KeyBinding::new("f2", Rename, None),
             KeyBinding::new("ctrl-/", Comment, None),
             KeyBinding::new("ctrl-g", GoTo, None),
+            KeyBinding::new("ctrl-,", OpenSettings, None),
             KeyBinding::new("alt-left", GoBack, None),
             KeyBinding::new("alt-right", GoForward, None),
             // Outside a text field these undo the user's edits to the target;
@@ -101,6 +106,9 @@ fn main() {
         let (recent, recent_problem) = recent::Recent::read();
         cx.set_global(recent);
         startup_notes.extend(recent_problem);
+        let (prefs, prefs_problem) = prefs::Prefs::read();
+        cx.set_global(prefs);
+        startup_notes.extend(prefs_problem);
         cx.on_action(|_: &Quit, cx: &mut App| cx.quit());
         // One window: closing it ends the app instead of leaving a headless process.
         cx.on_window_closed(|cx, _| {

@@ -25,6 +25,7 @@ pub mod schema {
     pub const MEM_MAP: &str = "n0xis.mem.map.v1";
     pub const SCAN: &str = "n0xis.scan.v1";
     pub const ANALYZE: &str = "n0xis.analyze.v1";
+    pub const PROJECT_CACHE: &str = "n0xis.project.cache.v1";
 }
 
 /// A request the engine answers with one payload shape.

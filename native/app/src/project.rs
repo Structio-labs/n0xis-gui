@@ -7,6 +7,8 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::prefs::ProjectLocation;
+
 /// One folder per target, under the user's home directory.
 const PROJECTS_DIR: &str = ".local/share/pro.n0xis.gui/projects";
 
@@ -32,7 +34,31 @@ fn projects_subdir(name: &str) -> std::io::Result<PathBuf> {
 
 /// The project directory for `target`, created with its `.n0x/` if missing.
 pub fn project_dir(target: &Path) -> std::io::Result<PathBuf> {
-    projects_subdir(&format!("{:x}", fnv1a64(target.to_string_lossy().as_bytes())))
+    projects_subdir(&target_key(target))
+}
+
+/// A target's folder name in a projects folder: its path, hashed.
+fn target_key(target: &Path) -> String {
+    format!("{:x}", fnv1a64(target.to_string_lossy().as_bytes()))
+}
+
+/// The project directory for `target` where the user chose to keep projects,
+/// created with its `.n0x/` if missing. Beside the target it is a folder of its
+/// own, `<file>.n0xis/`: one `.n0x/` for a whole folder would mix the names of
+/// every binary in it, since names are kept by address.
+pub fn project_dir_at(target: &Path, location: &ProjectLocation) -> std::io::Result<PathBuf> {
+    let dir = match location {
+        ProjectLocation::Central => return project_dir(target),
+        ProjectLocation::BesideTheTarget => {
+            let (Some(folder), Some(name)) = (target.parent(), target.file_name()) else {
+                return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "the target has no folder"));
+            };
+            folder.join(format!("{}.n0xis", name.to_string_lossy()))
+        }
+        ProjectLocation::Folder { path } => path.join(target_key(target)),
+    };
+    std::fs::create_dir_all(dir.join(".n0x"))?;
+    Ok(dir)
 }
 
 /// Where scans of running processes keep the results a later scan narrows.

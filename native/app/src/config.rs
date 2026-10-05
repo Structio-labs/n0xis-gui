@@ -26,3 +26,38 @@ pub fn write_atomic(path: &Path, contents: &str) -> std::io::Result<()> {
     std::fs::write(&tmp, contents)?;
     std::fs::rename(&tmp, path)
 }
+
+/// Read one of the GUI's own versioned files (`{"version": N, …}`). The version
+/// is read first, so a file of another version says so instead of reading as a
+/// broken file of this one. `what` names the file's content in the reason.
+pub fn parse_versioned<T: serde::de::DeserializeOwned>(json: &str, version: u32, what: &str) -> Result<T, String> {
+    #[derive(serde::Deserialize)]
+    struct Version {
+        version: u32,
+    }
+    let found = serde_json::from_str::<Version>(json).map_err(|e| format!("it is not {what} ({e})"))?.version;
+    if found != version {
+        return Err(format!("it was written in version {found} of its shape, not {version}"));
+    }
+    serde_json::from_str(json).map_err(|e| format!("it is not {what} ({e})"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_versioned;
+
+    #[derive(serde::Deserialize, Debug, PartialEq)]
+    struct File {
+        version: u32,
+        items: Vec<u8>,
+    }
+
+    #[test]
+    fn another_version_says_so_whatever_its_shape() {
+        assert_eq!(parse_versioned::<File>(r#"{"version":1,"items":[2]}"#, 1, "a list"), Ok(File { version: 1, items: vec![2] }));
+        let other = parse_versioned::<File>(r#"{"version":2,"entries":{}}"#, 1, "a list").unwrap_err();
+        assert!(other.contains("version 2"), "{other}");
+        assert!(parse_versioned::<File>(r#"{"version":1}"#, 1, "a list").unwrap_err().contains("not a list"));
+        assert!(parse_versioned::<File>("[", 1, "a list").is_err());
+    }
+}

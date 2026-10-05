@@ -12,8 +12,8 @@ use crate::appearance::{self, ResetZoom, SelectTheme, ZoomIn, ZoomOut};
 use crate::layout::{PanelKind, ShowPanel};
 use crate::recent::{OpenRecent, Recent};
 use crate::{
-    About, ClearAnnotations, Comment, GoBack, GoForward, GoTo, Open, Quit, RedoEdit, RedoLayout, Rename, ResetLayout,
-    SetReturnType, SetType, ToggleBookmark, UndoEdit, UndoLayout,
+    About, ClearAnnotations, Comment, GoBack, GoForward, GoTo, Open, OpenSettings, Quit, RedoEdit, RedoLayout, Rename,
+    ResetLayout, RunAnalysis, SetReturnType, SetType, ToggleBookmark, UndoEdit, UndoLayout,
 };
 
 /// Create the in-window menu bar (Linux and Windows show it in the title bar)
@@ -58,6 +58,8 @@ fn build(cx: &App) -> Vec<Menu> {
                 MenuItem::action("Open…", Open),
                 MenuItem::Submenu(Menu { name: "Open Recent".into(), disabled: recent.is_empty(), items: recent }),
                 MenuItem::separator(),
+                MenuItem::action("Settings…", OpenSettings),
+                MenuItem::separator(),
                 MenuItem::action("Quit", Quit),
             ],
             disabled: false,
@@ -90,6 +92,11 @@ fn build(cx: &App) -> Vec<Menu> {
                 MenuItem::action("Zoom Out", ZoomOut),
                 MenuItem::action("Reset Zoom", ResetZoom),
             ],
+            disabled: false,
+        },
+        Menu {
+            name: "Analyze".into(),
+            items: vec![MenuItem::action("Run Analysis", RunAnalysis)],
             disabled: false,
         },
         Menu {

@@ -303,8 +303,10 @@ engine's own list (`decomp pseudo` → `variables`), not from the text (§11.5).
 
 Settings
 
-- [ ] Cache location and keep-on-close, auto-analyze, warm-up; cache size / clear
-- [ ] Editable keybindings with physical-key matching; themes and tokens; zoom
+- [x] Cache location and keep-on-close, auto-analyze, warm-up; cache size / clear (native,
+  2026-10-05: File ▸ Settings…; which folders are caches is the engine's `project cache`)
+- [x] Themes and tokens; zoom (native)
+- [ ] Editable keybindings with physical-key matching
 
 Honesty rules the rewrite must hold (from §11). Held by the native front end (checked in its
 code 2026-10-05):

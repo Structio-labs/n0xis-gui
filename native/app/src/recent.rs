@@ -75,10 +75,7 @@ impl Recent {
     /// Read the list from `json`; a damaged file or one of another version
     /// gives an empty list and the reason.
     pub fn parse(json: &str) -> Result<Self, String> {
-        let file: RecentFile = serde_json::from_str(json).map_err(|e| format!("it is not a list of targets ({e})"))?;
-        if file.version != VERSION {
-            return Err(format!("it was written in version {} of its shape, not {VERSION}", file.version));
-        }
+        let file: RecentFile = config::parse_versioned(json, VERSION, "a list of targets")?;
         let mut recent = Self { targets: file.targets };
         recent.targets.truncate(MAX_RECENT);
         Ok(recent)
@@ -143,7 +140,7 @@ mod tests {
         let json = serde_json::to_string(&super::RecentFile { version: super::VERSION, targets: r.targets().to_vec() }).unwrap();
         assert_eq!(Recent::parse(&json).unwrap().targets(), r.targets());
         assert!(Recent::parse("{").is_err());
-        assert!(Recent::parse(r#"{"version":99,"targets":[]}"#).unwrap_err().contains("version 99"));
+        assert!(Recent::parse(r#"{"version":99,"paths":{}}"#).unwrap_err().contains("version 99"), "another version says so whatever its shape");
     }
 
     #[test]

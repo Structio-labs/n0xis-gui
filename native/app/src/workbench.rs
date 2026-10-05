@@ -37,9 +37,10 @@ use crate::search::SearchView;
 use crate::triage::TriageView;
 use crate::types::TypesView;
 use crate::xrefs::XrefsView;
+use crate::prefs::{Prefs, ProjectLocation};
 use crate::{
-    About, ClearAnnotations, Comment, GoBack, GoForward, GoTo, Open, RedoEdit, RedoLayout, Rename, ResetLayout,
-    SetReturnType, SetType, ToggleBookmark, UndoEdit, UndoLayout, menus, project,
+    About, ClearAnnotations, Comment, GoBack, GoForward, GoTo, Open, OpenSettings, RedoEdit, RedoLayout, Rename,
+    ResetLayout, RunAnalysis, SetReturnType, SetType, ToggleBookmark, UndoEdit, UndoLayout, menus, project, settings,
 };
 
 /// How often the status bar re-reads the engine's state.
@@ -52,8 +53,12 @@ const LAYOUT_SETTLE: Duration = Duration::from_millis(400);
 struct Target {
     path: PathBuf,
     engine: Arc<Engine>,
-    /// The whole-program pass over the target, beside the session.
-    analysis: Analysis,
+    /// How the engine is run, for the analysis and for clearing caches.
+    command: EngineCommand,
+    /// Where the target's project is; `None` when none could be made.
+    project: Option<PathBuf>,
+    /// The whole-program pass over the target, beside the session, when one runs.
+    analysis: Option<Analysis>,
     /// The engine binary this target is being analysed with, for About.
     engine_program: PathBuf,
 }
@@ -149,6 +154,11 @@ impl Workbench {
         let variable_edits = cx.subscribe_in(&views.decompiler, window, |this, _, event: &EditVariable, window, cx| {
             this.edit_variable(event, window, cx);
         });
+        // Quitting closes the target like opening another does.
+        let quitting = cx.on_app_quit(|wb, cx| {
+            wb.close_target(cx);
+            async {}
+        });
         // Every view that can send the user somewhere says so the same way.
         let mut navigation = vec![
             cx.subscribe_in(&views.disassembly, window, Self::on_navigate),
@@ -183,7 +193,7 @@ impl Workbench {
                         wb.engine_status = status;
                         cx.notify();
                     }
-                    let analysis = wb.target.as_ref().map(|t| t.analysis.state());
+                    let analysis = wb.target.as_ref().and_then(|t| t.analysis.as_ref()).map(Analysis::state);
                     if analysis != wb.analysis_state {
                         let before = std::mem::replace(&mut wb.analysis_state, analysis);
                         wb.analysis_moved(before, window, cx);
@@ -243,7 +253,7 @@ impl Workbench {
             _theme_poll: theme_poll,
             _status_poll: status_poll,
             _subscriptions: {
-                navigation.extend([selection, renamed, variable_edits, layout_changes]);
+                navigation.extend([selection, renamed, variable_edits, quitting, layout_changes]);
                 navigation
             },
         };
@@ -274,9 +284,16 @@ impl Workbench {
         };
         // Without a project directory the engine would write the target's names
         // wherever this process was started, so a failure here is not fatal but
-        // is said out loud.
-        let project = match project::project_dir(&path) {
+        // is said out loud. A chosen place that cannot be used falls back to the
+        // central one, and says so.
+        let location = cx.global::<Prefs>().project_location.clone();
+        let project = match project::project_dir_at(&path, &location) {
             Ok(dir) => Some(dir),
+            Err(e) if location != ProjectLocation::Central => {
+                let text = format!("This target's project could not be kept where the settings say ({e}), so it is in the central folder.");
+                window.push_notification(SharedString::from(text), cx);
+                project::project_dir(&path).ok()
+            }
             Err(e) => {
                 self.open_error = Some(format!("no project directory ({e}); names will not be kept"));
                 None
@@ -285,11 +302,13 @@ impl Workbench {
         if project.is_some() {
             self.open_error = None;
         }
+        self.close_target(cx);
         let engine_program = command.program().to_path_buf();
         // The analysis writes into the same project the session reads.
-        let analysis = Analysis::start(&command, &path, project.as_deref(), WarmUp::Skip);
-        let engine = Arc::new(Engine::start(command, path.clone(), project));
-        self.target = Some(Target { path: path.clone(), engine: Arc::clone(&engine), analysis, engine_program });
+        let analysis = cx.global::<Prefs>().analyze_on_open.then(|| start_analysis(&command, &path, project.as_deref(), cx));
+        let analyzing = analysis.is_some();
+        let engine = Arc::new(Engine::start(command.clone(), path.clone(), project.clone()));
+        self.target = Some(Target { path: path.clone(), engine: Arc::clone(&engine), command, project, analysis, engine_program });
         self.analysis_state = None;
         self.engine_status = Some(engine.status());
         self.location = None;
@@ -304,7 +323,8 @@ impl Workbench {
         v.linear.update(cx, |view, cx| view.set_engine(e(), cx));
         v.xrefs.update(cx, |view, cx| {
             view.set_engine(e(), cx);
-            view.set_index_pending(Some(n0xis_client::Phase::Starting.label().into()), cx);
+            // Without an analysis the session builds the index on its first query.
+            view.set_index_pending(analyzing.then(|| n0xis_client::Phase::Starting.label().into()), cx);
         });
         v.triage.update(cx, |view, cx| view.set_engine(e(), cx));
         v.bookmarks.update(cx, |view, cx| view.set_engine(e(), cx));
@@ -317,6 +337,32 @@ impl Workbench {
         cx.update_global::<Recent, _>(|recent, _| recent.opened(&path, recent::now()));
         self.keep_recent(window, cx);
         cx.notify();
+    }
+
+    /// Leave the open target: its analysis stops, and its caches are cleared
+    /// if the settings say not to keep them. The user's work is never touched.
+    fn close_target(&mut self, cx: &App) {
+        let Some(target) = self.target.take() else { return };
+        drop(target.analysis);
+        if !cx.global::<Prefs>().keep_cache_on_close
+            && let Some(project) = &target.project
+        {
+            let _ = target.command.run(&["project".into(), "cache".into(), "--clear".into()], Some(project));
+        }
+    }
+
+    fn on_run_analysis(&mut self, _: &RunAnalysis, _: &mut Window, cx: &mut Context<Self>) {
+        let Some(target) = self.target.as_mut() else { return };
+        let analysis = start_analysis(&target.command, &target.path, target.project.as_deref(), cx);
+        target.analysis = Some(analysis);
+        self.analysis_state = None;
+        let pending = Some(n0xis_client::Phase::Starting.label().into());
+        self.views.xrefs.update(cx, |view, cx| view.set_index_pending(pending, cx));
+        cx.notify();
+    }
+
+    fn on_open_settings(&mut self, _: &OpenSettings, window: &mut Window, cx: &mut Context<Self>) {
+        settings::open(self.engine(), window, cx);
     }
 
     /// Save the recent targets and show them in the menu; a failed save is said once.
@@ -605,7 +651,7 @@ impl Workbench {
             && matches!(&self.analysis_state, Some(AnalysisState::Finished(report)) if report.names_changed());
         if finished && let Some(engine) = self.engine() {
             let v = self.views.clone();
-            v.functions.update(cx, |list, cx| list.reload(engine, cx));
+            v.functions.update(cx, |list, cx| list.refresh_names(engine, cx));
             v.decompiler.update(cx, |view, cx| view.refresh(window, cx));
             v.linear.update(cx, |view, cx| view.refresh(cx));
             if let Some(location) = self.location.clone() {
@@ -1057,6 +1103,12 @@ fn analysis_text(state: &AnalysisState) -> String {
     }
 }
 
+/// Start the engine's whole-program pass as the settings ask.
+fn start_analysis(command: &EngineCommand, path: &std::path::Path, project: Option<&std::path::Path>, cx: &App) -> Analysis {
+    let warm_up = if cx.global::<Prefs>().warm_up { WarmUp::All } else { WarmUp::Skip };
+    Analysis::start(command, path, project, warm_up)
+}
+
 fn first_line(s: &str) -> &str {
     s.lines().find(|l| !l.trim().is_empty()).unwrap_or(s)
 }
@@ -1075,6 +1127,8 @@ impl Render for Workbench {
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::on_open))
             .on_action(cx.listener(Self::on_open_recent))
+            .on_action(cx.listener(Self::on_open_settings))
+            .on_action(cx.listener(Self::on_run_analysis))
             .on_action(cx.listener(Self::on_about))
             .on_action(cx.listener(Self::on_undo_layout))
             .on_action(cx.listener(Self::on_redo_layout))

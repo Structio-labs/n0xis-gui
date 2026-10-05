@@ -16,6 +16,7 @@ mod live;
 mod locate;
 mod notes;
 mod profile;
+mod project;
 mod refs;
 mod request;
 mod session;
@@ -34,6 +35,7 @@ pub use notes::{
     Note, RETURN_KEY, RemoveType, RenameVariable, SetBookmark, SetVariableType, ShowAnnotations, StructDef, StructField,
     TypeLibrary, TypeSubject, Written,
 };
+pub use project::{CacheKind, CacheReport, CacheUsage};
 pub use profile::{Advisory, EngineHint, Export, FoldedExports, ImageProfile, Profile, ProfileReport, Section};
 pub use refs::{Block, BuildCfg, CallSite, Cfg, CfgInstruction, Edge, Xref, Xrefs, XrefsTo};
 pub use request::{
