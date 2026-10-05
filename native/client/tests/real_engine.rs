@@ -32,10 +32,12 @@ fn build_target() -> Option<PathBuf> {
 }
 
 /// Each test gets its own directory, so one test's edits never reach another's
-/// project.
+/// project. The `.n0x/` in it is what makes the engine keep the project there:
+/// without one it falls back to the user's global project, and a test would
+/// write its names into that.
 fn build_target_in(tag: &str) -> Option<PathBuf> {
     let dir = std::env::temp_dir().join(format!("n0xis-client-{tag}-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).ok()?;
+    std::fs::create_dir_all(dir.join(".n0x")).ok()?;
     let src = dir.join("target.c");
     let exe = dir.join("target");
     std::fs::write(&src, SOURCE).ok()?;
