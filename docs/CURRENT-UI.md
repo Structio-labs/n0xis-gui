@@ -306,13 +306,22 @@ Settings
 - [ ] Cache location and keep-on-close, auto-analyze, warm-up; cache size / clear
 - [ ] Editable keybindings with physical-key matching; themes and tokens; zoom
 
-Honesty rules the rewrite must hold (from §11)
+Honesty rules the rewrite must hold (from §11). Held by the native front end (checked in its
+code 2026-10-05):
 
-- [ ] No sample content in the native app; an empty view says it is empty
-- [ ] No message without an engine result behind it
-- [ ] No fact re-derived in the GUI that the engine already knows (variables, back-edges, number formatting)
-- [ ] One typed client over the engine's schemas (`meta.schema`), not field-name guessing
-- [ ] All untrusted text escaped or rendered as text; a strict content policy
+- [x] No sample content in the native app; an empty view says it is empty. The demo-only widgets
+  were not ported, and each view has an empty and a failed state of its own.
+- [x] No message without an engine result behind it. The menus list only working actions; a
+  refusal says the engine's reason (a type on a value is refused because the engine's variable
+  list says it is neither a parameter nor a local).
+- [x] No fact re-derived in the GUI that the engine already knows. Variables come from the
+  engine's `variables`; the graph draws an edge that points up around the side by geometry and
+  labels edges only with the engine's kinds, never "loop"; numbers are shown as the engine
+  wrote them.
+- [x] One typed client over the engine's schemas (`meta.schema`), not field-name guessing
+  (`native/client`: each request checks the schema of its answer).
+- [x] All untrusted text rendered as text. GPUI draws strings, with no markup and no web view, so
+  there is no content policy to set.
 
 ## Appendix: engine contract used by the current UI
 
