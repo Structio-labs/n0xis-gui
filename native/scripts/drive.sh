@@ -13,6 +13,11 @@
 #   dclick <x> <y>        double click at window coordinates
 #   rclick <x> <y>        right click at window coordinates
 #   move <x> <y>          move the pointer (to hover)
+#   press <x> <y>         move there and hold the left button (a drag in steps)
+#   glide <x> <y>         move there in small steps, the button as it is
+#   release               let the left button go
+#   keydown <keysym>      hold a key (e.g. ctrl), until keyup <keysym>
+#   keyup <keysym>
 #   type <text>           type text
 #   key <keysym>          press a key (e.g. Return, ctrl+q)
 #   drag <x1> <y1> <x2> <y2>  press at the first point, move in steps, release at the second
@@ -44,6 +49,17 @@ while read -r cmd arg rest; do
         dclick) DISPLAY="$disp" xdotool mousemove "$arg" "$rest" click --repeat 2 --delay 80 1 ;;
         rclick) DISPLAY="$disp" xdotool mousemove "$arg" "$rest" click 3 ;;
         move) DISPLAY="$disp" xdotool mousemove "$arg" "$rest" ;;
+        press) DISPLAY="$disp" xdotool mousemove "$arg" "$rest" mousedown 1 ;;
+        glide)
+            read -r cx cy < <(DISPLAY="$disp" xdotool getmouselocation --shell | awk -F= '/^X=/{x=$2} /^Y=/{y=$2} END{print x, y}')
+            for i in 1 2 3 4 5 6 7 8; do
+                DISPLAY="$disp" xdotool mousemove $((cx + (arg - cx) * i / 8)) $((cy + (rest - cy) * i / 8))
+                sleep 0.05
+            done
+            ;;
+        release) DISPLAY="$disp" xdotool mouseup 1 ;;
+        keydown) DISPLAY="$disp" xdotool keydown "$arg" ;;
+        keyup) DISPLAY="$disp" xdotool keyup "$arg" ;;
         type) DISPLAY="$disp" xdotool type --delay 60 "$arg${rest:+ $rest}" ;;
         key) DISPLAY="$disp" xdotool key "$arg" ;;
         drag)

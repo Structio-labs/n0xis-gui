@@ -287,10 +287,12 @@ Layout. Done in the native front end (2026-10-05) on GPUI Kit's dock:
   header (native, 2026-10-06). The dock draws through a renderer that an application may
   replace (`app/src/skin.rs`), so this needed no change to the library. An earlier version of
   this line said the dock "offers no other side" and left the strips out; that was wrong.
-- Left out on purpose: in the Tauri build a drop on a group's centre replaces what it shows;
-  here it joins the group as a tab, and Show Instead does the replacing. Ctrl while dragging
-  (join as a tab, the drop side setting where the strip goes) is not ported: the dock decides
-  where a drop lands, and the strip's side is set from the tab's menu.
+- [x] The Tauri dock's drops (native, 2026-10-06, `skin::DropMode`): near an edge a panel
+  splits the group; over the centre it takes the group's place (the panels there leave the
+  dock, layout undo brings them back); with Ctrl held it joins the group as a tab and the
+  side it was dropped at is where the group's tabs go; dropped on its own group where nothing
+  would change, it cancels. The target says which while the panel is over it, and changes
+  when Ctrl goes down or up. Panels dragged from the widget palette get the same four.
 - [x] Change-widget menu (a group's ⋯ menu ▸ Show instead), close, undo / redo per workspace,
   saved layouts (`ui-layout.json`, one layout per workspace; a file from before workspaces
   becomes the Decompile workspace's layout)

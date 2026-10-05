@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use gpui_kit::base::Placement;
-use gpui_kit::base::dock::{DockPlacement, InsertTarget, PaneRef};
+use gpui_kit::base::dock::{DockPlacement, InsertTarget, NodeId, PaneRef, PanelId};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::status_bar::StatusBar;
 use gpui_kit::base::Selectable as _;
@@ -38,7 +38,7 @@ use crate::nav::{Location, NavHistory, Navigate, Point, hex, parse_va};
 use crate::prompt::{self, Prompt};
 use crate::recent::{self, OpenRecent, Recent};
 use crate::scanner::ScannerView;
-use crate::skin::{PanelDrag, SetTabStrip, Skin, Strips};
+use crate::skin::{DropMode, PanelDrag, SetTabStrip, Skin, Strip, Strips};
 use crate::search::SearchView;
 use crate::triage::TriageView;
 use crate::types::TypesView;
@@ -176,14 +176,28 @@ impl Workbench {
                 this.keep_focus_on_screen(window, cx);
                 this.layout_changed(window, cx);
             }
-            // A panel dragged in from the widget palette.
+            // A panel dragged in from the widget palette: the same four outcomes
+            // as a tab dragged in the dock (see `skin::DropMode`).
             DockEvent::DragDrop { item, target } => {
-                if let Some(kind) = item.value().downcast_ref::<PanelKind>() {
-                    let insert = match target.placement() {
-                        None => InsertTarget::Tabs { node: target.node(), ix: None, activate: true },
-                        Some(placement) => InsertTarget::Split { node: target.node(), placement, size: None },
-                    };
-                    this.place_panel(*kind, insert, window, cx);
+                if let Some(&kind) = item.value().downcast_ref::<PanelKind>() {
+                    let node = target.node();
+                    let tabs = InsertTarget::Tabs { node, ix: None, activate: true };
+                    match DropMode::of(target.placement(), window.modifiers().control, false, false) {
+                        DropMode::Split(_) => {
+                            if let Some(placement) = target.placement() {
+                                this.place_panel(kind, InsertTarget::Split { node, placement, size: None }, window, cx);
+                            }
+                        }
+                        DropMode::Tab(side) => {
+                            this.strips.set(node, Strip { side, ..this.strips.get(node) });
+                            this.place_panel(kind, tabs, window, cx);
+                        }
+                        DropMode::Replace => {
+                            this.place_panel(kind, tabs, window, cx);
+                            this.leave_only(kind, node, window, cx);
+                        }
+                        DropMode::Cancel => {}
+                    }
                 }
             }
         });
@@ -1113,6 +1127,26 @@ impl Workbench {
             area.move_panel(id, insert, window, cx);
         });
         cx.notify();
+    }
+
+    /// Take every panel but `kind` out of the group `node` (they stay in View ▸ Panels).
+    fn leave_only(&mut self, kind: PanelKind, node: NodeId, window: &mut Window, cx: &mut Context<Self>) {
+        let others: Vec<PanelKind> = {
+            let area = self.dock_area.read(cx);
+            let panels: Vec<PanelId> = area
+                .layout(DockPlacement::Center)
+                .and_then(|tree| tree.find_node(node))
+                .map(|n| match n.kind() {
+                    PaneRef::Tabs { panels, .. } => panels.to_vec(),
+                    PaneRef::Split { .. } => Vec::new(),
+                })
+                .unwrap_or_default();
+            PanelKind::ALL.into_iter().filter(|&k| k != kind && panels.contains(&self.views.panel_id(k))).collect()
+        };
+        let views = self.views.clone();
+        for other in others {
+            self.dock_area.update(cx, |area, cx| views.remove_from(other, area, window, cx));
+        }
     }
 
     /// The panel menu's Show instead: the other panel takes this one's place.

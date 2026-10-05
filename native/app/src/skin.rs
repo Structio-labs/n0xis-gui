@@ -15,11 +15,11 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use gpui_kit::base::ResizeHandleContext;
+use gpui_kit::base::{Placement, ResizeHandleContext};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::dock::{
     AnyDrag, BasePanelView, DockArea, DockAreaRenderer, DockContext, DockPlacement, DockSkin, DragPanel, DropIndicator,
-    NodeId, PaneRef, PanelState, TabGroupContext, TabGroupRenderer,
+    NodeId, PaneRef, PanelId, PanelState, TabGroupContext, TabGroupRenderer,
 };
 use gpui_kit::component::menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenu, PopupMenuItem};
 use gpui_kit::component::tab::{Tab, TabBar};
@@ -66,6 +66,69 @@ impl Side {
     /// A strip down the left or right side, rather than across the group.
     pub fn runs_down(self) -> bool {
         matches!(self, Self::Left | Self::Right)
+    }
+
+    /// The side of the dock's drop zone.
+    pub fn of(placement: Placement) -> Self {
+        match placement {
+            Placement::Top => Self::Top,
+            Placement::Bottom => Self::Bottom,
+            Placement::Left => Self::Left,
+            Placement::Right => Self::Right,
+        }
+    }
+
+    fn lower(self) -> &'static str {
+        match self {
+            Self::Top => "top",
+            Self::Bottom => "bottom",
+            Self::Left => "left",
+            Self::Right => "right",
+        }
+    }
+}
+
+/// What a panel dropped on a group's content does: the gestures of the Tauri
+/// build's dock. Near an edge it splits the group; over the centre it takes
+/// the group's place; with Ctrl held it joins the group as a tab, and the
+/// side it was dropped at is where the group's tabs go.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DropMode {
+    /// A group of its own beside this one, on that side.
+    Split(Side),
+    /// The only panel of this group: the ones it held are closed (they stay
+    /// in View ▸ Panels, and layout undo brings them back).
+    Replace,
+    /// One more tab of this group, with the group's tabs moved to that side.
+    Tab(Side),
+    /// Dropped on its own group where that would change nothing.
+    Cancel,
+}
+
+impl DropMode {
+    /// `placement` is the zone the dock resolved (`None`: the centre); `own`
+    /// whether the panel comes from this group, and `alone` whether it is the
+    /// only one there. A panel can split out of its own group only when the
+    /// group holds more than it, as in the Tauri build.
+    pub fn of(placement: Option<Placement>, ctrl: bool, own: bool, alone: bool) -> Self {
+        match (ctrl, placement.map(Side::of)) {
+            (true, _) if own => Self::Cancel,
+            (true, side) => Self::Tab(side.unwrap_or(Side::Top)),
+            (false, None) if own => Self::Cancel,
+            (false, None) => Self::Replace,
+            (false, Some(_)) if own && alone => Self::Cancel,
+            (false, Some(side)) => Self::Split(side),
+        }
+    }
+
+    /// What the drop target says while the panel is over it.
+    pub fn label(self) -> String {
+        match self {
+            Self::Split(side) => format!("Split · {}", side.lower()),
+            Self::Replace => "Replace · Ctrl adds a tab".into(),
+            Self::Tab(side) => format!("Tab · strip on the {}", side.lower()),
+            Self::Cancel => "Cancel".into(),
+        }
     }
 }
 
@@ -273,6 +336,8 @@ impl DockAreaRenderer for Skin {
             scroll: ScrollHandle::new(),
             shown: Cell::new(None),
             pressed: Rc::default(),
+            group: RefCell::new(None),
+            dragged_from: Rc::default(),
         })
     }
 }
@@ -289,6 +354,11 @@ struct GroupSkin {
     /// The tab a right click landed on, taken by the menu it opens; `None`
     /// when it landed beside the tabs.
     pressed: Rc<Cell<Option<usize>>>,
+    /// The group as last drawn, for the drop target, which the dock draws
+    /// without it.
+    group: RefCell<Option<TabGroupContext>>,
+    /// The group the panel being dragged comes from, as the last drag move said.
+    dragged_from: Rc<Cell<Option<NodeId>>>,
 }
 
 /// The tabs a group draws, by their index in the group.
@@ -645,12 +715,26 @@ impl GroupSkin {
 
 impl TabGroupRenderer for GroupSkin {
     fn frame(&self, group: &TabGroupContext, window: &mut Window, cx: &mut App) -> Stateful<Div> {
+        self.group.replace(Some(group.clone()));
         // Positioned, so a strip down a side or along the bottom is laid over it.
-        self.kit.frame(group, window, cx).relative()
+        self.kit
+            .frame(group, window, cx)
+            .relative()
+            // Ctrl changes what a drop does; the target says so at once, not at
+            // the next move of the pointer.
+            .on_modifiers_changed(|_, window, cx| {
+                if cx.has_active_drag() {
+                    window.refresh();
+                }
+            })
     }
 
     fn content_frame(&self, group: &TabGroupContext, window: &mut Window, cx: &mut App) -> Stateful<Div> {
-        let frame = self.kit.content_frame(group, window, cx);
+        let from = self.dragged_from.clone();
+        let frame = self
+            .kit
+            .content_frame(group, window, cx)
+            .on_drag_move::<DragPanel>(move |event, _, cx| from.set(Some(event.drag(cx).source())));
         if group.is_collapsed() || visible(group, cx).len() < 2 {
             return frame;
         }
@@ -716,8 +800,85 @@ impl TabGroupRenderer for GroupSkin {
         self.kit.render_active_panel(panel, group, window, cx)
     }
 
+    /// The target under a dragged panel. It is drawn over the content while
+    /// a panel is over it, so it is what the drop lands on: it carries out
+    /// every drop there (a split goes back to the dock as it would have), and
+    /// says beforehand which of the four it will be. A host drag (a panel from
+    /// the widget palette) passes through to the dock, and the workbench
+    /// gives it the same four.
     fn render_drop_indicator(&self, indicator: DropIndicator, window: &mut Window, cx: &mut App) -> Option<AnyElement> {
-        self.kit.render_drop_indicator(indicator, window, cx)
+        let group = self.group.borrow().clone()?;
+        let ctrl = window.modifiers().control;
+        let own = self.dragged_from.get() == Some(group.node());
+        let mode = DropMode::of(indicator.placement(), ctrl, own, group.panels().len() <= 1);
+        let theme = cx.theme();
+        let (accent, popover, border) = (theme.drag_border, theme.popover, theme.border);
+        let picture = match mode {
+            DropMode::Tab(side) => {
+                // The whole group, with the strip where it is going.
+                let bar = div().absolute().bg(accent);
+                let bar = match side {
+                    Side::Top => bar.top_0().left_0().right_0().h(px(4.)),
+                    Side::Bottom => bar.bottom_0().left_0().right_0().h(px(4.)),
+                    Side::Left => bar.top_0().bottom_0().left_0().w(px(4.)),
+                    Side::Right => bar.top_0().bottom_0().right_0().w(px(4.)),
+                };
+                Some(div().absolute().top_0().left_0().size_full().bg(theme.tokens.drop_target).child(bar).into_any_element())
+            }
+            DropMode::Cancel => None,
+            DropMode::Split(_) | DropMode::Replace => self.kit.render_drop_indicator(indicator, window, cx),
+        };
+        let (strips, strip_group) = (self.strips.clone(), group.clone());
+        Some(
+            div()
+                .id("drop-target")
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full()
+                .children(picture)
+                .child(
+                    div().absolute().top_0().left_0().size_full().flex().items_center().justify_center().child(
+                        div()
+                            .px_2()
+                            .py_1()
+                            .rounded_md()
+                            .border_1()
+                            .border_color(border)
+                            .bg(popover)
+                            .text_sm()
+                            .child(mode.label()),
+                    ),
+                )
+                .on_drop(move |drag: &DragPanel, window, cx| {
+                    let group = &strip_group;
+                    let own = drag.source() == group.node();
+                    let panels: Vec<PanelId> = group.panels().iter().map(|p| p.panel_id(cx)).collect();
+                    let placement = group.drop_indicator().and_then(|i| i.placement());
+                    match DropMode::of(placement, window.modifiers().control, own, panels.len() <= 1) {
+                        // The dock splits by the zone it resolved.
+                        DropMode::Split(_) => group.drop_panel(drag.clone(), None, true, window, cx),
+                        DropMode::Tab(side) => {
+                            let node = group.node();
+                            strips.set(node, Strip { side, ..strips.get(node) });
+                            group.drop_panel(drag.clone(), Some(panels.len()), true, window, cx);
+                        }
+                        DropMode::Replace => {
+                            group.drop_panel(drag.clone(), Some(panels.len()), true, window, cx);
+                            // In the order given: the panel joins, then the others leave.
+                            for id in panels {
+                                group.close(id, window, cx);
+                            }
+                        }
+                        // Back into its own slot, which changes nothing and ends the drag.
+                        DropMode::Cancel => {
+                            let at = panels.iter().position(|&id| id == drag.panel()).unwrap_or(0);
+                            group.drop_panel(drag.clone(), Some(at), true, window, cx);
+                        }
+                    }
+                })
+                .into_any_element(),
+        )
     }
 
     fn render_empty(&self, group: &TabGroupContext, window: &mut Window, cx: &mut App) -> Option<AnyElement> {
@@ -809,7 +970,23 @@ impl Render for PanelDrag {
 #[cfg(test)]
 mod tests {
     // Not `super::*`: that would bring GPUI's `test` attribute over the built-in one.
-    use super::{Labels, SavedStrip, Side, Strip, keep, match_saved};
+    use super::{DropMode, Labels, SavedStrip, Side, Strip, keep, match_saved};
+    use gpui_kit::base::Placement;
+
+    #[test]
+    fn a_drop_does_what_the_tauri_dock_did() {
+        // Plain: an edge splits, the centre replaces.
+        assert_eq!(DropMode::of(Some(Placement::Left), false, false, false), DropMode::Split(Side::Left));
+        assert_eq!(DropMode::of(None, false, false, false), DropMode::Replace);
+        // Ctrl: a tab, the strip going to the side dropped at; the centre puts it on top.
+        assert_eq!(DropMode::of(Some(Placement::Bottom), true, false, false), DropMode::Tab(Side::Bottom));
+        assert_eq!(DropMode::of(None, true, false, true), DropMode::Tab(Side::Top));
+        // Its own group: only splitting out of a group holding more than it does anything.
+        assert_eq!(DropMode::of(Some(Placement::Right), false, true, false), DropMode::Split(Side::Right));
+        assert_eq!(DropMode::of(Some(Placement::Right), false, true, true), DropMode::Cancel);
+        assert_eq!(DropMode::of(None, false, true, false), DropMode::Cancel);
+        assert_eq!(DropMode::of(Some(Placement::Top), true, true, false), DropMode::Cancel);
+    }
 
     fn names(list: &[&str]) -> Vec<String> {
         list.iter().map(|s| s.to_string()).collect()
