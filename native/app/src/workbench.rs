@@ -16,7 +16,7 @@ use gpui_kit::component::dock::{DockArea, DockAreaState, DockEvent, DockSkin};
 use gpui_kit::component::menu::AppMenuBar;
 use gpui_kit::component::{ActiveTheme as _, TitleBar, WindowExt as _, h_flex, v_flex};
 use gpui_kit::*;
-use n0xis_client::{Engine, EngineCommand, EngineStatus, ShowAnnotations};
+use n0xis_client::{Analysis, AnalysisState, Engine, EngineCommand, EngineStatus, ShowAnnotations, WarmUp};
 
 use crate::appearance::{self, ResetZoom, SelectTheme, ZoomIn, ZoomOut};
 use crate::bookmarks::BookmarksView;
@@ -52,6 +52,8 @@ const LAYOUT_SETTLE: Duration = Duration::from_millis(400);
 struct Target {
     path: PathBuf,
     engine: Arc<Engine>,
+    /// The whole-program pass over the target, beside the session.
+    analysis: Analysis,
     /// The engine binary this target is being analysed with, for About.
     engine_program: PathBuf,
 }
@@ -61,6 +63,8 @@ pub struct Workbench {
     /// Why the last attempt to open a target failed, shown until the next one.
     open_error: Option<String>,
     engine_status: Option<EngineStatus>,
+    /// The analysis as last read, to notice when it moves on.
+    analysis_state: Option<AnalysisState>,
     /// The one selection every view follows.
     location: Option<Location>,
     /// Where the user has been, for Back and Forward.
@@ -155,21 +159,34 @@ impl Workbench {
             cx.subscribe_in(&views.graph, window, Self::on_navigate),
             cx.subscribe_in(&views.linear, window, Self::on_navigate),
             // The listing numbers functions by address; it follows the list's pages.
-            cx.subscribe(&views.functions, |this, _, _: &FunctionsLoaded, cx| {
+            cx.subscribe_in(&views.functions, window, |this, _, _: &FunctionsLoaded, window, cx| {
                 this.views.linear.update(cx, |view, cx| view.sync(cx));
+                // A list read again for new names: the selection takes its new entry.
+                if let Some(location) = this.location.clone() {
+                    let now = this.locate(location.va, cx);
+                    if now.function.is_some() && now != location {
+                        this.show_location(now, window, cx);
+                    }
+                }
             }),
             cx.subscribe_in(&views.xrefs, window, Self::on_navigate),
             cx.subscribe_in(&views.triage, window, Self::on_navigate),
             cx.subscribe_in(&views.bookmarks, window, Self::on_navigate),
             cx.subscribe_in(&views.find, window, Self::on_navigate),
         ];
-        let status_poll = cx.spawn(async move |this, cx| {
+        let status_poll = cx.spawn_in(window, async move |this, cx| {
             loop {
                 cx.background_executor().timer(STATUS_POLL).await;
-                let alive = this.update(cx, |wb, cx| {
+                let alive = this.update_in(cx, |wb, window, cx| {
                     let status = wb.target.as_ref().map(|t| t.engine.status());
                     if status != wb.engine_status {
                         wb.engine_status = status;
+                        cx.notify();
+                    }
+                    let analysis = wb.target.as_ref().map(|t| t.analysis.state());
+                    if analysis != wb.analysis_state {
+                        let before = std::mem::replace(&mut wb.analysis_state, analysis);
+                        wb.analysis_moved(before, window, cx);
                         cx.notify();
                     }
                 });
@@ -207,6 +224,7 @@ impl Workbench {
             target: None,
             open_error: None,
             engine_status: None,
+            analysis_state: None,
             location: None,
             nav: NavHistory::default(),
             journal: Journal::default(),
@@ -268,8 +286,11 @@ impl Workbench {
             self.open_error = None;
         }
         let engine_program = command.program().to_path_buf();
+        // The analysis writes into the same project the session reads.
+        let analysis = Analysis::start(&command, &path, project.as_deref(), WarmUp::Skip);
         let engine = Arc::new(Engine::start(command, path.clone(), project));
-        self.target = Some(Target { path: path.clone(), engine: Arc::clone(&engine), engine_program });
+        self.target = Some(Target { path: path.clone(), engine: Arc::clone(&engine), analysis, engine_program });
+        self.analysis_state = None;
         self.engine_status = Some(engine.status());
         self.location = None;
         self.nav.clear();
@@ -281,7 +302,10 @@ impl Workbench {
         v.disassembly.update(cx, |view, cx| view.set_engine(e(), cx));
         v.graph.update(cx, |view, cx| view.set_engine(e(), cx));
         v.linear.update(cx, |view, cx| view.set_engine(e(), cx));
-        v.xrefs.update(cx, |view, cx| view.set_engine(e(), cx));
+        v.xrefs.update(cx, |view, cx| {
+            view.set_engine(e(), cx);
+            view.set_index_pending(Some(n0xis_client::Phase::Starting.label().into()), cx);
+        });
         v.triage.update(cx, |view, cx| view.set_engine(e(), cx));
         v.bookmarks.update(cx, |view, cx| view.set_engine(e(), cx));
         v.types.update(cx, |view, cx| view.set_engine(e(), cx));
@@ -568,6 +592,24 @@ impl Workbench {
                         v.functions.update(cx, |list, cx| list.reread(engine, addr, cx));
                     }
                 }
+            }
+        }
+    }
+
+    /// The analysis moved on: tell the references view where it is, and when it
+    /// finishes, show the names it found.
+    fn analysis_moved(&mut self, before: Option<AnalysisState>, window: &mut Window, cx: &mut Context<Self>) {
+        let pending = self.analysis_state.as_ref().filter(|s| !s.index_ready()).map(analysis_text);
+        self.views.xrefs.update(cx, |view, cx| view.set_index_pending(pending, cx));
+        let finished = matches!(before, Some(AnalysisState::Running(_)) | None)
+            && matches!(&self.analysis_state, Some(AnalysisState::Finished(report)) if report.names_changed());
+        if finished && let Some(engine) = self.engine() {
+            let v = self.views.clone();
+            v.functions.update(cx, |list, cx| list.reload(engine, cx));
+            v.decompiler.update(cx, |view, cx| view.refresh(window, cx));
+            v.linear.update(cx, |view, cx| view.refresh(cx));
+            if let Some(location) = self.location.clone() {
+                v.disassembly.update(cx, |view, cx| view.refresh(&location, cx));
             }
         }
     }
@@ -937,8 +979,12 @@ impl Workbench {
             Some(EngineStatus::Stopped) => ("engine stopped".to_string(), theme.muted_foreground),
         };
         let selection = self.location.as_ref().map(|l| format!("{} · {}", l.label(), hex(l.va))).unwrap_or_default();
+        let analysis = self.analysis_state.as_ref().map(|state| {
+            let color = if matches!(state, AnalysisState::Failed(_)) { theme.warning } else { theme.muted_foreground };
+            div().text_xs().text_color(color).truncate().child(analysis_text(state))
+        });
         StatusBar::new()
-            .left(div().text_xs().text_color(color).truncate().child(text))
+            .left(h_flex().gap_3().min_w_0().child(div().text_xs().text_color(color).truncate().child(text)).children(analysis))
             .right(div().text_xs().text_color(theme.muted_foreground).child(selection))
     }
 
@@ -996,6 +1042,18 @@ impl Workbench {
                     .on_click(cx.listener(move |wb, _: &ClickEvent, window, cx| wb.open_recent(path.clone(), window, cx)))
             }));
         Some(list.into_any_element())
+    }
+}
+
+/// Where the analysis is, in a few words.
+fn analysis_text(state: &AnalysisState) -> String {
+    match state {
+        AnalysisState::Running(p) if p.total > 0 => format!("analysis: {} {}/{}", p.phase.label(), p.done, p.total),
+        AnalysisState::Running(p) => format!("analysis: {}", p.phase.label()),
+        AnalysisState::Finished(r) => {
+            format!("analysed · {} functions · {} classes · {} reference targets", r.functions, r.rtti_classes, r.xref_targets)
+        }
+        AnalysisState::Failed(why) => format!("analysis failed: {}", first_line(why)),
     }
 }
 

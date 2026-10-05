@@ -9,6 +9,7 @@
 //! queues requests, and the typed answers the GUI renders. It has no UI
 //! dependency, so every part of it is testable without a window.
 
+mod analysis;
 mod envelope;
 mod find;
 mod live;
@@ -20,6 +21,7 @@ mod request;
 mod session;
 mod worker;
 
+pub use analysis::{Analysis, AnalysisReport, AnalysisState, Phase, Progress, WarmUp};
 pub use envelope::{EngineError, Envelope, Meta};
 pub use find::{Find, FindMatch, FindQuery, FindResult};
 pub use live::{

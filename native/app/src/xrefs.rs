@@ -21,6 +21,8 @@ const ROW_HEIGHT: Pixels = px(22.);
 
 enum Load<T> {
     Idle,
+    /// Held back until the background analysis has written the index.
+    Waiting,
     Loading,
     Ready(T),
     Failed(String),
@@ -54,6 +56,10 @@ pub struct XrefsView {
     stale: bool,
     refs: Load<Vec<Xref>>,
     calls: Load<Vec<CallSite>>,
+    /// Where the background analysis is, while it has not yet written the
+    /// reverse-reference index. Asking `xref to` before then would make the
+    /// session build the same index a second time, and wait on it.
+    index_pending: Option<String>,
     rows: Vec<Row>,
     scroll: UniformListScrollHandle,
     focus_handle: FocusHandle,
@@ -72,6 +78,7 @@ impl XrefsView {
             stale: false,
             refs: Load::Idle,
             calls: Load::Idle,
+            index_pending: None,
             rows: Vec::new(),
             scroll: UniformListScrollHandle::new(),
             focus_handle: cx.focus_handle(),
@@ -103,6 +110,22 @@ impl XrefsView {
         }
     }
 
+    /// Say where the analysis is (`Some`) until its index is written (`None`).
+    /// Held-back queries go out once it is.
+    pub fn set_index_pending(&mut self, pending: Option<String>, cx: &mut Context<Self>) {
+        let written = self.index_pending.is_some() && pending.is_none();
+        self.index_pending = pending;
+        if written && self.location.is_some() {
+            if self.active {
+                self.load(cx);
+            } else {
+                self.stale = true;
+            }
+        } else if matches!(self.refs, Load::Waiting) {
+            self.rebuild(cx);
+        }
+    }
+
     /// Ask again for the shown place: a name in the answer may have changed.
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
         if self.location.is_none() {
@@ -125,18 +148,12 @@ impl XrefsView {
     fn load(&mut self, cx: &mut Context<Self>) {
         let (Some(engine), Some(location)) = (self.engine.clone(), self.location.clone()) else { return };
         self.stale = false;
-        self.refs = Load::Loading;
-        let pending = engine.send_latest("xrefs-to", &XrefsTo { addr: hex(location.subject()) });
-        self._refs = Some(cx.spawn(async move |this, cx| {
-            let result = pending.await.map(|x| x.refs);
-            this.update(cx, |view, cx| {
-                if let Some(load) = Load::from(result) {
-                    view.refs = load;
-                    view.rebuild(cx);
-                }
-            })
-            .ok();
-        }));
+        if self.index_pending.is_some() {
+            self.refs = Load::Waiting;
+            self._refs = None;
+        } else {
+            self.query_refs(&engine, &location, cx);
+        }
         match &location.function {
             Some(f) => {
                 self.calls = Load::Loading;
@@ -160,10 +177,30 @@ impl XrefsView {
         self.rebuild(cx);
     }
 
+    fn query_refs(&mut self, engine: &Engine, location: &Location, cx: &mut Context<Self>) {
+        self.refs = Load::Loading;
+        let pending = engine.send_latest("xrefs-to", &XrefsTo { addr: hex(location.subject()) });
+        self._refs = Some(cx.spawn(async move |this, cx| {
+            let result = pending.await.map(|x| x.refs);
+            this.update(cx, |view, cx| {
+                if let Some(load) = Load::from(result) {
+                    view.refs = load;
+                    view.rebuild(cx);
+                }
+            })
+            .ok();
+        }));
+    }
+
     fn rebuild(&mut self, cx: &mut Context<Self>) {
         let mut rows = Vec::new();
         match &self.refs {
             Load::Idle => {}
+            Load::Waiting => {
+                rows.push(Row::Heading("Referenced by".into()));
+                let at = self.index_pending.clone().unwrap_or_default();
+                rows.push(Row::Note(format!("Waiting for the reference index, which the analysis is building ({at}).").into(), false));
+            }
             Load::Loading => {
                 rows.push(Row::Heading("Referenced by".into()));
                 rows.push(Row::Note("Looking up references… the first query on a target builds the engine's index.".into(), false));
@@ -187,6 +224,7 @@ impl XrefsView {
                     rows.push(Row::Note("No listed function covers this address, so it has no calls of its own.".into(), false));
                 }
             }
+            Load::Waiting => {}
             Load::Loading => {
                 rows.push(Row::Heading("Calls".into()));
                 rows.push(Row::Note("Reading the function's calls…".into(), false));

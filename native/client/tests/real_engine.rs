@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use n0xis_client::{
-    Annotate, DecompStyle, Decompile, Disassemble, DiscoverFunctions, Engine, EngineCommand, EngineStatus, Note,
+    Analysis, AnalysisState, Annotate, DecompStyle, WarmUp, XrefsTo, Decompile, Disassemble, DiscoverFunctions, Engine, EngineCommand, EngineStatus, Note,
     RenameVariable, SetVariableType, ShowAnnotations, TypeSubject, VariableKind,
 };
 
@@ -382,4 +382,49 @@ fn edits_reach_what_the_views_show_and_come_off_again() {
 
     // An address nothing was written at has no record, which is not a failure.
     assert_eq!(engine.send(&ShowAnnotations { addr: "0x10".into() }).wait(), Ok(None));
+}
+
+/// The whole-program pass, run beside a session as the GUI runs it: it ends
+/// with a report, writes its index into the project, and the session answers
+/// `xref to` with what the source fixes: `main` calls `mix` once.
+#[test]
+fn the_analysis_reports_and_its_index_answers_the_session() {
+    let command = match EngineCommand::locate() {
+        Ok(e) => e,
+        Err(e) => {
+            eprintln!("SKIPPED: {e}");
+            return;
+        }
+    };
+    let Some(target) = build_target_in("analysis") else {
+        eprintln!("SKIPPED: no C compiler (cc) to build the known target");
+        return;
+    };
+    let project = target.parent().expect("temp dir").to_path_buf();
+    let analysis = Analysis::start(&command, &target, Some(&project), WarmUp::Skip);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    let report = loop {
+        match analysis.state() {
+            AnalysisState::Finished(report) => break report,
+            AnalysisState::Failed(why) => panic!("the analysis failed: {why}"),
+            AnalysisState::Running(_) if std::time::Instant::now() < deadline => std::thread::sleep(std::time::Duration::from_millis(50)),
+            AnalysisState::Running(p) => panic!("still running after a minute: {p:?}"),
+        }
+    };
+    assert!(report.functions >= 2 && report.xref_targets > 0, "{report:?}");
+    let index = std::fs::read_dir(project.join(".n0x/xref-index")).map(|d| d.count()).unwrap_or(0);
+    assert!(index > 0, "the index was written into the project");
+
+    let engine = Engine::start(command, target.clone(), Some(project.clone()));
+    let page = engine.send(&DiscoverFunctions { from_unwind_table: false, limit: 1000, offset: 0 }).wait().expect("function list");
+    let (mix, main) = (
+        page.functions.iter().find(|f| f.name == "mix").expect("mix"),
+        page.functions.iter().find(|f| f.name == "main").expect("main"),
+    );
+    let refs = engine.send(&XrefsTo { addr: mix.va.clone() }).wait().expect("xref to").refs;
+    assert_eq!(refs.len(), 1, "main calls mix once: {refs:?}");
+    let from = u64::from_str_radix(refs[0].from.trim_start_matches("0x"), 16).expect("address");
+    let (start, end) = (va(&main.va), main.end.as_deref().map(va).expect("main's end"));
+    assert!((start..end).contains(&from), "the reference comes from inside main");
+    let _ = std::fs::remove_dir_all(project);
 }

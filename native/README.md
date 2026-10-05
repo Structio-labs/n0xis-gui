@@ -123,7 +123,15 @@ Navigation. Go ▸ Go to (Ctrl+G) takes a listed function's exact name, or an ad
 Back and Forward (Alt+← / Alt+→, or the mouse's side buttons) walk the places gone to,
 300 of them; a click on a row moves the selection without becoming a step.
 
+Analysis. Opening a target also starts the engine's whole-program pass (`analyze
+--no-cfg`) as a process of its own, in the target's project folder: it discovers
+functions, recovers class names and writes the reverse-reference index, which the session
+then reads. Its phase is in the status bar, and its counts once it is done. Until the
+index is written, Cross-references holds its `xref to` back and says so, rather than make
+the session build the same index a second time and wait on it. When the pass found class
+or library names, the function list and the views that show names are read again.
+
 Every view shows only what the engine returned; an empty or failed view says so. Still
-open from `docs/CURRENT-UI.md` §12: background analysis, the function-list and result
-caches, a one-shot fallback for an engine without `serve`, the workspaces and the
-add-widget palette, and the settings.
+open from `docs/CURRENT-UI.md` §12: a one-shot fallback for an engine without `serve`,
+the function-list disk cache, the workspaces and the add-widget palette, and the
+settings.

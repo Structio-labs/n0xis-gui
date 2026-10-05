@@ -196,6 +196,9 @@ pub struct FunctionList {
     /// The selected function's address: a domain id, not a row number, so a
     /// new filter cannot move the selection to another function.
     selected: Option<String>,
+    /// The list is being read again for new names: the selection stays where
+    /// the user put it instead of moving to the first function.
+    reloading: bool,
     filter: Entity<InputState>,
     scroll: UniformListScrollHandle,
     focus_handle: FocusHandle,
@@ -223,6 +226,7 @@ impl FunctionList {
             source: None,
             state: LoadState::Idle,
             selected: None,
+            reloading: false,
             filter,
             scroll: UniformListScrollHandle::new(),
             focus_handle: cx.focus_handle(),
@@ -234,10 +238,22 @@ impl FunctionList {
     /// Page the whole list in from `engine`. The unwind table is tried first; an
     /// image without one (any non-PE, or a PE that has none) is scanned instead.
     pub fn load(&mut self, engine: Arc<Engine>, cx: &mut Context<Self>) {
+        self.selected = None;
+        self.reloading = false;
+        self.page_in(engine, cx);
+    }
+
+    /// Read the whole list again, as the engine now names it, keeping the
+    /// selection.
+    pub fn reload(&mut self, engine: Arc<Engine>, cx: &mut Context<Self>) {
+        self.reloading = true;
+        self.page_in(engine, cx);
+    }
+
+    fn page_in(&mut self, engine: Arc<Engine>, cx: &mut Context<Self>) {
         self.index = FunctionIndex::default();
         self.total = None;
         self.source = None;
-        self.selected = None;
         self.state = LoadState::Loading;
         cx.notify();
         self._load = Some(cx.spawn(async move |this, cx| {
@@ -290,7 +306,7 @@ impl FunctionList {
         functions.truncate(MAX_FUNCTIONS.saturating_sub(self.index.len()));
         let was_empty = self.index.len() == 0;
         self.index.extend(functions);
-        if was_empty && let Some(first) = self.index.first().cloned() {
+        if was_empty && !self.reloading && let Some(first) = self.index.first().cloned() {
             self.selected = Some(first.va.clone());
             cx.emit(FunctionSelected(first));
         }
