@@ -90,13 +90,6 @@ impl BookmarksView {
         cx.notify();
     }
 
-    /// Whether `va` is bookmarked, as of the engine's last answer; `None` while
-    /// that answer has not arrived.
-    pub fn is_bookmarked(&self, va: u64) -> Option<bool> {
-        matches!(self.state, ViewState::Ready)
-            .then(|| self.records.iter().any(|r| r.bookmark && parse_va(&r.va) == Some(va)))
-    }
-
     fn rebuild(&mut self, cx: &mut Context<Self>) {
         let (marked, other): (Vec<_>, Vec<_>) = self.records.iter().cloned().partition(|r| r.bookmark);
         let mut rows = vec![Row::Heading(format!("Bookmarks · {}", marked.len()).into())];

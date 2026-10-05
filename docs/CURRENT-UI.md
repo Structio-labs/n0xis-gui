@@ -289,10 +289,11 @@ Not ported, on purpose: the catalog widgets that had no engine behind them in th
 Strings, Notes) and Variables, which the GUI derived itself (§11.1, §11.5). Each comes back
 only with an engine result to show.
 
-Editing and navigation
+Editing and navigation. Done in the native front end (2026-10-05). Variables come from the
+engine's own list (`decomp pseudo` → `variables`), not from the text (§11.5).
 
-- [ ] Rename, comment, variable rename and type, return type, bookmark, clear, all with undo / redo
-- [ ] Go to, history (keys and mouse buttons), one selection driving every view
+- [x] Rename, comment, variable rename and type, return type, bookmark, clear, all with undo / redo
+- [x] Go to, history (keys and mouse buttons), one selection driving every view
 
 Settings
 

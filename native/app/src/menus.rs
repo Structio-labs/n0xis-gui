@@ -10,7 +10,10 @@ use gpui_kit::{App, Entity, Menu, MenuItem};
 
 use crate::appearance::{self, ResetZoom, SelectTheme, ZoomIn, ZoomOut};
 use crate::layout::{PanelKind, ShowPanel};
-use crate::{About, Open, Quit, RedoLayout, ResetLayout, ToggleBookmark, UndoLayout};
+use crate::{
+    About, ClearAnnotations, Comment, GoBack, GoForward, GoTo, Open, Quit, RedoEdit, RedoLayout, Rename, ResetLayout,
+    SetReturnType, SetType, ToggleBookmark, UndoEdit, UndoLayout,
+};
 
 /// Create the in-window menu bar (Linux and Windows show it in the title bar)
 /// and register the menus with the platform (the macOS menu bar).
@@ -50,10 +53,18 @@ fn build(cx: &App) -> Vec<Menu> {
         Menu {
             name: "Edit".into(),
             items: vec![
+                MenuItem::action("Undo Edit", UndoEdit),
+                MenuItem::action("Redo Edit", RedoEdit),
+                MenuItem::separator(),
+                MenuItem::action("Rename…", Rename),
+                MenuItem::action("Comment…", Comment),
+                MenuItem::action("Set Type…", SetType),
+                MenuItem::action("Set Return Type…", SetReturnType),
+                MenuItem::action("Toggle Bookmark", ToggleBookmark),
+                MenuItem::action("Clear Annotations Here", ClearAnnotations),
+                MenuItem::separator(),
                 MenuItem::action("Copy", input::Copy),
                 MenuItem::action("Select All", input::SelectAll),
-                MenuItem::separator(),
-                MenuItem::action("Toggle Bookmark", ToggleBookmark),
             ],
             disabled: false,
         },
@@ -66,6 +77,16 @@ fn build(cx: &App) -> Vec<Menu> {
                 MenuItem::action("Zoom In", ZoomIn),
                 MenuItem::action("Zoom Out", ZoomOut),
                 MenuItem::action("Reset Zoom", ResetZoom),
+            ],
+            disabled: false,
+        },
+        Menu {
+            name: "Go".into(),
+            items: vec![
+                MenuItem::action("Go to Address or Name…", GoTo),
+                MenuItem::separator(),
+                MenuItem::action("Back", GoBack),
+                MenuItem::action("Forward", GoForward),
             ],
             disabled: false,
         },

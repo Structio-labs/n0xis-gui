@@ -174,6 +174,11 @@ impl LinearView {
         cx.notify();
     }
 
+    /// Fetch every shown function again: a name or a comment in them changed.
+    pub fn refresh(&mut self, cx: &mut Context<Self>) {
+        self.forget(cx);
+    }
+
     /// Drop every fetched function and every pending request.
     fn forget(&mut self, cx: &mut Context<Self>) {
         self.generation += 1;

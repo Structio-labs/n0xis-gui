@@ -103,6 +103,18 @@ impl XrefsView {
         }
     }
 
+    /// Ask again for the shown place: a name in the answer may have changed.
+    pub fn refresh(&mut self, cx: &mut Context<Self>) {
+        if self.location.is_none() {
+            return;
+        }
+        if self.active {
+            self.load(cx);
+        } else {
+            self.stale = true;
+        }
+    }
+
     fn on_active(&mut self, active: bool, _: &mut Window, cx: &mut Context<Self>) {
         self.active = active;
         if active && self.stale {

@@ -127,6 +127,37 @@ impl FunctionIndex {
         self.visible.iter().position(|&i| self.entries.get(i).and_then(|f| parse_va(&f.va)) == Some(va))
     }
 
+    /// Where the function starting at `va` sits in the engine's own listing,
+    /// which is the order pages arrive in.
+    pub fn listing_position(&self, va: u64) -> Option<usize> {
+        let at = self.by_start.partition_point(|&(start, _)| start < va);
+        self.by_start.get(at).filter(|&&(start, _)| start == va).map(|&(_, ix)| ix)
+    }
+
+    /// Put `entry` in place of the listed function at the same address, as the
+    /// engine now reports it. Answers whether there was one to replace.
+    pub fn replace(&mut self, entry: FunctionEntry) -> bool {
+        let Some(ix) = parse_va(&entry.va).and_then(|va| self.listing_position(va)) else { return false };
+        let hay = format!("{} {}", entry.name, entry.va).to_lowercase();
+        let matches = hay.contains(&self.query);
+        let shown = self.visible.binary_search(&ix);
+        match (matches, shown) {
+            (true, Err(at)) => self.visible.insert(at, ix),
+            (false, Ok(at)) => {
+                self.visible.remove(at);
+            }
+            _ => {}
+        }
+        self.haystack[ix] = hay;
+        self.entries[ix] = entry;
+        true
+    }
+
+    /// Every listed function called exactly `name`.
+    pub fn named_exactly(&self, name: &str) -> Vec<&FunctionEntry> {
+        self.entries.iter().filter(|f| f.name == name).collect()
+    }
+
     pub fn set_query(&mut self, query: &str) {
         self.query = query.trim().to_lowercase();
         self.visible = (0..self.entries.len()).filter(|&i| self.haystack[i].contains(&self.query)).collect();
@@ -154,6 +185,9 @@ pub struct FunctionSelected(pub FunctionEntry);
 /// Emitted when a page of functions has been added.
 pub struct FunctionsLoaded;
 
+/// Emitted when one function's entry was read again and changed.
+pub struct FunctionChanged(pub FunctionEntry);
+
 pub struct FunctionList {
     index: FunctionIndex,
     total: Option<u64>,
@@ -171,6 +205,7 @@ pub struct FunctionList {
 
 impl EventEmitter<FunctionSelected> for FunctionList {}
 impl EventEmitter<FunctionsLoaded> for FunctionList {}
+impl EventEmitter<FunctionChanged> for FunctionList {}
 
 impl FunctionList {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -268,6 +303,33 @@ impl FunctionList {
 
     pub fn index(&self) -> &FunctionIndex {
         &self.index
+    }
+
+    /// Read the function starting at `va` again, from the same listing the
+    /// list came from, and show what the engine now calls it.
+    pub fn reread(&mut self, engine: Arc<Engine>, va: u64, cx: &mut Context<Self>) {
+        let (Some(position), Some(source)) = (self.index.listing_position(va), self.source) else { return };
+        let request = DiscoverFunctions {
+            from_unwind_table: source == ListSource::UnwindTable,
+            limit: 1,
+            offset: position as u64,
+        };
+        let pending = engine.send(&request);
+        cx.spawn(async move |this, cx| {
+            let Ok(page) = pending.await else { return };
+            this.update(cx, |list, cx| {
+                // Only an answer for the same address replaces the entry: a
+                // listing that moved under it is not guessed at.
+                let Some(entry) = page.functions.into_iter().next().filter(|f| parse_va(&f.va) == Some(va)) else { return };
+                let changed = list.index.listing_position(va).and_then(|ix| list.index.entries.get(ix)) != Some(&entry);
+                if changed && list.index.replace(entry.clone()) {
+                    cx.emit(FunctionChanged(entry));
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// Mark the function starting at `va` as selected and scroll it into view,
@@ -443,6 +505,23 @@ mod tests {
         ix.extend(vec![f("early", "0x1000")]);
         assert_eq!(ix.function_at(0x1000).map(|f| f.name.as_str()), Some("early"));
         assert_eq!(ix.function_at(0x3000).map(|f| f.name.as_str()), Some("late"));
+    }
+
+    #[test]
+    fn a_renamed_entry_is_found_and_filtered_by_its_new_name() {
+        let mut ix = FunctionIndex::default();
+        ix.extend(vec![f("sub_1000", "0x1000"), f("main", "0x2000")]);
+        ix.set_query("parse");
+        assert_eq!(ix.visible_len(), 0);
+        assert!(ix.replace(f("parse_header", "0x1000")));
+        assert_eq!(ix.visible_len(), 1, "the new name matches the filter");
+        assert_eq!(ix.named_exactly("parse_header").len(), 1);
+        assert!(ix.named_exactly("sub_1000").is_empty());
+        assert!(ix.replace(f("sub_1000", "0x1000")));
+        assert_eq!(ix.visible_len(), 0, "the old name no longer matches");
+        assert!(!ix.replace(f("nowhere", "0x3000")), "no listed function there");
+        assert_eq!(ix.listing_position(0x2000), Some(1));
+        assert_eq!(ix.listing_position(0x2001), None);
     }
 
     #[test]

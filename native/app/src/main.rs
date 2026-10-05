@@ -11,6 +11,7 @@ mod config;
 mod console;
 mod decompiler;
 mod disassembly;
+mod edits;
 mod functions;
 mod graph;
 mod graph_layout;
@@ -20,6 +21,7 @@ mod menus;
 mod nav;
 mod panel;
 mod project;
+mod prompt;
 mod scanner;
 mod search;
 mod triage;
@@ -33,7 +35,28 @@ use gpui_kit::component::dock::ToggleZoom;
 use gpui_kit::component::{Theme, ThemeMode, TitleBar};
 use gpui_kit::*;
 
-gpui_kit::actions!(n0xis, [Quit, Open, About, ResetLayout, UndoLayout, RedoLayout, ToggleBookmark]);
+gpui_kit::actions!(
+    n0xis,
+    [
+        Quit,
+        Open,
+        About,
+        ResetLayout,
+        UndoLayout,
+        RedoLayout,
+        ToggleBookmark,
+        Rename,
+        Comment,
+        SetType,
+        SetReturnType,
+        ClearAnnotations,
+        UndoEdit,
+        RedoEdit,
+        GoTo,
+        GoBack,
+        GoForward,
+    ]
+);
 
 fn main() {
     // `n0xis-ui <binary>` opens it straight away, from a terminal or a file manager.
@@ -54,6 +77,18 @@ fn main() {
             KeyBinding::new("ctrl--", appearance::ZoomOut, None),
             KeyBinding::new("ctrl-0", appearance::ResetZoom, None),
             KeyBinding::new("ctrl-d", ToggleBookmark, None),
+            KeyBinding::new("f2", Rename, None),
+            KeyBinding::new("ctrl-/", Comment, None),
+            KeyBinding::new("ctrl-g", GoTo, None),
+            KeyBinding::new("alt-left", GoBack, None),
+            KeyBinding::new("alt-right", GoForward, None),
+            // Outside a text field these undo the user's edits to the target;
+            // inside one, the field's own text undo wins.
+            KeyBinding::new("ctrl-z", UndoEdit, None),
+            KeyBinding::new("ctrl-y", RedoEdit, None),
+            // The decompiler is a read-only text field that would swallow them.
+            KeyBinding::new("ctrl-z", UndoEdit, Some("Decompiler > Input")),
+            KeyBinding::new("ctrl-y", RedoEdit, Some("Decompiler > Input")),
             // In the console's command line, ↑ and ↓ walk its history instead
             // of moving the caret.
             KeyBinding::new("up", console::HistoryPrevious, Some("Console > Input")),

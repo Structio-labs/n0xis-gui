@@ -16,25 +16,30 @@ use gpui_kit::component::dock::{DockArea, DockAreaState, DockEvent, DockSkin};
 use gpui_kit::component::menu::AppMenuBar;
 use gpui_kit::component::{ActiveTheme as _, TitleBar, WindowExt as _, h_flex, v_flex};
 use gpui_kit::*;
-use n0xis_client::{Engine, EngineCommand, EngineStatus, SetBookmark};
+use n0xis_client::{Engine, EngineCommand, EngineStatus, ShowAnnotations};
 
 use crate::appearance::{self, ResetZoom, SelectTheme, ZoomIn, ZoomOut};
 use crate::bookmarks::BookmarksView;
 use crate::console::ConsoleView;
-use crate::decompiler::DecompilerView;
+use crate::decompiler::{DecompilerView, EditVariable, VariableIntent};
 use crate::disassembly::DisassemblyView;
-use crate::functions::{FunctionList, FunctionSelected, FunctionsLoaded};
+use crate::edits::{self, Change, Edit, Fact, Journal};
+use crate::functions::{FunctionChanged, FunctionList, FunctionSelected, FunctionsLoaded};
 use crate::graph::GraphView;
 use crate::linear::LinearView;
 use crate::assets::AppIcon;
 use crate::layout::{self, History, PanelKind, ShowPanel, Views};
-use crate::nav::{Location, Navigate, hex};
+use crate::nav::{Location, NavHistory, Navigate, Point, hex, parse_va};
+use crate::prompt::{self, Prompt};
 use crate::scanner::ScannerView;
 use crate::search::SearchView;
 use crate::triage::TriageView;
 use crate::types::TypesView;
 use crate::xrefs::XrefsView;
-use crate::{About, Open, RedoLayout, ResetLayout, ToggleBookmark, UndoLayout, menus, project};
+use crate::{
+    About, ClearAnnotations, Comment, GoBack, GoForward, GoTo, Open, RedoEdit, RedoLayout, Rename, ResetLayout,
+    SetReturnType, SetType, ToggleBookmark, UndoEdit, UndoLayout, menus, project,
+};
 
 /// How often the status bar re-reads the engine's state.
 const STATUS_POLL: Duration = Duration::from_millis(300);
@@ -57,6 +62,12 @@ pub struct Workbench {
     engine_status: Option<EngineStatus>,
     /// The one selection every view follows.
     location: Option<Location>,
+    /// Where the user has been, for Back and Forward.
+    nav: NavHistory,
+    /// The user's edits to the target, for Undo and Redo.
+    journal: Journal,
+    /// An edit, undo or redo is being written; the next waits for it.
+    edit_busy: bool,
     /// The dock is on screen without a target: a panel was asked for by name.
     dock_shown: bool,
     views: Views,
@@ -118,12 +129,26 @@ impl Workbench {
             }
         });
         let selection = cx.subscribe_in(&views.functions, window, |this, _, FunctionSelected(function), window, cx| {
-            let Some(va) = crate::nav::parse_va(&function.va) else { return };
+            let Some(va) = parse_va(&function.va) else { return };
             this.select(Location { va, function: Some(function.clone()) }, window, cx);
+        });
+        // A function the engine now names differently: the selection follows it.
+        let renamed = cx.subscribe_in(&views.functions, window, |this, _, FunctionChanged(entry), window, cx| {
+            let Some(location) = this.location.clone() else { return };
+            if location.function.as_ref().is_some_and(|f| f.va == entry.va) {
+                this.show_location(Location { va: location.va, function: Some(entry.clone()) }, window, cx);
+            }
+        });
+        let variable_edits = cx.subscribe_in(&views.decompiler, window, |this, _, event: &EditVariable, window, cx| {
+            this.edit_variable(event, window, cx);
         });
         // Every view that can send the user somewhere says so the same way.
         let mut navigation = vec![
             cx.subscribe_in(&views.disassembly, window, Self::on_navigate),
+            cx.subscribe_in(&views.disassembly, window, |this, _, Point(va), window, cx| {
+                let location = this.locate(*va, cx);
+                this.show_location(location, window, cx);
+            }),
             cx.subscribe_in(&views.graph, window, Self::on_navigate),
             cx.subscribe_in(&views.linear, window, Self::on_navigate),
             // The listing numbers functions by address; it follows the list's pages.
@@ -180,6 +205,9 @@ impl Workbench {
             open_error: None,
             engine_status: None,
             location: None,
+            nav: NavHistory::default(),
+            journal: Journal::default(),
+            edit_busy: false,
             dock_shown: false,
             views,
             menu_bar: menus::init(cx),
@@ -193,7 +221,7 @@ impl Workbench {
             _theme_poll: theme_poll,
             _status_poll: status_poll,
             _subscriptions: {
-                navigation.extend([selection, layout_changes]);
+                navigation.extend([selection, renamed, variable_edits, layout_changes]);
                 navigation
             },
         };
@@ -240,6 +268,9 @@ impl Workbench {
         self.target = Some(Target { path: path.clone(), engine: Arc::clone(&engine), engine_program });
         self.engine_status = Some(engine.status());
         self.location = None;
+        self.nav.clear();
+        self.journal.clear();
+        self.edit_busy = false;
         let v = &self.views;
         let e = || Some(Arc::clone(&engine));
         v.decompiler.update(cx, |view, cx| view.set_engine(e(), cx));
@@ -258,8 +289,18 @@ impl Workbench {
         cx.notify();
     }
 
-    /// Make `location` the selection, and show it in every view.
+    /// Go to `location` and show it everywhere; the place left can be gone back to.
     fn select(&mut self, location: Location, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(from) = self.location.clone()
+            && from.va != location.va
+        {
+            self.nav.left(from);
+        }
+        self.show_location(location, window, cx);
+    }
+
+    /// Make `location` the selection, and show it in every view.
+    fn show_location(&mut self, location: Location, window: &mut Window, cx: &mut Context<Self>) {
         let v = self.views.clone();
         v.functions.update(cx, |list, cx| list.reveal(location.va, cx));
         v.decompiler.update(cx, |view, cx| view.show(&location, window, cx));
@@ -274,8 +315,378 @@ impl Workbench {
     /// Go to an address some view asked for: the function it lies in, when the
     /// engine's list says which one.
     fn go_to(&mut self, va: u64, window: &mut Window, cx: &mut Context<Self>) {
+        let location = self.locate(va, cx);
+        self.select(location, window, cx);
+    }
+
+    /// `va` with the function the list now puts it in.
+    fn locate(&self, va: u64, cx: &App) -> Location {
         let function = self.views.functions.read(cx).index().function_at(va).cloned();
-        self.select(Location { va, function }, window, cx);
+        Location { va, function }
+    }
+
+    fn engine(&self) -> Option<Arc<Engine>> {
+        self.target.as_ref().map(|t| Arc::clone(&t.engine))
+    }
+
+    fn on_go_back(&mut self, _: &GoBack, window: &mut Window, cx: &mut Context<Self>) {
+        self.go_back(window, cx);
+    }
+
+    fn go_back(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(to) = self.nav.back(self.location.clone()) {
+            let location = self.locate(to.va, cx);
+            self.show_location(location, window, cx);
+        }
+    }
+
+    fn on_go_forward(&mut self, _: &GoForward, window: &mut Window, cx: &mut Context<Self>) {
+        self.go_forward(window, cx);
+    }
+
+    fn go_forward(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(to) = self.nav.forward(self.location.clone()) {
+            let location = self.locate(to.va, cx);
+            self.show_location(location, window, cx);
+        }
+    }
+
+    fn on_go_to(&mut self, _: &GoTo, window: &mut Window, cx: &mut Context<Self>) {
+        if self.target.is_none() {
+            window.push_notification("Open a target first.", cx);
+            return;
+        }
+        let this = cx.entity().downgrade();
+        let prompt = Prompt {
+            title: "Go to".into(),
+            detail: Some("A function's name, or an address.".into()),
+            initial: String::new(),
+            placeholder: "main or 0x401000",
+            ok: "Go",
+        };
+        prompt::ask(prompt, window, cx, move |answer, window, cx| {
+            this.update(cx, |wb, cx| match wb.resolve(&answer, cx) {
+                Ok(va) => wb.go_to(va, window, cx),
+                Err(why) => window.push_notification(SharedString::from(why), cx),
+            })
+            .ok();
+        });
+    }
+
+    /// A typed place: a listed function's exact name first, then an address.
+    fn resolve(&self, answer: &str, cx: &App) -> Result<u64, String> {
+        let answer = answer.trim();
+        if answer.is_empty() {
+            return Err("Nothing to go to.".into());
+        }
+        let list = self.views.functions.read(cx);
+        match list.index().named_exactly(answer).as_slice() {
+            [one] => return parse_va(&one.va).ok_or_else(|| format!("{answer} has no address in the list.")),
+            [] => {}
+            many => return Err(format!("{} functions are called {answer}; go to one by its address.", many.len())),
+        }
+        parse_va(answer).ok_or_else(|| format!("No listed function is called {answer}, and it is not an address."))
+    }
+
+    /// Ask for a new value of `fact`, then write it. What the field starts with
+    /// is the recorded value, or failing that `shown`, what the user sees now.
+    fn edit_fact(&mut self, fact: Fact, label: String, prompt: Prompt, shown: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(engine) = self.engine() else {
+            window.push_notification("Open a target first.", cx);
+            return;
+        };
+        if self.edit_busy {
+            window.push_notification("The last change is still being written.", cx);
+            return;
+        }
+        let current = engine.send(&ShowAnnotations { addr: hex(fact.addr()) });
+        cx.spawn_in(window, async move |this, cx| {
+            let record = current.await;
+            this.update_in(cx, |_, window, cx| {
+                let record = match record {
+                    Ok(record) => record,
+                    Err(e) => {
+                        let text = format!("Could not read what is recorded at {}: {e}", hex(fact.addr()));
+                        window.push_notification(SharedString::from(text), cx);
+                        return;
+                    }
+                };
+                let before = fact.read(record.as_ref());
+                let initial = before.clone().or(shown).unwrap_or_default();
+                let this = cx.entity().downgrade();
+                prompt::ask(Prompt { initial, ..prompt }, window, cx, move |answer, window, cx| {
+                    let after = prompt::as_value(&answer);
+                    if after == before {
+                        return;
+                    }
+                    let edit = Edit { label: label.clone(), changes: vec![Change { fact: fact.clone(), before: before.clone(), after }] };
+                    this.update(cx, |wb, cx| wb.write_edit(edit, window, cx)).ok();
+                });
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Write an edit and keep it for Undo, with the values the engine reported.
+    fn write_edit(&mut self, edit: Edit, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(engine) = self.engine() else { return };
+        self.edit_busy = true;
+        let writes = edit.redo_writes();
+        cx.spawn_in(window, async move |this, cx| {
+            let applied = edits::apply(engine, writes).await;
+            this.update_in(cx, |wb, window, cx| {
+                wb.edit_busy = false;
+                let made = applied.now.len();
+                let changes: Vec<Change> = edit
+                    .changes
+                    .iter()
+                    .zip(applied.now)
+                    .map(|(c, now)| Change { fact: c.fact.clone(), before: c.before.clone(), after: now })
+                    .collect();
+                let kept = Edit { label: edit.label.clone(), changes };
+                let announce = edit.changes.len() > 1 || edit.changes.iter().any(|c| matches!(c.fact, Fact::Bookmark { .. }));
+                if !kept.changes.is_empty() {
+                    wb.annotations_changed(&kept, window, cx);
+                    wb.journal.record(kept);
+                }
+                let text = match applied.refused {
+                    None if announce => format!("{}.", edit.label),
+                    None => return,
+                    Some(e) if made == 0 => format!("{}: the engine refused it: {e}", edit.label),
+                    Some(e) => format!("{}: {made} of {} changes made, then the engine refused: {e}", edit.label, edit.changes.len()),
+                };
+                window.push_notification(SharedString::from(text), cx);
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn on_undo_edit(&mut self, _: &UndoEdit, window: &mut Window, cx: &mut Context<Self>) {
+        self.replay(true, window, cx);
+    }
+
+    fn on_redo_edit(&mut self, _: &RedoEdit, window: &mut Window, cx: &mut Context<Self>) {
+        self.replay(false, window, cx);
+    }
+
+    /// Undo or redo the last edit, through the engine.
+    fn replay(&mut self, undo: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(engine) = self.engine() else { return };
+        if self.edit_busy {
+            window.push_notification("The last change is still being written.", cx);
+            return;
+        }
+        let taken = if undo { self.journal.take_undo() } else { self.journal.take_redo() };
+        let Some(edit) = taken else {
+            window.push_notification(if undo { "Nothing to undo." } else { "Nothing to redo." }, cx);
+            return;
+        };
+        self.edit_busy = true;
+        let writes = if undo { edit.undo_writes() } else { edit.redo_writes() };
+        cx.spawn_in(window, async move |this, cx| {
+            let applied = edits::apply(engine, writes).await;
+            this.update_in(cx, |wb, window, cx| {
+                wb.edit_busy = false;
+                let verb = if undo { "Undid" } else { "Redid" };
+                let made = applied.now.len();
+                let text = match applied.refused {
+                    None => {
+                        wb.annotations_changed(&edit, window, cx);
+                        let text = format!("{verb}: {}.", edit.label);
+                        if undo { wb.journal.undid(edit) } else { wb.journal.redid(edit) }
+                        text
+                    }
+                    Some(e) if made == 0 => {
+                        let text = format!("Could not {}: {}: {e}", if undo { "undo" } else { "redo" }, edit.label);
+                        if undo { wb.journal.put_back_undo(edit) } else { wb.journal.put_back_redo(edit) }
+                        text
+                    }
+                    // Part of it went through: the target is now between the two
+                    // states, so the edit cannot be replayed as it was.
+                    Some(e) => {
+                        wb.annotations_changed(&edit, window, cx);
+                        format!("{verb} only {made} of {} changes of {}; the engine refused: {e}", edit.changes.len(), edit.label)
+                    }
+                };
+                window.push_notification(SharedString::from(text), cx);
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Show the target again where an edit can have changed what is shown.
+    fn annotations_changed(&mut self, edit: &Edit, window: &mut Window, cx: &mut Context<Self>) {
+        let v = self.views.clone();
+        v.decompiler.update(cx, |view, cx| view.refresh(window, cx));
+        if let Some(location) = self.location.clone() {
+            v.disassembly.update(cx, |view, cx| view.refresh(&location, cx));
+        }
+        v.linear.update(cx, |view, cx| view.refresh(cx));
+        v.xrefs.update(cx, |view, cx| view.refresh(cx));
+        v.bookmarks.update(cx, |view, cx| view.refresh(cx));
+        if edit.renames() {
+            v.graph.update(cx, |view, cx| view.refresh(window, cx));
+            if let Some(engine) = self.engine() {
+                for change in &edit.changes {
+                    if let Fact::Name { addr } = change.fact {
+                        let engine = Arc::clone(&engine);
+                        v.functions.update(cx, |list, cx| list.reread(engine, addr, cx));
+                    }
+                }
+            }
+        }
+    }
+
+    /// The selection, or a message saying one is needed.
+    fn selection(&self, window: &mut Window, cx: &mut Context<Self>) -> Option<Location> {
+        if self.target.is_none() {
+            window.push_notification("Open a target first.", cx);
+            return None;
+        }
+        let location = self.location.clone();
+        if location.is_none() {
+            window.push_notification("Select a function or an address first.", cx);
+        }
+        location
+    }
+
+    fn on_rename(&mut self, _: &Rename, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(location) = self.selection(window, cx) else { return };
+        let (fact, label, prompt, shown) = match &location.function {
+            Some(f) => {
+                let Some(start) = parse_va(&f.va) else { return };
+                (
+                    Fact::Name { addr: start },
+                    format!("Rename {}", f.name),
+                    Prompt {
+                        title: format!("Rename function {}", f.name),
+                        detail: Some("Leave it empty to go back to the name the engine finds.".into()),
+                        initial: String::new(),
+                        placeholder: "name",
+                        ok: "Rename",
+                    },
+                    Some(f.name.clone()),
+                )
+            }
+            None => (
+                Fact::Name { addr: location.va },
+                format!("Name {}", hex(location.va)),
+                Prompt {
+                    title: format!("Name {}", hex(location.va)),
+                    detail: Some("No listed function starts or lies here; the name is kept for the address.".into()),
+                    initial: String::new(),
+                    placeholder: "name",
+                    ok: "Name",
+                },
+                None,
+            ),
+        };
+        self.edit_fact(fact, label, prompt, shown, window, cx);
+    }
+
+    fn on_comment(&mut self, _: &Comment, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(location) = self.selection(window, cx) else { return };
+        let prompt = Prompt {
+            title: format!("Comment at {}", location.label()),
+            detail: Some("Shown in the disassembly. Leave it empty to remove it.".into()),
+            initial: String::new(),
+            placeholder: "comment",
+            ok: "Comment",
+        };
+        self.edit_fact(Fact::Comment { addr: location.va }, format!("Comment at {}", location.label()), prompt, None, window, cx);
+    }
+
+    /// Reached when the decompiler had no parameter or local under the caret.
+    fn on_set_type(&mut self, _: &SetType, window: &mut Window, cx: &mut Context<Self>) {
+        let text = "Put the caret on a parameter or a local in the decompiler to set its type. For the value a function returns, use Edit ▸ Set Return Type.";
+        window.push_notification(text, cx);
+    }
+
+    fn on_set_return_type(&mut self, _: &SetReturnType, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(location) = self.selection(window, cx) else { return };
+        let Some(f) = location.function.clone() else {
+            window.push_notification("No listed function covers the selection, so it has no return type to set.", cx);
+            return;
+        };
+        let Some(start) = parse_va(&f.va) else { return };
+        let prompt = Prompt {
+            title: format!("Return type of {}", f.name),
+            detail: Some("A C type, such as int, void or char *. Leave it empty to let the decompiler infer it.".into()),
+            initial: String::new(),
+            placeholder: "int",
+            ok: "Set",
+        };
+        self.edit_fact(Fact::ReturnType { function: start }, format!("Return type of {}", f.name), prompt, None, window, cx);
+    }
+
+    fn edit_variable(&mut self, event: &EditVariable, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(start) = parse_va(&event.function.va) else { return };
+        let (variable, function) = (&event.variable, &event.function.name);
+        match event.intent {
+            VariableIntent::Rename => {
+                let prompt = Prompt {
+                    title: format!("Rename variable {}", variable.name),
+                    detail: Some(format!("In {function}. Leave it empty to go back to {}.", variable.key)),
+                    initial: String::new(),
+                    placeholder: "name",
+                    ok: "Rename",
+                };
+                let fact = Fact::VariableName { function: start, key: variable.key.clone() };
+                self.edit_fact(fact, format!("Rename {} in {function}", variable.name), prompt, Some(variable.name.clone()), window, cx);
+            }
+            VariableIntent::SetType => {
+                let prompt = Prompt {
+                    title: format!("Type of {}", variable.name),
+                    detail: Some(format!("In {function}. A C type, such as int, char * or struct Foo *. Leave it empty to let the decompiler infer it.")),
+                    initial: String::new(),
+                    placeholder: "int",
+                    ok: "Set",
+                };
+                let fact = Fact::VariableType { function: start, key: variable.key.clone() };
+                self.edit_fact(fact, format!("Type of {} in {function}", variable.name), prompt, None, window, cx);
+            }
+        }
+    }
+
+    fn on_clear_annotations(&mut self, _: &ClearAnnotations, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(location) = self.selection(window, cx) else { return };
+        let Some(engine) = self.engine() else { return };
+        if self.edit_busy {
+            window.push_notification("The last change is still being written.", cx);
+            return;
+        }
+        let current = engine.send(&ShowAnnotations { addr: hex(location.va) });
+        cx.spawn_in(window, async move |this, cx| {
+            let record = current.await;
+            this.update_in(cx, |wb, window, cx| {
+                let record = match record {
+                    Ok(Some(record)) => record,
+                    Ok(None) => {
+                        window.push_notification(SharedString::from(format!("Nothing is recorded at {}.", location.label())), cx);
+                        return;
+                    }
+                    Err(e) => {
+                        window.push_notification(SharedString::from(format!("Could not read what is recorded at {}: {e}", location.label())), cx);
+                        return;
+                    }
+                };
+                let changes: Vec<Change> = Fact::all_in(&record, location.va)
+                    .into_iter()
+                    .map(|fact| Change { before: fact.read(Some(&record)), fact, after: None })
+                    .collect();
+                if changes.is_empty() {
+                    window.push_notification(SharedString::from(format!("Nothing is recorded at {}.", location.label())), cx);
+                    return;
+                }
+                let label = format!("Cleared {} annotations at {}", changes.len(), location.label());
+                wb.write_edit(Edit { label, changes }, window, cx);
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn on_navigate<V>(&mut self, _: &Entity<V>, Navigate(va): &Navigate, window: &mut Window, cx: &mut Context<Self>) {
@@ -309,26 +720,30 @@ impl Workbench {
     }
 
     fn on_toggle_bookmark(&mut self, _: &ToggleBookmark, window: &mut Window, cx: &mut Context<Self>) {
-        let (Some(target), Some(location)) = (self.target.as_ref(), self.location.clone()) else {
-            window.push_notification("Select a function or an address to bookmark.", cx);
+        let Some(location) = self.selection(window, cx) else { return };
+        let Some(engine) = self.engine() else { return };
+        if self.edit_busy {
+            window.push_notification("The last change is still being written.", cx);
             return;
-        };
-        let Some(marked) = self.views.bookmarks.read(cx).is_bookmarked(location.va) else {
-            window.push_notification("Bookmarks are still being read; try again in a moment.", cx);
-            return;
-        };
-        let pending = target.engine.send(&SetBookmark { addr: hex(location.va), on: !marked });
+        }
+        let fact = Fact::Bookmark { addr: location.va };
+        let current = engine.send(&ShowAnnotations { addr: hex(location.va) });
         cx.spawn_in(window, async move |this, cx| {
-            let result = pending.await;
+            let record = current.await;
             this.update_in(cx, |wb, window, cx| {
-                // Say what the engine now holds, not what was asked for.
-                let text = match result {
-                    Ok(record) if record.bookmark => format!("Bookmarked {}.", location.label()),
-                    Ok(_) => format!("Bookmark removed from {}.", location.label()),
-                    Err(e) => format!("The bookmark was not changed: {e}"),
+                let before = match record {
+                    Ok(record) => fact.read(record.as_ref()),
+                    Err(e) => {
+                        window.push_notification(SharedString::from(format!("The bookmark was not changed: {e}")), cx);
+                        return;
+                    }
                 };
-                window.push_notification(SharedString::from(text), cx);
-                wb.views.bookmarks.update(cx, |view, cx| view.refresh(cx));
+                // The engine's own word for "on" comes back with the answer.
+                let (after, label) = match before {
+                    Some(_) => (None, format!("Removed the bookmark at {}", location.label())),
+                    None => (Some(String::new()), format!("Bookmarked {}", location.label())),
+                };
+                wb.write_edit(Edit { label, changes: vec![Change { fact, before, after }] }, window, cx);
             })
             .ok();
         })
@@ -555,6 +970,25 @@ impl Render for Workbench {
             .on_action(cx.listener(Self::on_reset_zoom))
             .on_action(cx.listener(Self::on_show_panel))
             .on_action(cx.listener(Self::on_toggle_bookmark))
+            .on_action(cx.listener(Self::on_rename))
+            .on_action(cx.listener(Self::on_comment))
+            .on_action(cx.listener(Self::on_set_type))
+            .on_action(cx.listener(Self::on_set_return_type))
+            .on_action(cx.listener(Self::on_clear_annotations))
+            .on_action(cx.listener(Self::on_undo_edit))
+            .on_action(cx.listener(Self::on_redo_edit))
+            .on_action(cx.listener(Self::on_go_to))
+            .on_action(cx.listener(Self::on_go_back))
+            .on_action(cx.listener(Self::on_go_forward))
+            // The mouse's back and forward buttons walk the same history.
+            .on_mouse_down(
+                MouseButton::Navigate(NavigationDirection::Back),
+                cx.listener(|wb, _: &MouseDownEvent, window, cx| wb.go_back(window, cx)),
+            )
+            .on_mouse_down(
+                MouseButton::Navigate(NavigationDirection::Forward),
+                cx.listener(|wb, _: &MouseDownEvent, window, cx| wb.go_forward(window, cx)),
+            )
             .bg(background)
             .text_color(foreground)
             .child(self.render_title_bar(cx))

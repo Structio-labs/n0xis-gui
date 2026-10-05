@@ -75,6 +75,156 @@ impl Request for SetBookmark {
     }
 }
 
+/// A free-text note an address carries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Note {
+    /// The name at the address: a function's, when one starts there.
+    Name,
+    Comment,
+    /// A type written as text, e.g. `int(char*, size_t)`. Kept as a note; the
+    /// decompiler does not read it.
+    TypeNote,
+}
+
+impl Note {
+    fn verb(self) -> &'static str {
+        match self {
+            Self::Name => "name",
+            Self::Comment => "comment",
+            Self::TypeNote => "type",
+        }
+    }
+}
+
+/// `annotate name|comment|type`: set one note at `addr`, or clear it with `None`.
+/// The answer is the address's record as it now stands.
+#[derive(Debug, Clone)]
+pub struct Annotate {
+    pub note: Note,
+    pub addr: String,
+    pub value: Option<String>,
+}
+
+impl Request for Annotate {
+    type Output = AnnotationRecord;
+
+    fn args(&self) -> Vec<String> {
+        let mut a = vec!["annotate".into(), self.note.verb().into(), "--addr".into(), self.addr.clone()];
+        if let Some(v) = &self.value {
+            a.extend(["--value".into(), v.clone()]);
+        }
+        a
+    }
+
+    fn parse(envelope: Envelope) -> Result<AnnotationRecord, ClientError> {
+        Ok(envelope.into_parts::<AnnotationRecord>(schema::ANNOTATION)?.0)
+    }
+}
+
+/// `annotate var`: rename one variable of the function starting at `function`,
+/// or clear the rename with `None`. `key` is the variable's `key` from the
+/// decompiler's variable list: the engine stores the rename under any name it
+/// is given, so a key taken from anywhere else may rename nothing.
+#[derive(Debug, Clone)]
+pub struct RenameVariable {
+    pub function: String,
+    pub key: String,
+    pub value: Option<String>,
+}
+
+impl Request for RenameVariable {
+    type Output = AnnotationRecord;
+
+    fn args(&self) -> Vec<String> {
+        let mut a = vec!["annotate".into(), "var".into(), "--addr".into(), self.function.clone(), "--var".into(), self.key.clone()];
+        if let Some(v) = &self.value {
+            a.extend(["--value".into(), v.clone()]);
+        }
+        a
+    }
+
+    fn parse(envelope: Envelope) -> Result<AnnotationRecord, ClientError> {
+        Ok(envelope.into_parts::<AnnotationRecord>(schema::ANNOTATION)?.0)
+    }
+}
+
+/// What a C type is set on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TypeSubject {
+    /// A parameter or local, by its `key` from the decompiler's variable list.
+    Variable(String),
+    /// The function's return value.
+    Return,
+}
+
+impl TypeSubject {
+    /// The key the engine stores the type under.
+    pub fn key(&self) -> &str {
+        match self {
+            Self::Variable(key) => key,
+            Self::Return => RETURN_KEY,
+        }
+    }
+}
+
+/// The key `annotate vartype` keeps a return type under.
+pub const RETURN_KEY: &str = "@return";
+
+/// `annotate vartype`: the C type of a parameter, a local or the return value of
+/// the function starting at `function`, or clear it with `None`.
+#[derive(Debug, Clone)]
+pub struct SetVariableType {
+    pub function: String,
+    pub subject: TypeSubject,
+    pub value: Option<String>,
+}
+
+impl Request for SetVariableType {
+    type Output = AnnotationRecord;
+
+    fn args(&self) -> Vec<String> {
+        let mut a = vec![
+            "annotate".into(),
+            "vartype".into(),
+            "--addr".into(),
+            self.function.clone(),
+            "--var".into(),
+            self.subject.key().into(),
+        ];
+        if let Some(v) = &self.value {
+            a.extend(["--value".into(), v.clone()]);
+        }
+        a
+    }
+
+    fn parse(envelope: Envelope) -> Result<AnnotationRecord, ClientError> {
+        Ok(envelope.into_parts::<AnnotationRecord>(schema::ANNOTATION)?.0)
+    }
+}
+
+/// `annotate show`: what is recorded at `addr`, or `None` when nothing is.
+#[derive(Debug, Clone)]
+pub struct ShowAnnotations {
+    pub addr: String,
+}
+
+impl Request for ShowAnnotations {
+    type Output = Option<AnnotationRecord>;
+
+    fn args(&self) -> Vec<String> {
+        vec!["annotate".into(), "show".into(), "--addr".into(), self.addr.clone()]
+    }
+
+    fn parse(envelope: Envelope) -> Result<Option<AnnotationRecord>, ClientError> {
+        match envelope.into_parts::<AnnotationRecord>(schema::ANNOTATION) {
+            Ok((record, _)) => Ok(Some(record)),
+            // The engine's answer for an address with no record: nothing, not a failure.
+            Err(ClientError::Engine(e)) if e.code == "not-found" => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+}
+
 /// `type list`: the target's struct and enum definitions.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ListTypes;
@@ -283,6 +433,34 @@ mod tests {
         .unwrap();
         assert!(mark.bookmark);
         assert_eq!(SetBookmark { addr: "0x1".into(), on: false }.args(), ["annotate", "bookmark", "--addr", "0x1", "--off"]);
+    }
+
+    /// Copied from real answers (n0xis 0.3.3).
+    #[test]
+    fn edits_send_what_the_engine_takes_and_read_what_it_answers() {
+        let named = Annotate::parse(env(
+            r#"{"ok":true,"data":{"history":[{"field":"name","new":"my_fn","unix":1791191331}],"name":"my_fn",
+            "type_note":"int(void)","va":"0x1100","var_names":{"v1":"count"}},
+            "meta":{"schema":"n0xis.annotation.v1","tool":"n0xis","tool_version":"0.3.3"}}"#,
+        ))
+        .unwrap();
+        assert_eq!(named.name.as_deref(), Some("my_fn"));
+        assert_eq!(named.type_note.as_deref(), Some("int(void)"));
+        assert_eq!(named.var_names["v1"], "count");
+        let clear = Annotate { note: Note::Comment, addr: "0x1104".into(), value: None };
+        assert_eq!(clear.args(), ["annotate", "comment", "--addr", "0x1104"]);
+        let rename = RenameVariable { function: "0x1100".into(), key: "r8.1".into(), value: Some("len".into()) };
+        assert_eq!(rename.args(), ["annotate", "var", "--addr", "0x1100", "--var", "r8.1", "--value", "len"]);
+        let ret = SetVariableType { function: "0x1100".into(), subject: TypeSubject::Return, value: Some("int".into()) };
+        assert_eq!(ret.args()[5], "@return");
+    }
+
+    #[test]
+    fn an_address_with_no_record_is_nothing_not_a_failure() {
+        let none = env(r#"{"ok":false,"error":{"code":"not-found","message":"no annotations recorded at 0x5555"}}"#);
+        assert_eq!(ShowAnnotations::parse(none), Ok(None));
+        let broken = env(r#"{"ok":false,"error":{"code":"bad-arguments","message":"no"}}"#);
+        assert!(ShowAnnotations::parse(broken).is_err());
     }
 
     #[test]

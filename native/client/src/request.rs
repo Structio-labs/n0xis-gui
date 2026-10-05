@@ -115,6 +115,39 @@ pub struct Decompiled {
     pub signature: Option<String>,
     #[serde(default)]
     pub quality: Option<f64>,
+    /// Every variable `pseudo` shows. `None` from an engine that does not list
+    /// them (0.3.3 and earlier), which is not the same as a function with none.
+    #[serde(default)]
+    pub variables: Option<Vec<Variable>>,
+}
+
+/// A variable of a decompiled function, as the engine lists it.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Variable {
+    /// The name as printed, after any rename.
+    pub name: String,
+    /// What a rename or a type is stored under.
+    pub key: String,
+    pub kind: VariableKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum VariableKind {
+    Param,
+    Local,
+    /// Neither a parameter nor a local: it takes a name but not a type.
+    Value,
+    /// A kind this client does not know yet. Treated as taking a name only.
+    #[serde(other)]
+    Other,
+}
+
+impl VariableKind {
+    /// Whether the engine applies a C type set on this variable.
+    pub fn takes_a_type(self) -> bool {
+        matches!(self, Self::Param | Self::Local)
+    }
 }
 
 impl Request for Decompile {
@@ -206,6 +239,23 @@ mod tests {
         assert_eq!(d.signature.as_deref(), Some("uint64_t f()"));
     }
 
+    /// From n0xis after `c7fe32b` (the first engine that lists variables).
+    #[test]
+    fn a_decompilation_lists_its_variables_and_an_older_engine_says_nothing() {
+        let e = env(
+            r#"{"ok":true,"data":{"address":"0x1000","pseudo":["uint64_t f(uint64_t input) {","}"],
+            "variables":[{"key":"rcx","kind":"param","name":"input"},{"key":"local_8","kind":"local","name":"local_8"},
+            {"key":"v1","kind":"value","name":"v1"},{"key":"x","kind":"something-new","name":"x"}]},
+            "meta":{"schema":"n0x.decomp.pseudo.v1"}}"#,
+        );
+        let vars = Decompile::parse(e).unwrap().variables.unwrap();
+        assert_eq!(vars[0], Variable { name: "input".into(), key: "rcx".into(), kind: VariableKind::Param });
+        assert!(vars[1].kind.takes_a_type() && !vars[2].kind.takes_a_type());
+        assert_eq!(vars[3].kind, VariableKind::Other);
+        let old = env(r#"{"ok":true,"data":{"pseudo":["f() {","}"]},"meta":{"schema":"n0x.decomp.pseudo.v1"}}"#);
+        assert_eq!(Decompile::parse(old).unwrap().variables, None);
+    }
+
     #[test]
     fn a_disassembly_reads_the_engines_own_shape() {
         let e = env(
@@ -220,10 +270,15 @@ mod tests {
 
     #[test]
     fn requests_never_name_a_file() {
+        use crate::{Annotate, Note, RenameVariable, SetVariableType, ShowAnnotations, TypeSubject};
         let all = [
             DiscoverFunctions { from_unwind_table: true, limit: 10, offset: 0 }.args(),
             Decompile { addr: "0x1".into(), style: DecompStyle::Ssa }.args(),
             Disassemble { addr: "0x1".into(), count: 4 }.args(),
+            Annotate { note: Note::Name, addr: "0x1".into(), value: Some("a".into()) }.args(),
+            RenameVariable { function: "0x1".into(), key: "v1".into(), value: None }.args(),
+            SetVariableType { function: "0x1".into(), subject: TypeSubject::Return, value: Some("int".into()) }.args(),
+            ShowAnnotations { addr: "0x1".into() }.args(),
         ];
         for args in all {
             assert!(!args.iter().any(|a| a == "--file"), "{args:?}");

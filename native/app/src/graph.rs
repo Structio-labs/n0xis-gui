@@ -180,6 +180,19 @@ impl GraphView {
         }
     }
 
+    /// Build the shown function's graph again, keeping where the user has
+    /// moved and zoomed: a name in it changed, not the function.
+    pub fn refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.location.is_none() {
+            return;
+        }
+        if self.active {
+            self.load(window, cx);
+        } else {
+            self.stale = true;
+        }
+    }
+
     fn on_active(&mut self, active: bool, window: &mut Window, cx: &mut Context<Self>) {
         self.active = active;
         if active && self.stale {
@@ -196,7 +209,12 @@ impl GraphView {
             cx.notify();
             return;
         };
-        self.state = ViewState::Loading(function.name.clone());
+        // The same function again keeps its picture until the new one arrives,
+        // and keeps the blocks where the user put them.
+        let same_function = matches!(&self.state, ViewState::Ready(m) if m.function.va == function.va);
+        if !same_function {
+            self.state = ViewState::Loading(function.name.clone());
+        }
         cx.notify();
         let pending = engine.send_latest("graph", &BuildCfg { addr: function.va.clone() });
         self._request = Some(cx.spawn_in(window, async move |this, cx| {
@@ -208,8 +226,10 @@ impl GraphView {
                     Err(ClientError::Superseded) => return,
                     Err(e) => ViewState::Failed(e.to_string()),
                 };
-                view.moved.clear();
-                view.auto_fit = true;
+                if !same_function {
+                    view.moved.clear();
+                    view.auto_fit = true;
+                }
                 cx.notify();
             })
             .ok();

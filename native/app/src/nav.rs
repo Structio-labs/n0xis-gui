@@ -40,6 +40,55 @@ impl Location {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Navigate(pub u64);
 
+/// Emitted by a view when the user points at an address it already shows (a
+/// click on a row). The selection moves there, but it is not a step in the
+/// history: Back returns to the last place gone to, not the last row clicked.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Point(pub u64);
+
+/// How many places back the history reaches.
+pub const MAX_HISTORY: usize = 300;
+
+/// The places the user went, to go back and forward through.
+#[derive(Default)]
+pub struct NavHistory {
+    back: Vec<Location>,
+    forward: Vec<Location>,
+}
+
+impl NavHistory {
+    /// The user went somewhere new from `from`: it can be gone back to, and the
+    /// way forward from here is a new one.
+    pub fn left(&mut self, from: Location) {
+        if self.back.last() != Some(&from) {
+            self.back.push(from);
+            if self.back.len() > MAX_HISTORY {
+                self.back.remove(0);
+            }
+        }
+        self.forward.clear();
+    }
+
+    /// The place before `current`, if there is one.
+    pub fn back(&mut self, current: Option<Location>) -> Option<Location> {
+        let to = self.back.pop()?;
+        self.forward.extend(current);
+        Some(to)
+    }
+
+    /// The place after `current`, if the user came back from one.
+    pub fn forward(&mut self, current: Option<Location>) -> Option<Location> {
+        let to = self.forward.pop()?;
+        self.back.extend(current);
+        Some(to)
+    }
+
+    pub fn clear(&mut self) {
+        self.back.clear();
+        self.forward.clear();
+    }
+}
+
 /// An engine address (`0x1800aa891`) as a number.
 pub fn parse_va(s: &str) -> Option<u64> {
     let s = s.trim();
@@ -55,7 +104,7 @@ pub fn hex(va: u64) -> String {
 #[cfg(test)]
 mod tests {
     // Not `super::*`: that would bring GPUI's `test` attribute over the built-in one.
-    use super::{Location, hex, parse_va};
+    use super::{Location, MAX_HISTORY, NavHistory, hex, parse_va};
     use n0xis_client::FunctionEntry;
 
     #[test]
@@ -74,5 +123,49 @@ mod tests {
         assert_eq!(inside.subject(), 0x1000);
         assert_eq!(Location { va: 0x1000, function: Some(f) }.label(), "parse");
         assert_eq!(Location { va: 0x9000, function: None }.label(), "0x9000");
+    }
+
+    fn at(va: u64) -> Location {
+        Location { va, function: None }
+    }
+
+    #[test]
+    fn back_and_forward_retrace_the_way_taken() {
+        let mut h = NavHistory::default();
+        h.left(at(1));
+        h.left(at(2));
+        // At 3 now.
+        assert_eq!(h.back(Some(at(3))), Some(at(2)));
+        assert_eq!(h.back(Some(at(2))), Some(at(1)));
+        assert_eq!(h.back(Some(at(1))), None, "nothing before the first place");
+        assert_eq!(h.forward(Some(at(1))), Some(at(2)));
+        assert_eq!(h.forward(Some(at(2))), Some(at(3)));
+        assert_eq!(h.forward(Some(at(3))), None);
+    }
+
+    #[test]
+    fn going_somewhere_new_ends_the_way_forward() {
+        let mut h = NavHistory::default();
+        h.left(at(1));
+        assert_eq!(h.back(Some(at(2))), Some(at(1)));
+        h.left(at(1));
+        assert_eq!(h.forward(Some(at(5))), None);
+        assert_eq!(h.back(Some(at(5))), Some(at(1)));
+    }
+
+    #[test]
+    fn the_history_keeps_only_the_latest_places() {
+        let mut h = NavHistory::default();
+        for va in 0..(MAX_HISTORY as u64 + 10) {
+            h.left(at(va));
+        }
+        let mut n = 0;
+        let mut here = Some(at(u64::MAX));
+        while let Some(prev) = h.back(here.clone()) {
+            here = Some(prev);
+            n += 1;
+        }
+        assert_eq!(n, MAX_HISTORY);
+        assert_eq!(here, Some(at(10)), "the oldest places were dropped");
     }
 }

@@ -12,7 +12,10 @@
 use std::path::PathBuf;
 use std::process::Command;
 
-use n0xis_client::{DecompStyle, Decompile, Disassemble, DiscoverFunctions, Engine, EngineCommand, EngineStatus};
+use n0xis_client::{
+    Annotate, DecompStyle, Decompile, Disassemble, DiscoverFunctions, Engine, EngineCommand, EngineStatus, Note,
+    RenameVariable, SetVariableType, ShowAnnotations, TypeSubject, VariableKind,
+};
 
 const SOURCE: &str = r#"
 __attribute__((noinline)) unsigned int mix(unsigned int x) {
@@ -25,7 +28,13 @@ int main(int argc, char **argv) {
 "#;
 
 fn build_target() -> Option<PathBuf> {
-    let dir = std::env::temp_dir().join(format!("n0xis-client-real-{}", std::process::id()));
+    build_target_in("real")
+}
+
+/// Each test gets its own directory, so one test's edits never reach another's
+/// project.
+fn build_target_in(tag: &str) -> Option<PathBuf> {
+    let dir = std::env::temp_dir().join(format!("n0xis-client-{tag}-{}", std::process::id()));
     std::fs::create_dir_all(&dir).ok()?;
     let src = dir.join("target.c");
     let exe = dir.join("target");
@@ -287,4 +296,77 @@ fn the_scanner_finds_the_address_a_process_printed_and_narrows_on_change() {
     assert_eq!(kept.value.to_string(), "777777");
     drop(holder);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Every edit the GUI makes, sent through the client and read back from the
+/// views that show it. The names and the comment are planted here, so the right
+/// answer is known before the engine is asked.
+#[test]
+fn edits_reach_what_the_views_show_and_come_off_again() {
+    let engine = match EngineCommand::locate() {
+        Ok(e) => e,
+        Err(e) => {
+            eprintln!("SKIPPED: {e}");
+            return;
+        }
+    };
+    let Some(target) = build_target_in("edits") else {
+        eprintln!("SKIPPED: no C compiler (cc) to build the known target");
+        return;
+    };
+    let project = target.parent().map(|p| p.to_path_buf());
+    let engine = Engine::start(engine, target, project);
+    let list = || engine.send(&DiscoverFunctions { from_unwind_table: false, limit: 1000, offset: 0 }).wait().expect("function list");
+    let mix = list().functions.into_iter().find(|f| f.name == "mix").expect("the symbol table names `mix`");
+    let decompile = || engine.send(&Decompile { addr: mix.va.clone(), style: DecompStyle::Ssa }).wait().expect("decompile");
+
+    // The parameter, as the engine lists it.
+    let first = decompile();
+    let variables = first.variables.clone().expect("this engine lists variables");
+    let param = variables.iter().find(|v| v.kind == VariableKind::Param).unwrap_or_else(|| panic!("no parameter in {variables:?}"));
+
+    // A variable rename reaches the text and the list, under the same key.
+    let record = engine
+        .send(&RenameVariable { function: mix.va.clone(), key: param.key.clone(), value: Some("seed".into()) })
+        .wait()
+        .expect("rename a variable");
+    assert_eq!(record.var_names.get(&param.key).map(String::as_str), Some("seed"));
+    let renamed = decompile();
+    let text = renamed.pseudo.join("\n");
+    assert!(renamed.variables.as_ref().unwrap().iter().any(|v| v.name == "seed" && v.key == param.key), "{:?}\n{text}", renamed.variables);
+    assert!(renamed.pseudo[0].contains("seed"), "the signature shows the new name: {text}");
+
+    // A type on that parameter reaches the signature.
+    engine
+        .send(&SetVariableType { function: mix.va.clone(), subject: TypeSubject::Variable(param.key.clone()), value: Some("int".into()) })
+        .wait()
+        .expect("type a parameter");
+    let typed = decompile();
+    assert!(typed.pseudo[0].contains("int seed"), "{}", typed.pseudo[0]);
+
+    // A function rename reaches the list and the signature.
+    engine.send(&Annotate { note: Note::Name, addr: mix.va.clone(), value: Some("mix_planted".into()) }).wait().expect("rename");
+    assert!(list().functions.iter().any(|f| f.va == mix.va && f.name == "mix_planted"), "the list shows the new name");
+    assert!(decompile().pseudo[0].contains("mix_planted"));
+
+    // A comment reaches the disassembly at its own instruction.
+    let insns = engine.send(&Disassemble { addr: mix.va.clone(), count: 4 }).wait().expect("disassemble").insns;
+    let at = insns[1].va.clone();
+    engine.send(&Annotate { note: Note::Comment, addr: at.clone(), value: Some("planted comment".into()) }).wait().expect("comment");
+    let insns = engine.send(&Disassemble { addr: mix.va.clone(), count: 4 }).wait().expect("disassemble").insns;
+    assert_eq!(insns[1].comment.as_deref(), Some("planted comment"));
+    assert_eq!(insns[0].comment, None, "only the commented instruction carries it");
+
+    // Clearing puts back what the engine found by itself.
+    engine.send(&Annotate { note: Note::Name, addr: mix.va.clone(), value: None }).wait().expect("clear the name");
+    assert!(list().functions.iter().any(|f| f.va == mix.va && f.name == "mix"), "the symbol's own name is back");
+    engine
+        .send(&RenameVariable { function: mix.va.clone(), key: param.key.clone(), value: None })
+        .wait()
+        .expect("clear the rename");
+    let back = decompile();
+    assert!(back.variables.unwrap().iter().any(|v| v.name == param.name && v.key == param.key), "the synthesized name is back");
+
+    // An address nothing was written at has no record, which is not a failure.
+    assert_eq!(engine.send(&ShowAnnotations { addr: "0x10".into() }).wait(), Ok(None));
 }

@@ -10,13 +10,42 @@ use std::sync::Arc;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Editor, EditorState};
 use gpui_kit::base::Selectable as _;
-use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme as _, Sizable as _, WindowExt as _, h_flex, v_flex};
 use gpui_kit::*;
-use n0xis_client::{ClientError, DecompStyle, Decompile, Engine, FunctionEntry};
+use n0xis_client::{ClientError, DecompStyle, Decompile, Engine, FunctionEntry, Variable};
 
 use crate::layout::PanelKind;
 use crate::nav::Location;
 use crate::panel::dock_panel;
+use crate::{Rename, SetType};
+
+/// The key context of the view, for bindings that must win over the editor's.
+pub const KEY_CONTEXT: &str = "Decompiler";
+
+/// What the user wants done to a variable they pointed at.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VariableIntent {
+    Rename,
+    SetType,
+}
+
+/// Emitted when the user asks to rename or type a variable of the shown function.
+pub struct EditVariable {
+    pub function: FunctionEntry,
+    pub variable: Variable,
+    pub intent: VariableIntent,
+}
+
+/// What is under the caret, judged by the engine's own variable list.
+enum Pointed {
+    Variable(Variable),
+    /// A word the engine does not list as a variable, or no word at all.
+    NotAVariable,
+    /// More than one variable is shown under this name.
+    Ambiguous(String),
+    /// The engine does not list variables.
+    Unlisted,
+}
 
 enum ViewState {
     Empty,
@@ -31,6 +60,9 @@ pub struct DecompilerView {
     engine: Option<Arc<Engine>>,
     editor: Entity<EditorState>,
     function: Option<FunctionEntry>,
+    /// The engine's list of the shown function's variables; `None` when the
+    /// engine does not send one.
+    variables: Option<Vec<Variable>>,
     style: DecompStyle,
     state: ViewState,
     focus_handle: FocusHandle,
@@ -44,6 +76,7 @@ impl DecompilerView {
             engine: None,
             editor,
             function: None,
+            variables: None,
             style: DecompStyle::default(),
             state: ViewState::Empty,
             focus_handle: cx.focus_handle(),
@@ -54,6 +87,7 @@ impl DecompilerView {
     pub fn set_engine(&mut self, engine: Option<Arc<Engine>>, cx: &mut Context<Self>) {
         self.engine = engine;
         self.function = None;
+        self.variables = None;
         self.state = ViewState::Empty;
         self._request = None;
         cx.notify();
@@ -74,6 +108,13 @@ impl DecompilerView {
                 self.state = ViewState::NoFunction(location.va);
                 cx.notify();
             }
+        }
+    }
+
+    /// Decompile the shown function again: something it shows has changed.
+    pub fn refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.function.is_some() {
+            self.request(window, cx);
         }
     }
 
@@ -98,6 +139,7 @@ impl DecompilerView {
                     Ok(decompiled) => {
                         let text = decompiled.pseudo.join("\n");
                         view.editor.update(cx, |editor, cx| editor.set_value(text, window, cx));
+                        view.variables = decompiled.variables;
                         view.state = ViewState::Ready { quality: decompiled.quality };
                     }
                     // A newer request replaced this one; its answer is on the way.
@@ -108,6 +150,58 @@ impl DecompilerView {
             })
             .ok();
         }));
+    }
+
+    /// The variable under the caret, or the one selected.
+    fn pointed(&self, cx: &App) -> Pointed {
+        if !matches!(self.state, ViewState::Ready { .. }) {
+            return Pointed::NotAVariable;
+        }
+        let editor = self.editor.read(cx);
+        let text = editor.value();
+        let range = editor.selected_range();
+        let word = if range.is_empty() { word_at(&text, editor.cursor()) } else { text.get(range).map(str::trim) };
+        let Some(word) = word.filter(|w| !w.is_empty()) else { return Pointed::NotAVariable };
+        let Some(variables) = &self.variables else { return Pointed::Unlisted };
+        let hits: Vec<&Variable> = variables.iter().filter(|v| v.name == word).collect();
+        match hits.as_slice() {
+            [] => Pointed::NotAVariable,
+            [first, rest @ ..] if rest.iter().all(|v| v.key == first.key) => Pointed::Variable((*first).clone()),
+            _ => Pointed::Ambiguous(word.to_string()),
+        }
+    }
+
+    fn on_rename(&mut self, _: &Rename, window: &mut Window, cx: &mut Context<Self>) {
+        self.edit_pointed(VariableIntent::Rename, window, cx);
+    }
+
+    fn on_set_type(&mut self, _: &SetType, window: &mut Window, cx: &mut Context<Self>) {
+        self.edit_pointed(VariableIntent::SetType, window, cx);
+    }
+
+    /// Hand a variable under the caret to the workbench. Anything else goes on
+    /// to the workbench's own handling (the function is renamed instead).
+    fn edit_pointed(&mut self, intent: VariableIntent, window: &mut Window, cx: &mut Context<Self>) {
+        match self.pointed(cx) {
+            Pointed::Variable(variable) => {
+                if intent == VariableIntent::SetType && !variable.kind.takes_a_type() {
+                    let text = format!(
+                        "{} is neither a parameter nor a local. The engine applies a type only to those, so a type set on it would change nothing.",
+                        variable.name
+                    );
+                    window.push_notification(SharedString::from(text), cx);
+                    return;
+                }
+                if let Some(function) = self.function.clone() {
+                    cx.emit(EditVariable { function, variable, intent });
+                }
+            }
+            Pointed::Ambiguous(word) => {
+                let text = format!("More than one variable is shown as {word}; point at it in another style, or rename one of them first.");
+                window.push_notification(SharedString::from(text), cx);
+            }
+            Pointed::NotAVariable | Pointed::Unlisted => cx.propagate(),
+        }
     }
 
     fn render_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -169,10 +263,49 @@ impl Render for DecompilerView {
         };
         v_flex()
             .size_full()
+            .key_context(KEY_CONTEXT)
             .track_focus(&self.focus_handle)
+            .on_action(cx.listener(Self::on_rename))
+            .on_action(cx.listener(Self::on_set_type))
             .child(self.render_header(cx))
             .child(div().flex_1().min_h_0().child(body))
     }
 }
 
+impl EventEmitter<EditVariable> for DecompilerView {}
+
 dock_panel!(DecompilerView, PanelKind::Decompiler);
+
+/// The word around byte offset `at` in `text`: letters, digits, `_`, and `.`
+/// inside a word (an SSA name carries a version, `rsi.2`). A caret just after
+/// a word counts as on it. This only picks the word; whether it is a variable
+/// is the engine's answer.
+pub fn word_at(text: &str, at: usize) -> Option<&str> {
+    let is_word = |c: char| c.is_alphanumeric() || c == '_' || c == '.';
+    let at = at.min(text.len());
+    if !text.is_char_boundary(at) {
+        return None;
+    }
+    let start = text[..at].char_indices().rev().take_while(|&(_, c)| is_word(c)).last().map_or(at, |(i, _)| i);
+    let end = text[at..].char_indices().find(|&(_, c)| !is_word(c)).map_or(text.len(), |(i, _)| at + i);
+    let word = text[start..end].trim_matches('.');
+    (!word.is_empty()).then_some(word)
+}
+
+#[cfg(test)]
+mod tests {
+    // Not `super::*`: that would bring GPUI's `test` attribute over the built-in one.
+    use super::word_at;
+
+    #[test]
+    fn the_word_under_the_caret_includes_an_ssa_version() {
+        let line = "    rsi.5 = ((rsi.3 + count) >> 0x1);";
+        assert_eq!(word_at(line, 6), Some("rsi.5"));
+        assert_eq!(word_at(line, 9), Some("rsi.5"), "a caret just after the word is on it");
+        assert_eq!(word_at(line, line.find("count").unwrap() + 2), Some("count"));
+        assert_eq!(word_at(line, 0), None, "blank space is no word");
+        assert_eq!(word_at("x = лічильник;", 6), Some("лічильник"));
+        assert_eq!(word_at("end.", 4), Some("end"), "a sentence's full stop is not part of the word");
+        assert_eq!(word_at("x", 99), Some("x"), "past the end clamps");
+    }
+}

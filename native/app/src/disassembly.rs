@@ -12,7 +12,7 @@ use gpui_kit::*;
 use n0xis_client::{ClientError, Disassemble, Engine, FunctionEntry, Instruction};
 
 use crate::layout::PanelKind;
-use crate::nav::{Location, Navigate, hex};
+use crate::nav::{Location, Navigate, Point, hex};
 use crate::panel::dock_panel;
 
 const ROW_HEIGHT: Pixels = px(20.);
@@ -87,6 +87,14 @@ impl DisassemblyView {
         cx.notify();
     }
 
+    /// Disassemble the shown place again: a comment or a name in it changed.
+    pub fn refresh(&mut self, location: &Location, cx: &mut Context<Self>) {
+        if !matches!(self.state, ViewState::Empty) {
+            self.state = ViewState::Empty;
+            self.show(location, cx);
+        }
+    }
+
     /// Show the function the location lies in, from its start to its end,
     /// with the location's instruction highlighted. An address no listed
     /// function covers is disassembled from there, and labelled as such.
@@ -145,7 +153,8 @@ impl DisassemblyView {
         let operands = insn.text.strip_prefix(insn.mnemonic.as_str()).unwrap_or(&insn.text).trim().to_string();
         let va = parse_va(&insn.va);
         let focused = va.is_some() && va == self.focus_va;
-        // A branch or call whose target the engine resolved can be followed.
+        // A click selects the instruction; a double click on a branch or call
+        // whose target the engine resolved follows it.
         let target = insn.target.as_deref().and_then(parse_va);
         h_flex()
             .id(("insn", row))
@@ -161,15 +170,19 @@ impl DisassemblyView {
             .child(div().w(px(70.)).flex_none().text_color(theme.primary).child(insn.mnemonic.clone()))
             .child(div().flex_1().min_w_0().truncate().child(operands))
             .children(insn.comment.clone().map(|c| div().flex_none().text_color(theme.muted_foreground).child(format!("; {c}"))))
-            .when_some(target, |r, target| {
-                r.cursor_pointer()
-                    .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.emit(Navigate(target))))
+            .when(target.is_some(), |r| r.cursor_pointer())
+            .when_some(va, |r, here| {
+                r.on_click(cx.listener(move |_, event: &ClickEvent, _, cx| match target {
+                    Some(target) if event.click_count() >= 2 => cx.emit(Navigate(target)),
+                    _ => cx.emit(Point(here)),
+                }))
             })
             .into_any_element()
     }
 }
 
 impl EventEmitter<Navigate> for DisassemblyView {}
+impl EventEmitter<Point> for DisassemblyView {}
 
 impl Render for DisassemblyView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {

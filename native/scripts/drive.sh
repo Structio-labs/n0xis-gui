@@ -10,6 +10,7 @@
 #
 #   wait <seconds>        sleep
 #   click <x> <y>         left click at window coordinates
+#   dclick <x> <y>        double click at window coordinates
 #   type <text>           type text
 #   key <keysym>          press a key (e.g. Return, ctrl+q)
 #   drag <x1> <y1> <x2> <y2>  press at the first point, move in steps, release at the second
@@ -38,6 +39,7 @@ while read -r cmd arg rest; do
     case "$cmd" in
         wait) sleep "$arg" ;;
         click) DISPLAY="$disp" xdotool mousemove "$arg" "$rest" click 1 ;;
+        dclick) DISPLAY="$disp" xdotool mousemove "$arg" "$rest" click --repeat 2 --delay 80 1 ;;
         type) DISPLAY="$disp" xdotool type --delay 60 "$arg${rest:+ $rest}" ;;
         key) DISPLAY="$disp" xdotool key "$arg" ;;
         drag)

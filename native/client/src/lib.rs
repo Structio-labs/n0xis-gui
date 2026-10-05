@@ -28,14 +28,15 @@ pub use live::{
 };
 pub use locate::{ENGINE_ENV, EngineCommand};
 pub use notes::{
-    AnnotationRecord, Annotations, DefineEnum, DefineStruct, EnumDef, EnumMember, ListAnnotations, ListTypes,
-    RemoveType, SetBookmark, StructDef, StructField, TypeLibrary, Written,
+    Annotate, AnnotationRecord, Annotations, DefineEnum, DefineStruct, EnumDef, EnumMember, ListAnnotations, ListTypes,
+    Note, RETURN_KEY, RemoveType, RenameVariable, SetBookmark, SetVariableType, ShowAnnotations, StructDef, StructField,
+    TypeLibrary, TypeSubject, Written,
 };
 pub use profile::{Advisory, EngineHint, Export, FoldedExports, ImageProfile, Profile, ProfileReport, Section};
 pub use refs::{Block, BuildCfg, CallSite, Cfg, CfgInstruction, Edge, Xref, Xrefs, XrefsTo};
 pub use request::{
     DecompStyle, Decompile, Decompiled, Disassemble, Disassembly, DiscoverFunctions, FunctionEntry, FunctionsPage,
-    Instruction, Request, schema,
+    Instruction, Request, Variable, VariableKind, schema,
 };
 pub use session::{SERVE_READY_SCHEMA, Session};
 pub use worker::{Engine, EngineStatus, MAX_CONSECUTIVE_CRASHES, Pending, TypedPending};

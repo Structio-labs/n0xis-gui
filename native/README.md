@@ -62,8 +62,9 @@ belongs with), and it can be closed, moved and opened again without losing what 
 
 - Functions: from the unwind table or a prologue scan, virtualized, filtered.
 - Decompiler: three styles, C colouring, a read-only editor with selection and copy.
-- Disassembly: bounded by the function's extent; the selected instruction is highlighted,
-  and a branch or call whose target the engine resolved is followed with a click.
+- Disassembly: bounded by the function's extent; a click selects an instruction (a
+  comment goes there), and a double click on a branch or call whose target the engine
+  resolved follows it.
 - Graph: the control flow of the selected function (`ir build`), laid out in rows with
   edges routed at right angles and coloured by the kind the engine gives them (its own
   names are the legend). Wheel zooms around the pointer, drag pans, a block can be dragged
@@ -105,6 +106,21 @@ A click in any panel goes to that address. The function it lies in comes from th
 engine's function list, and only where the list states the function's extent; otherwise
 the address is shown as an address.
 
+Editing. Edit ▸ Rename (F2) names the selected function, or the variable under the caret
+in the decompiler; Comment (Ctrl+/) annotates the selected instruction; Set Type gives a
+parameter or a local a C type, Set Return Type the function's result; Toggle Bookmark
+(Ctrl+D); Clear Annotations Here removes everything recorded at the address. Which words
+are variables, and the key a rename is stored under, come from the engine's own variable
+list (`decomp pseudo` → `variables`); a value that is neither a parameter nor a local is
+refused a type, because the engine would store it and change nothing. Each edit reads the
+current value from the engine first, so Ctrl+Z / Ctrl+Y (200 steps) put back what the
+engine held, and every view that shows the edited fact asks again. A renamed function's
+entry is read again from the engine's own listing.
+
+Navigation. Go ▸ Go to (Ctrl+G) takes a listed function's exact name, or an address.
+Back and Forward (Alt+← / Alt+→, or the mouse's side buttons) walk the places gone to,
+300 of them; a click on a row moves the selection without becoming a step.
+
 Every view shows only what the engine returned; an empty or failed view says so. Still
-open from `docs/CURRENT-UI.md` §12: editing (rename, comment, types of variables) with undo, go to and history, and
-the settings.
+open from `docs/CURRENT-UI.md` §12: the engine and shell items (background analysis,
+caches, recent targets), the workspaces and the add-widget palette, and the settings.
