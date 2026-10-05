@@ -311,7 +311,9 @@ Settings
 - [x] Cache location and keep-on-close, auto-analyze, warm-up; cache size / clear (native,
   2026-10-05: File ▸ Settings…; which folders are caches is the engine's `project cache`)
 - [x] Themes and tokens; zoom (native)
-- [ ] Editable keybindings with physical-key matching
+- [x] Editable keybindings with physical-key matching (native, 2026-10-05: Settings ▸ Keys; one
+  table of commands drives the bindings and the editor; with a Ukrainian layout, Ctrl and the key
+  that prints `п` runs Go to, Ctrl+G, checked headless)
 
 Honesty rules the rewrite must hold (from §11). Held by the native front end (checked in its
 code 2026-10-05):

@@ -6,6 +6,7 @@
 
 use std::sync::Arc;
 
+use gpui_kit::base::Disableable as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::setting::{NumberFieldOptions, SettingField, SettingGroup, SettingItem, SettingPage, Settings};
 use gpui_kit::component::{ActiveTheme as _, Sizable as _, WindowExt as _, h_flex, v_flex};
@@ -14,6 +15,7 @@ use gpui_kit::*;
 use n0xis_client::{CacheReport, CacheUsage, Engine};
 
 use crate::appearance::{self, SelectTheme, Themes};
+use crate::keymap::{self, COMMANDS, Command, Keymap};
 use crate::prefs::{self, Prefs, ProjectLocation};
 
 /// The open target's cache usage as the engine last reported it.
@@ -68,7 +70,124 @@ fn change(cx: &mut App, edit: impl FnOnce(&mut Prefs)) {
 }
 
 fn pages(engine: Option<Arc<Engine>>) -> Vec<SettingPage> {
-    vec![analysis_page(), projects_page(engine), appearance_page()]
+    vec![analysis_page(), projects_page(engine), appearance_page(), keys_page()]
+}
+
+/// The command whose keys are being recorded, and the interceptor doing it.
+#[derive(Default)]
+struct Recording {
+    command: Option<&'static str>,
+    _intercept: Option<Subscription>,
+}
+
+impl Global for Recording {}
+
+fn keys_page() -> SettingPage {
+    let groups = ["File", "Edit", "Go", "View", "Window"].map(|group| {
+        SettingGroup::new()
+            .title(group)
+            .items(COMMANDS.iter().filter(move |c| c.group == group).map(|command| SettingItem::render(move |_, _, cx| key_row(command, cx))))
+    });
+    SettingPage::new("Keys")
+        .groups(groups)
+        .group(SettingGroup::new().item(SettingItem::render(|_, _, cx| {
+            h_flex()
+                .w_full()
+                .gap_3()
+                .child(
+                    div()
+                        .flex_1()
+                        .text_sm()
+                        .text_color(cx.theme().muted_foreground)
+                        .child("Record takes the next keys pressed; Escape cancels. A key another command had is taken from it, and you are told which."),
+                )
+                .child(Button::new("keys-reset-all").small().outline().label("Reset all keys").on_click(|_, window, cx| {
+                    if let Err(e) = keymap::reset_all(cx) {
+                        window.push_notification(SharedString::from(e), cx);
+                    }
+                }))
+        })))
+}
+
+fn key_row(command: &'static Command, cx: &mut App) -> AnyElement {
+    if !cx.has_global::<Recording>() {
+        cx.set_global(Recording::default());
+    }
+    let recording = cx.global::<Recording>().command == Some(command.id);
+    let keys = cx.global::<Keymap>().keys(command);
+    let is_default = cx.global::<Keymap>().is_default(command);
+    let shown = if recording {
+        "Press the keys…".to_string()
+    } else if keys.is_empty() {
+        "not bound".to_string()
+    } else {
+        keys.iter().map(|k| keymap::pretty(k)).collect::<Vec<_>>().join(", ")
+    };
+    let muted = cx.theme().muted_foreground;
+    h_flex()
+        .w_full()
+        .gap_2()
+        .child(div().flex_1().text_sm().child(command.label))
+        .child(div().text_sm().text_color(if keys.is_empty() && !recording { muted } else { cx.theme().foreground }).child(shown))
+        .child(
+            Button::new(SharedString::from(format!("record-{}", command.id)))
+                .xsmall()
+                .outline()
+                .label(if recording { "Cancel" } else { "Record" })
+                .on_click(move |_, _, cx| toggle_recording(command, cx)),
+        )
+        .child(
+            Button::new(SharedString::from(format!("unbind-{}", command.id)))
+                .xsmall()
+                .ghost()
+                .label("Unbind")
+                .disabled(keys.is_empty())
+                .on_click(move |_, window, cx| report(keymap::rebind(cx, command, Vec::new()), window, cx)),
+        )
+        .child(
+            Button::new(SharedString::from(format!("revert-{}", command.id)))
+                .xsmall()
+                .ghost()
+                .label("Default")
+                .disabled(is_default)
+                .on_click(move |_, window, cx| report(keymap::revert(cx, command), window, cx)),
+        )
+        .into_any_element()
+}
+
+/// Say what a key change did: keys taken from other commands, or why it failed.
+fn report(result: Result<Vec<String>, String>, window: &mut Window, cx: &mut App) {
+    match result {
+        Ok(notes) => {
+            for note in notes {
+                window.push_notification(SharedString::from(note), cx);
+            }
+        }
+        Err(why) => window.push_notification(SharedString::from(format!("The key was not changed: {why}")), cx),
+    }
+}
+
+/// Start recording the next keys pressed for `command`, or stop.
+fn toggle_recording(command: &'static Command, cx: &mut App) {
+    if cx.global::<Recording>().command == Some(command.id) {
+        cx.set_global(Recording::default());
+        cx.refresh_windows();
+        return;
+    }
+    // Ahead of every binding, so the keys being recorded do not also run
+    // whatever they are bound to now.
+    let intercept = cx.intercept_keystrokes(move |event, window, cx| {
+        let keystroke = &event.keystroke;
+        cx.stop_propagation();
+        cx.set_global(Recording::default());
+        if keystroke.key == "escape" && !keystroke.modifiers.modified() {
+            cx.refresh_windows();
+            return;
+        }
+        report(keymap::rebind(cx, command, vec![keystroke.unparse()]), window, cx);
+    });
+    cx.set_global(Recording { command: Some(command.id), _intercept: Some(intercept) });
+    cx.refresh_windows();
 }
 
 fn analysis_page() -> SettingPage {

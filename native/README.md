@@ -146,5 +146,13 @@ so a view keeps what it holds in every workspace. The bar's Widget palette lists
 panel: a click opens it where it belongs, a drag puts it where it is dropped. A group's ⋯
 menu ▸ Show instead puts another panel in the place of the one shown.
 
-Every view shows only what the engine returned; an empty or failed view says so. Still
-open from `docs/CURRENT-UI.md` §12: editable key bindings.
+Keys. Settings ▸ Keys lists every command with its keys: Record takes the next keys pressed
+(Escape cancels), Unbind and Default undo it, Reset all keys restores every default. A key
+another command had is taken from it, and the notification says which. One table of
+commands (`app/src/keymap.rs`) drives both the bindings and this editor; changes are kept in
+`~/.config/n0xis/keybindings.json`. Letters and digits follow the physical key, so with a
+Ukrainian layout Ctrl and the key that prints `п` is Ctrl+G.
+
+Every view shows only what the engine returned; an empty or failed view says so. Every
+item of `docs/CURRENT-UI.md` §12 is done; the few parts left out on purpose are said there,
+with the reason.

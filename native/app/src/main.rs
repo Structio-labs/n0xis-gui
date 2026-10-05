@@ -15,6 +15,7 @@ mod edits;
 mod functions;
 mod graph;
 mod graph_layout;
+mod keymap;
 mod layout;
 mod linear;
 mod menus;
@@ -34,7 +35,6 @@ mod xrefs;
 
 use std::path::PathBuf;
 
-use gpui_kit::component::dock::ToggleZoom;
 use gpui_kit::component::{Theme, ThemeMode, TitleBar};
 use gpui_kit::*;
 
@@ -70,36 +70,12 @@ fn main() {
         gpui_kit::init(cx);
         Theme::change(ThemeMode::Dark, None, cx);
         layout::register_panels(cx);
+        // Fixed plumbing, not commands: the console's history keys and the
+        // listing's copy. The commands' keys come from `keymap`, one table that
+        // also drives the editor in Settings ▸ Keys.
         cx.bind_keys([
-            KeyBinding::new("ctrl-q", Quit, None),
-            KeyBinding::new("ctrl-o", Open, None),
-            // Text fields bind these to text undo and redo; inside one, theirs win.
-            KeyBinding::new("ctrl-shift-z", UndoLayout, None),
-            KeyBinding::new("ctrl-shift-y", RedoLayout, None),
-            KeyBinding::new("shift-escape", ToggleZoom, None),
-            KeyBinding::new("ctrl-=", appearance::ZoomIn, None),
-            KeyBinding::new("ctrl-+", appearance::ZoomIn, None),
-            KeyBinding::new("ctrl--", appearance::ZoomOut, None),
-            KeyBinding::new("ctrl-0", appearance::ResetZoom, None),
-            KeyBinding::new("ctrl-d", ToggleBookmark, None),
-            KeyBinding::new("f2", Rename, None),
-            KeyBinding::new("ctrl-/", Comment, None),
-            KeyBinding::new("ctrl-g", GoTo, None),
-            KeyBinding::new("ctrl-,", OpenSettings, None),
-            KeyBinding::new("alt-left", GoBack, None),
-            KeyBinding::new("alt-right", GoForward, None),
-            // Outside a text field these undo the user's edits to the target;
-            // inside one, the field's own text undo wins.
-            KeyBinding::new("ctrl-z", UndoEdit, None),
-            KeyBinding::new("ctrl-y", RedoEdit, None),
-            // The decompiler is a read-only text field that would swallow them.
-            KeyBinding::new("ctrl-z", UndoEdit, Some("Decompiler > Input")),
-            KeyBinding::new("ctrl-y", RedoEdit, Some("Decompiler > Input")),
-            // In the console's command line, ↑ and ↓ walk its history instead
-            // of moving the caret.
             KeyBinding::new("up", console::HistoryPrevious, Some("Console > Input")),
             KeyBinding::new("down", console::HistoryNext, Some("Console > Input")),
-            // The listing copies its selected lines.
             KeyBinding::new("ctrl-c", gpui_kit::component::input::Copy, Some(linear::KEY_CONTEXT)),
         ]);
         let mut startup_notes = appearance::init(cx);
@@ -109,6 +85,10 @@ fn main() {
         let (prefs, prefs_problem) = prefs::Prefs::read();
         cx.set_global(prefs);
         startup_notes.extend(prefs_problem);
+        let (keys, keys_problem) = keymap::Keymap::read();
+        cx.set_global(keys);
+        startup_notes.extend(keys_problem);
+        startup_notes.extend(keymap::install(cx));
         cx.on_action(|_: &Quit, cx: &mut App| cx.quit());
         // One window: closing it ends the app instead of leaving a headless process.
         cx.on_window_closed(|cx, _| {
