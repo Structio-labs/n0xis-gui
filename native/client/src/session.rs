@@ -32,6 +32,8 @@ pub struct Session {
     stderr_tail: Arc<Mutex<String>>,
     json_argv: bool,
     label: String,
+    /// The version the engine reports for itself in its banner.
+    version: Option<String>,
 }
 
 impl Session {
@@ -76,7 +78,7 @@ impl Session {
         });
 
         let mut session =
-            Self { child, stdin, stdout: BufReader::new(stdout), stderr_tail, json_argv: false, label: String::new() };
+            Self { child, stdin, stdout: BufReader::new(stdout), stderr_tail, json_argv: false, label: String::new(), version: None };
         let banner = session.read_envelope(false)?;
         if !banner.ok {
             return Err(ClientError::Engine(banner.error.unwrap_or_else(|| EngineError {
@@ -97,7 +99,13 @@ impl Session {
             .and_then(|v| v.as_array())
             .is_some_and(|forms| forms.iter().any(|f| f == JSON_ARGV));
         session.label = banner.data.get("label").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+        session.version = banner.meta.tool_version.clone();
         Ok(session)
+    }
+
+    /// The engine's version, as its banner states it; `None` when it does not.
+    pub fn version(&self) -> Option<&str> {
+        self.version.as_deref()
     }
 
     /// What the engine calls the loaded target.

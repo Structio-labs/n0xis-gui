@@ -42,6 +42,9 @@ pub struct Meta {
     pub total: Option<u64>,
     #[serde(default)]
     pub truncated: Option<bool>,
+    /// The engine's own version, as it reports it.
+    #[serde(default)]
+    pub tool_version: Option<String>,
 }
 
 impl Envelope {

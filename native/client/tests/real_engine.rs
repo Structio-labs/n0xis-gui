@@ -57,6 +57,11 @@ fn the_decompilation_of_a_known_function_holds_its_planted_constants() {
         return;
     };
     let project = target.parent().map(|p| p.to_path_buf());
+    // What the engine says about itself on its own command line, to hold the
+    // banner's version against.
+    let own_version = Command::new(engine.program()).arg("--version").output().ok().and_then(|o| {
+        String::from_utf8(o.stdout).ok().and_then(|s| s.split_whitespace().nth(1).map(str::to_string))
+    });
     let engine = Engine::start(engine, target.clone(), project);
 
     // A Linux executable has no PE unwind table: the prologue scan is the source.
@@ -79,7 +84,13 @@ fn the_decompilation_of_a_known_function_holds_its_planted_constants() {
     let disassembly = engine.send(&Disassemble { addr: mix.va.clone(), count: 8 }).wait().expect("disassembly");
     assert_eq!(disassembly.insns.first().map(|i| i.va.as_str()), Some(mix.va.as_str()), "it starts where asked");
 
-    assert!(matches!(engine.status(), EngineStatus::Ready { .. }), "{:?}", engine.status());
+    match engine.status() {
+        EngineStatus::Ready { version, .. } => {
+            assert!(own_version.is_some(), "`--version` printed no version");
+            assert_eq!(version, own_version, "the banner's version is the one the engine prints");
+        }
+        other => panic!("{other:?}"),
+    }
     let _ = std::fs::remove_dir_all(target.parent().expect("temp dir"));
 }
 

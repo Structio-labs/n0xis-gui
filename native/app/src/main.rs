@@ -22,6 +22,7 @@ mod nav;
 mod panel;
 mod project;
 mod prompt;
+mod recent;
 mod scanner;
 mod search;
 mod triage;
@@ -96,7 +97,10 @@ fn main() {
             // The listing copies its selected lines.
             KeyBinding::new("ctrl-c", gpui_kit::component::input::Copy, Some(linear::KEY_CONTEXT)),
         ]);
-        let theme_problems = appearance::init(cx);
+        let mut startup_notes = appearance::init(cx);
+        let (recent, recent_problem) = recent::Recent::read();
+        cx.set_global(recent);
+        startup_notes.extend(recent_problem);
         cx.on_action(|_: &Quit, cx: &mut App| cx.quit());
         // One window: closing it ends the app instead of leaving a headless process.
         cx.on_window_closed(|cx, _| {
@@ -121,7 +125,7 @@ fn main() {
         };
         let (window, workbench) = gpui_kit::open_window(options, cx, |window, cx| {
             window.set_window_title("N0xis");
-            cx.new(|cx| workbench::Workbench::new(target, theme_problems, window, cx))
+            cx.new(|cx| workbench::Workbench::new(target, startup_notes, window, cx))
         })
         .expect("open the main window");
         // Keyboard shortcuts and menu actions reach the workbench through focus.

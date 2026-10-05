@@ -31,6 +31,7 @@ use crate::assets::AppIcon;
 use crate::layout::{self, History, PanelKind, ShowPanel, Views};
 use crate::nav::{Location, NavHistory, Navigate, Point, hex, parse_va};
 use crate::prompt::{self, Prompt};
+use crate::recent::{self, OpenRecent, Recent};
 use crate::scanner::ScannerView;
 use crate::search::SearchView;
 use crate::triage::TriageView;
@@ -78,6 +79,8 @@ pub struct Workbench {
     history: History,
     /// Set once a save of the layout has failed, so the user is told once.
     layout_save_failed: bool,
+    /// The same for the list of recent targets.
+    recent_save_failed: bool,
     /// The next settled layout comes from loading a snapshot (start-up, undo,
     /// redo), not from the user: it replaces the current history entry instead
     /// of adding one. A loaded layout is laid out again on the next frame and
@@ -90,7 +93,7 @@ pub struct Workbench {
 }
 
 impl Workbench {
-    pub fn new(target: Option<PathBuf>, theme_problems: Vec<String>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(target: Option<PathBuf>, startup_notes: Vec<String>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let views = Views {
             functions: cx.new(|cx| FunctionList::new(window, cx)),
             decompiler: cx.new(|cx| DecompilerView::new(window, cx)),
@@ -193,9 +196,9 @@ impl Workbench {
                 }
             }
         });
-        if !theme_problems.is_empty() {
+        if !startup_notes.is_empty() {
             window.defer(cx, move |window, cx| {
-                for problem in theme_problems {
+                for problem in startup_notes {
                     window.push_notification(SharedString::from(problem), cx);
                 }
             });
@@ -216,6 +219,7 @@ impl Workbench {
             _dock_skin: dock_skin,
             history,
             layout_save_failed: false,
+            recent_save_failed: false,
             next_change_is_load: true,
             _layout_settle: None,
             _theme_poll: theme_poll,
@@ -286,7 +290,35 @@ impl Workbench {
         v.functions.update(cx, |list, cx| list.load(engine, cx));
         let name = path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
         window.set_window_title(&format!("{name} — N0xis"));
+        cx.update_global::<Recent, _>(|recent, _| recent.opened(&path, recent::now()));
+        self.keep_recent(window, cx);
         cx.notify();
+    }
+
+    /// Save the recent targets and show them in the menu; a failed save is said once.
+    fn keep_recent(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Err(e) = cx.global::<Recent>().write()
+            && !self.recent_save_failed
+        {
+            self.recent_save_failed = true;
+            window.push_notification(SharedString::from(format!("The recent targets could not be saved: {e}")), cx);
+        }
+        self.refresh_menus(cx);
+    }
+
+    fn on_open_recent(&mut self, action: &OpenRecent, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_recent(PathBuf::from(action.0.as_ref()), window, cx);
+    }
+
+    fn open_recent(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        if path.is_file() {
+            self.open(path, window, cx);
+            return;
+        }
+        cx.update_global::<Recent, _>(|recent, _| recent.forget(&path));
+        self.keep_recent(window, cx);
+        let text = format!("{} is no longer there, so it was taken off the recent targets.", path.display());
+        window.push_notification(SharedString::from(text), cx);
     }
 
     /// Go to `location` and show it everywhere; the place left can be gone back to.
@@ -890,11 +922,12 @@ impl Workbench {
         let (text, color) = match &self.engine_status {
             None => ("no target".to_string(), theme.muted_foreground),
             Some(EngineStatus::Starting) => ("engine starting…".to_string(), theme.muted_foreground),
-            Some(EngineStatus::Ready { label, json_argv }) => {
+            Some(EngineStatus::Ready { label, json_argv, version }) => {
                 // An engine that reads only text requests cannot be sent every
                 // value; say so rather than let a refused edit look like a bug.
                 let note = if *json_argv { "" } else { " · older engine: some values cannot be sent" };
-                (format!("engine ready · {label}{note}"), theme.success)
+                let version = version.as_deref().map(|v| format!(" {v}")).unwrap_or_default();
+                (format!("engine{version} ready · {label}{note}"), theme.success)
             }
             Some(EngineStatus::Crashed { crashes, reason }) => (
                 format!("engine crashed ({crashes}×), restarting on the next request: {}", first_line(reason)),
@@ -940,6 +973,29 @@ impl Workbench {
                     })),
             )
             .children(self.open_error.clone().map(|e| div().text_sm().text_color(theme.danger).child(e)))
+            .children(self.render_recent(cx))
+    }
+
+    /// The recent targets on the start screen, newest first.
+    fn render_recent(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let targets = cx.global::<Recent>().targets().to_vec();
+        if targets.is_empty() {
+            return None;
+        }
+        let muted = cx.theme().muted_foreground;
+        let list = v_flex()
+            .pt_4()
+            .gap_1()
+            .items_center()
+            .child(div().text_xs().text_color(muted).child("Recent"))
+            .children(targets.into_iter().enumerate().map(|(i, target)| {
+                let path = target.path.clone();
+                Button::new(("recent", i))
+                    .ghost()
+                    .label(target.label())
+                    .on_click(cx.listener(move |wb, _: &ClickEvent, window, cx| wb.open_recent(path.clone(), window, cx)))
+            }));
+        Some(list.into_any_element())
     }
 }
 
@@ -960,6 +1016,7 @@ impl Render for Workbench {
             .key_context("Workbench")
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::on_open))
+            .on_action(cx.listener(Self::on_open_recent))
             .on_action(cx.listener(Self::on_about))
             .on_action(cx.listener(Self::on_undo_layout))
             .on_action(cx.listener(Self::on_redo_layout))

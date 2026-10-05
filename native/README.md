@@ -47,8 +47,10 @@ engine. The protocol tests need Python for the stand-in engine.
 ## Status (2026-10-05)
 
 Shell: one title bar (on Linux the window draws its own frame and controls) with a menu
-that lists only working actions; open a target from the command line or a file dialog;
-engine status and the selection in the status bar. Themes: the Tauri build's six,
+that lists only working actions; open a target from the command line, a file dialog, or
+the last eight opened (File ▸ Open Recent and the start screen, kept in
+`~/.config/n0xis/recent.json`; one no longer there is taken off the list, saying so);
+the engine's own version (from its banner), its status and the selection in the status bar. Themes: the Tauri build's six,
 generated from its stylesheet by `app/themes/build_themes.py`, plus your own GPUI Kit
 theme files in `~/.config/n0xis/themes/`, re-read when they change and reported when one
 cannot be read; View ▸ Theme; zoom with Ctrl+= / Ctrl+- / Ctrl+0; both kept in
@@ -122,5 +124,6 @@ Back and Forward (Alt+← / Alt+→, or the mouse's side buttons) walk the place
 300 of them; a click on a row moves the selection without becoming a step.
 
 Every view shows only what the engine returned; an empty or failed view says so. Still
-open from `docs/CURRENT-UI.md` §12: the engine and shell items (background analysis,
-caches, recent targets), the workspaces and the add-widget palette, and the settings.
+open from `docs/CURRENT-UI.md` §12: background analysis, the function-list and result
+caches, a one-shot fallback for an engine without `serve`, the workspaces and the
+add-widget palette, and the settings.

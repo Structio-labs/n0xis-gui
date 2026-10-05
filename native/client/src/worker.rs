@@ -25,7 +25,8 @@ pub const MAX_CONSECUTIVE_CRASHES: u32 = 3;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EngineStatus {
     Starting,
-    Ready { label: String, json_argv: bool },
+    /// `version` is what the engine's banner says about itself.
+    Ready { label: String, json_argv: bool, version: Option<String> },
     /// The session ended; the next request starts a new one.
     Crashed { crashes: u32, reason: String },
     /// Not restarted any more until [`Engine::restart`].
@@ -219,7 +220,7 @@ fn run(
     let mut gave_up: Option<String> = None;
     match open() {
         Ok(s) => {
-            set(EngineStatus::Ready { label: s.label().to_string(), json_argv: s.reads_json_argv() });
+            set(EngineStatus::Ready { label: s.label().to_string(), json_argv: s.reads_json_argv(), version: s.version().map(str::to_string) });
             session = Some(s);
         }
         // Not a crash: a missing engine or an unreadable file fails the same way
@@ -270,7 +271,7 @@ fn run(
         if session.is_none() {
             match open() {
                 Ok(s) => {
-                    set(EngineStatus::Ready { label: s.label().to_string(), json_argv: s.reads_json_argv() });
+                    set(EngineStatus::Ready { label: s.label().to_string(), json_argv: s.reads_json_argv(), version: s.version().map(str::to_string) });
                     session = Some(s);
                 }
                 Err(e) => {

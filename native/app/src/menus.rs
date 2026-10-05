@@ -10,6 +10,7 @@ use gpui_kit::{App, Entity, Menu, MenuItem};
 
 use crate::appearance::{self, ResetZoom, SelectTheme, ZoomIn, ZoomOut};
 use crate::layout::{PanelKind, ShowPanel};
+use crate::recent::{OpenRecent, Recent};
 use crate::{
     About, ClearAnnotations, Comment, GoBack, GoForward, GoTo, Open, Quit, RedoEdit, RedoLayout, Rename, ResetLayout,
     SetReturnType, SetType, ToggleBookmark, UndoEdit, UndoLayout,
@@ -40,6 +41,12 @@ fn build(cx: &App) -> Vec<Menu> {
         .iter()
         .map(|t| MenuItem::action(t.name.clone(), SelectTheme(t.name.clone())).checked(t.name == current))
         .collect();
+    let recent: Vec<MenuItem> = cx
+        .global::<Recent>()
+        .targets()
+        .iter()
+        .map(|t| MenuItem::action(t.label(), OpenRecent(t.path.to_string_lossy().into_owned().into())))
+        .collect();
     let panels = PanelKind::ALL
         .into_iter()
         .map(|kind| MenuItem::action(kind.title(), ShowPanel(kind.name().into())))
@@ -47,7 +54,12 @@ fn build(cx: &App) -> Vec<Menu> {
     vec![
         Menu {
             name: "File".into(),
-            items: vec![MenuItem::action("Open…", Open), MenuItem::separator(), MenuItem::action("Quit", Quit)],
+            items: vec![
+                MenuItem::action("Open…", Open),
+                MenuItem::Submenu(Menu { name: "Open Recent".into(), disabled: recent.is_empty(), items: recent }),
+                MenuItem::separator(),
+                MenuItem::action("Quit", Quit),
+            ],
             disabled: false,
         },
         Menu {

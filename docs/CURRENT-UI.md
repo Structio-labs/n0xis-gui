@@ -263,12 +263,12 @@ Found by reading the code, not by running it. Most severe first.
 
 Engine and shell
 
-- [ ] Engine binary resolution (`$N0XIS_BIN`, user install, `PATH`) and the version banner
+- [x] Engine binary resolution (`$N0XIS_BIN`, user install, `PATH`) and the version banner (native, 2026-10-05)
 - [ ] Resident engine session per target, one-shot fallback, project directory per target
 - [ ] Background analysis with live phases; xref queries wait for the index
 - [ ] Function list streaming, disk cache keyed by path and mtime
 - [ ] Result cache with invalidation on edits; stale responses dropped
-- [ ] Open from picker, launcher, menu and command line; full state reset on open
+- [x] Open from picker, launcher, menu and command line; full state reset on open (native, 2026-10-05; recent targets reopen the file, §11.6)
 
 Layout
 
