@@ -280,8 +280,17 @@ Layout
 
 Layout. Done in the native front end (2026-10-05) on GPUI Kit's dock:
 
-- [x] Tiling dock: split, replace, tab, cancel-on-self, resize. Tab strips sit on top only: the
-  dock offers no other side, so that part is not ported.
+- [x] Tiling dock: split, tab, cancel-on-self, resize, on GPUI Kit's dock.
+- [x] Tab strips on any side of a group (top, bottom, left, right), icons or names per group,
+  saved with the layout and undone with it; a tab's right-click menu (show, close, show
+  instead, the strip's side, its labels); a close button on each tab and on the group's
+  header (native, 2026-10-06). The dock draws through a renderer that an application may
+  replace (`app/src/skin.rs`), so this needed no change to the library. An earlier version of
+  this line said the dock "offers no other side" and left the strips out; that was wrong.
+- Left out on purpose: in the Tauri build a drop on a group's centre replaces what it shows;
+  here it joins the group as a tab, and Show Instead does the replacing. Ctrl while dragging
+  (join as a tab, the drop side setting where the strip goes) is not ported: the dock decides
+  where a drop lands, and the strip's side is set from the tab's menu.
 - [x] Change-widget menu (a group's ⋯ menu ▸ Show instead), close, undo / redo per workspace,
   saved layouts (`ui-layout.json`, one layout per workspace; a file from before workspaces
   becomes the Decompile workspace's layout)
@@ -308,6 +317,44 @@ engine's own list (`decomp pseudo` → `variables`), not from the text (§11.5).
 
 - [x] Rename, comment, variable rename and type, return type, bookmark, clear, all with undo / redo
 - [x] Go to, history (keys and mouse buttons), one selection driving every view
+
+Interactions. Added 2026-10-06, after the user found the right-click menus and the side tab
+strips missing. The checklist above lists views and engine features, not gestures, so
+"every item done" said nothing about either. This list was built by enumerating every
+gesture the Tauri front end handles, then looking for each in the native code:
+`grep -c addEventListener ui/*.js` (89: `dock.js` 15, `app.js` 74), the `menuFor` table
+(64 items in eleven right-click menus, ten kinds of row and a default, `app.js:805-926`), the menu bar (45), the key table (24),
+the palette (15 commands, 4 settings, 3 actions) and the dock's two menus (9). 25 of the 109
+menu items only print a message; those are not ported.
+
+- [x] Right-click menus with real actions only (native, 2026-10-06, `app/src/context.rs`):
+  function rows, the decompiler (a variable under the caret by name), variables, instructions,
+  linear lines and function headers, graph blocks and the graph around them, cross-references,
+  bookmarks, strings, find results, hex rows, triage exports, types, scanner matches, console
+  entries, and the workspace bar (the Tauri build's menu for empty space). A menu acts on the
+  address it was opened on, whatever is selected. Not ported, being messages only there:
+  breakpoints, watchpoints, patching, freezing, "Apply signature", the find-xrefs entries
+  (the native Cross-references panel is real and every menu offers it).
+- [x] Command palette, Ctrl+Shift+P, Ctrl+P or F1: every command of the key table, the panels,
+  the workspaces, the themes, and the yes/no settings with their values; clearing the
+  target's caches.
+- [x] Analyze ▸ Identify Constants (`const identify`), from the menu, the palette or a
+  function's right-click menu: the answer is shown in full (algorithm, role, note, formula),
+  where the Tauri build showed a count.
+- [x] File ▸ Close Target; File ▸ Scan a Running Process… opens the scanner in the Dynamic
+  workspace. Attaching to a process as the session's target is not ported: nothing native
+  reads a process except the scanner, which picks its own.
+- [x] Ctrl+F opens Find with the caret in its query; the decompiler's Graph button (the Tauri
+  build's "CFG ↗"); Help ▸ Keyboard Shortcuts opens Settings at Keys.
+- [x] The target chip: the open target's path in the title bar opens a menu (open another,
+  close, triage, copy the path).
+- [x] Graph edges with square or rounded corners, kept with the appearance; interface scale
+  presets (90, 100, 110 and 125 %) beside the font size.
+- [x] A workspace with no panel says so and offers one, or the default layout. The dock keeps
+  the last panel of a workspace, so this shows only for a layout saved empty.
+- [x] Found while checking these, and fixed: closing the panel that held the caret left every
+  key going to no element, so the shortcuts stopped until something was clicked.
+- Left out on purpose: the graph legend's toggle (the legend is always in the header).
 
 Settings
 
