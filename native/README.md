@@ -81,6 +81,14 @@ belongs with), and it can be closed, moved and opened again without losing what 
   or drag on it jumps. Click and Shift+click select lines; Ctrl+C copies them.
 - Cross-references: who references the selection (`xref to`), and for a function the calls
   it makes as the engine resolved them (`ir build`).
+- Variables: the selected function's parameters, locals and other values, as the
+  decompiler page printed them (the engine's `variables`, the same answer the Decompiler
+  shows, so the two cannot disagree). Rename… and Type… on a row go the same way as F2 in
+  the page, with undo; only parameters and locals offer a type.
+- Hex: 1 KiB around the selection (`mem span`), sixteen bytes a row with the text beside
+  them, the selected byte marked. An address the engine cannot read (between sections, or a
+  zero-fill tail) shows as `··` and the window goes on past it; Earlier / Later move a
+  window at a time.
 - Triage: the image's own headers (`profile --exports`): sections, exports with forwarders
   marked, and the engine's advisories.
 - Bookmarks: bookmarks first, then every other annotated address (`annotate list`).
@@ -89,6 +97,10 @@ belongs with), and it can be closed, moved and opened again without losing what 
   back, so what is shown is what the engine stored.
 - Find: text, UTF-16, byte patterns with wildcards, or escaped text (`find`); at most 300
   matches, and it says when there are more.
+- Strings: the text the image holds (`strings`): address, section, encoding and the text, a
+  tab or line break shown as its escape. The filter is the engine's (any case, any script),
+  pages of 500 come in as the list reaches its end, and the footer says how many match in
+  all. A click goes to the string, so Hex shows its bytes and Cross-references who uses it.
 - Console: any engine command in the target's session, without `--file`; ↑ / ↓ history;
   the engine's own JSON, with Copy.
 - Memory scanner: pick a running process (`process ps`), see whether it can be read

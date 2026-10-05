@@ -23,7 +23,10 @@ use crate::linear::LinearView;
 use crate::scanner::ScannerView;
 use crate::search::SearchView;
 use crate::triage::TriageView;
+use crate::hex::HexView;
+use crate::strings::StringsView;
 use crate::types::TypesView;
+use crate::variables::VariablesView;
 use crate::xrefs::XrefsView;
 
 /// Every panel the dock can hold. The one place a panel's saved name and title
@@ -44,10 +47,13 @@ pub enum PanelKind {
     Find,
     Console,
     Scanner,
+    Variables,
+    Hex,
+    Strings,
 }
 
 impl PanelKind {
-    pub const ALL: [PanelKind; 12] = [
+    pub const ALL: [PanelKind; 15] = [
         Self::Functions,
         Self::Decompiler,
         Self::Disassembly,
@@ -60,6 +66,9 @@ impl PanelKind {
         Self::Find,
         Self::Console,
         Self::Scanner,
+        Self::Variables,
+        Self::Hex,
+        Self::Strings,
     ];
 
     /// The name a saved layout knows the panel by. Once chosen, never change
@@ -78,6 +87,9 @@ impl PanelKind {
             Self::Find => "find",
             Self::Console => "console",
             Self::Scanner => "scanner",
+            Self::Variables => "variables",
+            Self::Hex => "hex",
+            Self::Strings => "strings",
         }
     }
 
@@ -95,6 +107,9 @@ impl PanelKind {
             Self::Find => "Find",
             Self::Console => "Console",
             Self::Scanner => "Memory scanner",
+            Self::Variables => "Variables",
+            Self::Hex => "Hex",
+            Self::Strings => "Strings",
         }
     }
 
@@ -113,6 +128,9 @@ impl PanelKind {
             Self::Find => AppIcon::Search,
             Self::Console => AppIcon::Term,
             Self::Scanner => AppIcon::Scan,
+            Self::Variables => AppIcon::Scope,
+            Self::Hex => AppIcon::Hex,
+            Self::Strings => AppIcon::Strings,
         }
     }
 
@@ -122,8 +140,8 @@ impl PanelKind {
         match self {
             Self::Functions => None,
             Self::Decompiler | Self::Graph | Self::Linear => Some(Self::Decompiler),
-            Self::Xrefs | Self::Bookmarks | Self::Find => Some(Self::Xrefs),
-            Self::Disassembly | Self::Console | Self::Triage | Self::Types | Self::Scanner => Some(Self::Disassembly),
+            Self::Xrefs | Self::Bookmarks | Self::Find | Self::Variables | Self::Strings => Some(Self::Xrefs),
+            Self::Disassembly | Self::Console | Self::Triage | Self::Types | Self::Scanner | Self::Hex => Some(Self::Disassembly),
         }
     }
 
@@ -160,6 +178,9 @@ pub struct Views {
     pub find: Entity<SearchView>,
     pub console: Entity<ConsoleView>,
     pub scanner: Entity<ScannerView>,
+    pub variables: Entity<VariablesView>,
+    pub hex: Entity<HexView>,
+    pub strings: Entity<StringsView>,
 }
 
 impl Global for Views {}
@@ -179,6 +200,9 @@ impl Views {
             PanelKind::Find => panel_handle(self.find.clone()),
             PanelKind::Console => panel_handle(self.console.clone()),
             PanelKind::Scanner => panel_handle(self.scanner.clone()),
+            PanelKind::Variables => panel_handle(self.variables.clone()),
+            PanelKind::Hex => panel_handle(self.hex.clone()),
+            PanelKind::Strings => panel_handle(self.strings.clone()),
         }
     }
 
@@ -198,6 +222,9 @@ impl Views {
             PanelKind::Find => area.remove_panel(self.find.clone(), window, cx),
             PanelKind::Console => area.remove_panel(self.console.clone(), window, cx),
             PanelKind::Scanner => area.remove_panel(self.scanner.clone(), window, cx),
+            PanelKind::Variables => area.remove_panel(self.variables.clone(), window, cx),
+            PanelKind::Hex => area.remove_panel(self.hex.clone(), window, cx),
+            PanelKind::Strings => area.remove_panel(self.strings.clone(), window, cx),
         }
     }
 
@@ -216,6 +243,9 @@ impl Views {
             PanelKind::Find => self.find.entity_id(),
             PanelKind::Console => self.console.entity_id(),
             PanelKind::Scanner => self.scanner.entity_id(),
+            PanelKind::Variables => self.variables.entity_id(),
+            PanelKind::Hex => self.hex.entity_id(),
+            PanelKind::Strings => self.strings.entity_id(),
         };
         PanelId::from(entity)
     }
@@ -299,13 +329,13 @@ impl Workspace {
                         .child(
                             DockLayout::h_split()
                                 .child(tabs(views, &[Decompiler, Linear], cx), None)
-                                .child(tabs(views, &[Triage, Types], cx), Some(px(430.))),
+                                .child(tabs(views, &[Triage, Types, Variables], cx), Some(px(430.))),
                             None,
                         )
                         .child(
                             DockLayout::h_split()
-                                .child(tabs(views, &[Disassembly], cx), None)
-                                .child(tabs(views, &[Find, Xrefs, Bookmarks], cx), Some(px(430.))),
+                                .child(tabs(views, &[Disassembly, Hex], cx), None)
+                                .child(tabs(views, &[Strings, Find, Xrefs, Bookmarks], cx), Some(px(430.))),
                             Some(px(300.)),
                         ),
                     None,
@@ -322,8 +352,9 @@ impl Workspace {
     }
 }
 
-/// Functions on the left; the code views in the middle over the disassembly
-/// and the console; references, bookmarks and search on the right.
+/// Functions on the left; the code views in the middle over the disassembly,
+/// the bytes and the console; references, variables, bookmarks and search on
+/// the right.
 pub fn default_layout(views: &Views, cx: &App) -> DockLayout {
     use PanelKind::*;
     DockLayout::h_split()
@@ -333,10 +364,10 @@ pub fn default_layout(views: &Views, cx: &App) -> DockLayout {
                 .child(
                     DockLayout::h_split()
                         .child(tabs(views, &[Decompiler, Graph, Linear], cx), None)
-                        .child(tabs(views, &[Xrefs, Bookmarks, Find], cx), Some(px(430.))),
+                        .child(tabs(views, &[Xrefs, Variables, Bookmarks, Find], cx), Some(px(430.))),
                     None,
                 )
-                .child(tabs(views, &[Disassembly, Console, Triage, Types], cx), Some(px(280.))),
+                .child(tabs(views, &[Disassembly, Hex, Console, Triage, Types], cx), Some(px(280.))),
             None,
         )
 }

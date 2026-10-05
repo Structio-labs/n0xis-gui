@@ -26,6 +26,8 @@ pub mod schema {
     pub const SCAN: &str = "n0xis.scan.v1";
     pub const ANALYZE: &str = "n0xis.analyze.v1";
     pub const PROJECT_CACHE: &str = "n0xis.project.cache.v1";
+    pub const MEM_SPAN: &str = "n0xis.mem.span.v1";
+    pub const STRINGS: &str = "n0xis.strings.v1";
 }
 
 /// A request the engine answers with one payload shape.

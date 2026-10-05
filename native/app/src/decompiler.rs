@@ -30,6 +30,7 @@ pub enum VariableIntent {
 }
 
 /// Emitted when the user asks to rename or type a variable of the shown function.
+#[derive(Clone)]
 pub struct EditVariable {
     pub function: FunctionEntry,
     pub variable: Variable,
@@ -109,6 +110,29 @@ impl DecompilerView {
                 cx.notify();
             }
         }
+    }
+
+    /// The function shown, if any.
+    pub fn function(&self) -> Option<&FunctionEntry> {
+        self.function.as_ref()
+    }
+
+    /// The shown function's variables as the engine listed them: `None` while
+    /// nothing is shown, or when the engine does not list them.
+    pub fn variables(&self) -> Option<&[Variable]> {
+        match self.state {
+            ViewState::Ready { .. } => self.variables.as_deref(),
+            _ => None,
+        }
+    }
+
+    /// Whether a decompilation is shown (not loading, not failed, not empty).
+    pub fn is_ready(&self) -> bool {
+        matches!(self.state, ViewState::Ready { .. })
+    }
+
+    pub fn style(&self) -> DecompStyle {
+        self.style
     }
 
     /// Decompile the shown function again: something it shows has changed.

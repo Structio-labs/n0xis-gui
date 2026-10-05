@@ -10,6 +10,7 @@
 //! dependency, so every part of it is testable without a window.
 
 mod analysis;
+mod bytes;
 mod envelope;
 mod find;
 mod live;
@@ -20,9 +21,11 @@ mod project;
 mod refs;
 mod request;
 mod session;
+mod strings;
 mod worker;
 
 pub use analysis::{Analysis, AnalysisReport, AnalysisState, Phase, Progress, WarmUp};
+pub use bytes::{MAX_WINDOW, MemSpan, Span};
 pub use envelope::{EngineError, Envelope, Meta};
 pub use find::{Find, FindMatch, FindQuery, FindResult};
 pub use live::{
@@ -36,6 +39,7 @@ pub use notes::{
     TypeLibrary, TypeSubject, Written,
 };
 pub use project::{CacheKind, CacheReport, CacheUsage};
+pub use strings::{ImageString, ListStrings, StringEncoding, StringsPage};
 pub use profile::{Advisory, EngineHint, Export, FoldedExports, ImageProfile, Profile, ProfileReport, Section};
 pub use refs::{Block, BuildCfg, CallSite, Cfg, CfgInstruction, Edge, Xref, Xrefs, XrefsTo};
 pub use request::{

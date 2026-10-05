@@ -129,8 +129,8 @@ fn va(s: &str) -> u64 {
 #[test]
 fn the_widget_requests_answer_questions_whose_answers_are_known() {
     use n0xis_client::{
-        BuildCfg, ClientError, DefineEnum, DefineStruct, Find, FindQuery, ListAnnotations, ListTypes, Profile,
-        RemoveType, SetBookmark, XrefsTo,
+        BuildCfg, ClientError, DefineEnum, DefineStruct, Find, FindQuery, ListAnnotations, ListStrings, ListTypes, MemSpan,
+        Profile, RemoveType, SetBookmark, XrefsTo,
     };
     let engine = match EngineCommand::locate() {
         Ok(e) => e,
@@ -179,6 +179,19 @@ fn the_widget_requests_answer_questions_whose_answers_are_known() {
         .expect("find");
     if let Some(planted) = nm_address(&exe, "PLANTED") {
         assert!(found.matches.iter().any(|m| va(&m.va) == planted), "nm says {planted:#x}; found {found:?}");
+
+        // The strings view lists it there, and the hex view reads its bytes.
+        let listed = engine
+            .send(&ListStrings { contains: Some("N0XIS-PLANTED-7F3A".into()), limit: 10, offset: 0 })
+            .wait()
+            .expect("strings");
+        assert_eq!(listed.total, 1, "{listed:?}");
+        assert_eq!((va(&listed.strings[0].address), listed.strings[0].text.as_str()), (planted, "n0xis-planted-7f3a"));
+        let start = planted & !0xf;
+        let span = engine.send(&MemSpan { addr: format!("{start:#x}"), size: 64 }).wait().expect("mem span");
+        assert_eq!(span.start, start);
+        let text: Vec<u8> = (planted..planted + 18).map(|a| span.byte_at(a).expect("readable")).collect();
+        assert_eq!(text, b"n0xis-planted-7f3a");
     } else {
         eprintln!("nm unavailable: checked only that the planted string was found");
         assert!(found.count >= 1, "{found:?}");

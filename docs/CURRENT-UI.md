@@ -294,11 +294,14 @@ one shows and how it was checked is in `native/README.md` and the commit message
 - [x] Linear listing (window, exact function ends, Asm / Pseudo, minimap, range selection)
 - [x] Control-flow graph (layout, orthogonal routing, colours, pan / zoom / fit, block drag)
 - [x] Triage · Console · Xrefs · Bookmarks · Types · Memory scanner · Find in image
+- [x] Variables (the engine's `variables`, §11.5) · Hex (`mem span`, gaps shown as gaps) ·
+  Strings (`strings`, filtered and paged by the engine)
 
 Not ported, on purpose: the catalog widgets that had no engine behind them in this build
-(Code, Hex, Copilot, Details, Output, Registers, Watchpoints, Live memory, Watchlist, Stack,
-Strings, Notes) and Variables, which the GUI derived itself (§11.1, §11.5). Each comes back
-only with an engine result to show.
+(Code, Copilot, Details, Output, Registers, Watchpoints, Live memory, Watchlist, Stack,
+Notes). Each comes back only with an engine result to show. Variables, Hex and Strings came
+back that way (2026-10-05): Variables from the decompiler's own list, Hex from `mem span` and
+Strings from `strings`, both of which the engine gained for them.
 
 Editing and navigation. Done in the native front end (2026-10-05). Variables come from the
 engine's own list (`decomp pseudo` → `variables`), not from the text (§11.5).

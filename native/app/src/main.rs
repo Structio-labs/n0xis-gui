@@ -15,6 +15,7 @@ mod edits;
 mod functions;
 mod graph;
 mod graph_layout;
+mod hex;
 mod keymap;
 mod layout;
 mod linear;
@@ -28,8 +29,10 @@ mod recent;
 mod scanner;
 mod search;
 mod settings;
+mod strings;
 mod triage;
 mod types;
+mod variables;
 mod workbench;
 mod xrefs;
 

@@ -28,6 +28,8 @@ use crate::disassembly::DisassemblyView;
 use crate::edits::{self, Change, Edit, Fact, Journal};
 use crate::functions::{FunctionChanged, FunctionList, FunctionSelected, FunctionsLoaded};
 use crate::graph::GraphView;
+use crate::hex::HexView;
+use crate::strings::StringsView;
 use crate::linear::LinearView;
 use crate::assets::AppIcon;
 use crate::layout::{self, History, PanelKind, ReplacePanel, SavedWorkspaces, ShowPanel, SwitchWorkspace, Views, Workspace};
@@ -38,6 +40,7 @@ use crate::scanner::ScannerView;
 use crate::search::SearchView;
 use crate::triage::TriageView;
 use crate::types::TypesView;
+use crate::variables::VariablesView;
 use crate::xrefs::XrefsView;
 use crate::prefs::{Prefs, ProjectLocation};
 use crate::{
@@ -110,9 +113,12 @@ pub struct Workbench {
 
 impl Workbench {
     pub fn new(target: Option<PathBuf>, startup_notes: Vec<String>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let decompiler = cx.new(|cx| DecompilerView::new(window, cx));
         let views = Views {
             functions: cx.new(|cx| FunctionList::new(window, cx)),
-            decompiler: cx.new(|cx| DecompilerView::new(window, cx)),
+            // The variables shown are the decompiler's own list, so the two agree.
+            variables: cx.new(|cx| VariablesView::new(decompiler.clone(), cx)),
+            decompiler,
             disassembly: cx.new(DisassemblyView::new),
             graph: cx.new(GraphView::new),
             linear: cx.new(LinearView::new),
@@ -123,6 +129,8 @@ impl Workbench {
             find: cx.new(|cx| SearchView::new(window, cx)),
             console: cx.new(|cx| ConsoleView::new(window, cx)),
             scanner: cx.new(|cx| ScannerView::new(window, cx)),
+            hex: cx.new(HexView::new),
+            strings: cx.new(|cx| StringsView::new(window, cx)),
         };
         cx.set_global(views.clone());
         let (dock_area, dock_skin) = DockSkin::dock_area(layout::AREA_ID, Some(layout::LAYOUT_VERSION), window, cx);
@@ -177,6 +185,10 @@ impl Workbench {
         let variable_edits = cx.subscribe_in(&views.decompiler, window, |this, _, event: &EditVariable, window, cx| {
             this.edit_variable(event, window, cx);
         });
+        // A rename or a type asked for from the variable list goes the same way.
+        let list_edits = cx.subscribe_in(&views.variables, window, |this, _, event: &EditVariable, window, cx| {
+            this.edit_variable(event, window, cx);
+        });
         // Quitting closes the target like opening another does.
         let quitting = cx.on_app_quit(|wb, cx| {
             wb.close_target(cx);
@@ -206,6 +218,7 @@ impl Workbench {
             cx.subscribe_in(&views.triage, window, Self::on_navigate),
             cx.subscribe_in(&views.bookmarks, window, Self::on_navigate),
             cx.subscribe_in(&views.find, window, Self::on_navigate),
+            cx.subscribe_in(&views.strings, window, Self::on_navigate),
         ];
         let status_poll = cx.spawn_in(window, async move |this, cx| {
             loop {
@@ -278,7 +291,7 @@ impl Workbench {
             _theme_poll: theme_poll,
             _status_poll: status_poll,
             _subscriptions: {
-                navigation.extend([selection, renamed, variable_edits, quitting, layout_changes]);
+                navigation.extend([selection, renamed, variable_edits, list_edits, quitting, layout_changes]);
                 navigation
             },
         };
@@ -356,6 +369,8 @@ impl Workbench {
         v.types.update(cx, |view, cx| view.set_engine(e(), cx));
         v.find.update(cx, |view, cx| view.set_engine(e(), cx));
         v.console.update(cx, |view, cx| view.set_engine(e(), cx));
+        v.hex.update(cx, |view, cx| view.set_engine(e(), cx));
+        v.strings.update(cx, |view, cx| view.set_engine(e(), cx));
         v.functions.update(cx, |list, cx| list.load(engine, cx));
         let name = path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
         window.set_window_title(&format!("{name} — N0xis"));
@@ -435,6 +450,7 @@ impl Workbench {
         v.graph.update(cx, |view, cx| view.show(&location, window, cx));
         v.linear.update(cx, |view, cx| view.show(&location, cx));
         v.xrefs.update(cx, |view, cx| view.show(&location, cx));
+        v.hex.update(cx, |view, cx| view.show(&location, cx));
         self.location = Some(location);
         cx.notify();
     }
