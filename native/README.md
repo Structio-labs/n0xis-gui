@@ -132,6 +132,5 @@ the session build the same index a second time and wait on it. When the pass fou
 or library names, the function list and the views that show names are read again.
 
 Every view shows only what the engine returned; an empty or failed view says so. Still
-open from `docs/CURRENT-UI.md` §12: a one-shot fallback for an engine without `serve`,
-the function-list disk cache, the workspaces and the add-widget palette, and the
+open from `docs/CURRENT-UI.md` §12: the workspaces and the add-widget palette, and the
 settings.

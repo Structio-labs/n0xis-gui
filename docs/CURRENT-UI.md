@@ -264,10 +264,16 @@ Found by reading the code, not by running it. Most severe first.
 Engine and shell
 
 - [x] Engine binary resolution (`$N0XIS_BIN`, user install, `PATH`) and the version banner (native, 2026-10-05)
-- [ ] Resident engine session per target, one-shot fallback, project directory per target
+- [x] Resident engine session per target, project directory per target (native, 2026-10-05). The
+  one-shot fallback is not ported on purpose: an engine whose `serve` has no banner predates the
+  other requests the GUI makes too, so the GUI names the engine it found and why it cannot use it.
 - [x] Background analysis with live phases; xref queries wait for the index (native, 2026-10-05)
-- [ ] Function list streaming, disk cache keyed by path and mtime
-- [ ] Result cache with invalidation on edits; stale responses dropped
+- [x] Function list streaming, disk cache (native + engine, 2026-10-05). The cache is the engine's,
+  keyed by the code bytes rather than path and mtime, and holds no names, so a rename is never
+  read stale: on a 159 MB library the list takes 10.9 s the first time and 0.5 s after.
+- [x] Result cache with invalidation on edits; stale responses dropped (native, 2026-10-05). The
+  engine caches decompiles, IR and the reference index on disk; an edit makes every view that
+  shows the fact ask again; a request a newer one replaced is answered `Superseded` and dropped.
 - [x] Open from picker, launcher, menu and command line; full state reset on open (native, 2026-10-05; recent targets reopen the file, §11.6)
 
 Layout
