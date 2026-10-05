@@ -140,6 +140,11 @@ take, with a button that clears them. Which folders are caches is the engine's a
 (`project cache`), so names, comments and types are never cleared. Theme and font size are
 there too.
 
+Workspaces. Decompile, Static, Graph and Dynamic, in a bar under the title (and Window ▸
+Workspace), each with its own arrangement and its own layout undo; the panels are shared,
+so a view keeps what it holds in every workspace. The bar's Widget palette lists every
+panel: a click opens it where it belongs, a drag puts it where it is dropped. A group's ⋯
+menu ▸ Show instead puts another panel in the place of the one shown.
+
 Every view shows only what the engine returned; an empty or failed view says so. Still
-open from `docs/CURRENT-UI.md` §12: the workspaces and the add-widget palette, and editable
-key bindings.
+open from `docs/CURRENT-UI.md` §12: editable key bindings.

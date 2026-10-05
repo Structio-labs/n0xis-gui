@@ -44,6 +44,14 @@ macro_rules! dock_panel {
             fn title(&mut self, _: &mut gpui_kit::Window, _: &mut gpui_kit::Context<Self>) -> impl gpui_kit::IntoElement {
                 $crate::panel::tab_title($kind)
             }
+            fn dropdown_menu(
+                &mut self,
+                menu: gpui_kit::component::menu::PopupMenu,
+                _: &mut gpui_kit::Window,
+                _: &mut gpui_kit::Context<Self>,
+            ) -> gpui_kit::component::menu::PopupMenu {
+                $crate::panel::show_instead_menu(menu, $kind)
+            }
         }
     };
 }
@@ -56,6 +64,16 @@ pub fn tab_title(kind: crate::layout::PanelKind) -> impl IntoElement {
         .items_center()
         .child(gpui_kit::component::Icon::new(kind.icon()).small())
         .child(kind.title())
+}
+
+/// The panel menu's "Show instead" entries: every other panel, to put in this
+/// one's place in its group.
+pub fn show_instead_menu(menu: gpui_kit::component::menu::PopupMenu, kind: crate::layout::PanelKind) -> gpui_kit::component::menu::PopupMenu {
+    let menu = menu.separator().label("Show instead");
+    crate::layout::PanelKind::ALL.into_iter().filter(|&other| other != kind).fold(menu, |menu, other| {
+        let replace = crate::layout::ReplacePanel { with: other.name().into(), instead_of: kind.name().into() };
+        menu.menu_with_icon(other.title(), gpui_kit::component::Icon::new(other.icon()), Box::new(replace))
+    })
 }
 
 /// A view's text where its content would be: what it is waiting for, or why

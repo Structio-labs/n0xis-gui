@@ -9,7 +9,7 @@ use gpui_kit::component::{GlobalState, input};
 use gpui_kit::{App, Entity, Menu, MenuItem};
 
 use crate::appearance::{self, ResetZoom, SelectTheme, ZoomIn, ZoomOut};
-use crate::layout::{PanelKind, ShowPanel};
+use crate::layout::{PanelKind, ShowPanel, SwitchWorkspace, Workspace};
 use crate::recent::{OpenRecent, Recent};
 use crate::{
     About, ClearAnnotations, Comment, GoBack, GoForward, GoTo, Open, OpenSettings, Quit, RedoEdit, RedoLayout, Rename,
@@ -47,6 +47,7 @@ fn build(cx: &App) -> Vec<Menu> {
         .iter()
         .map(|t| MenuItem::action(t.label(), OpenRecent(t.path.to_string_lossy().into_owned().into())))
         .collect();
+    let workspaces = Workspace::ALL.into_iter().map(|w| MenuItem::action(w.title(), SwitchWorkspace(w.name().into()))).collect();
     let panels = PanelKind::ALL
         .into_iter()
         .map(|kind| MenuItem::action(kind.title(), ShowPanel(kind.name().into())))
@@ -112,6 +113,8 @@ fn build(cx: &App) -> Vec<Menu> {
         Menu {
             name: "Window".into(),
             items: vec![
+                MenuItem::Submenu(Menu { name: "Workspace".into(), items: workspaces, disabled: false }),
+                MenuItem::separator(),
                 MenuItem::action("Undo Layout Change", UndoLayout),
                 MenuItem::action("Redo Layout Change", RedoLayout),
                 MenuItem::separator(),

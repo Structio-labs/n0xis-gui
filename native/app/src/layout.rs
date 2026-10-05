@@ -4,6 +4,7 @@
 //! The dock: which panels exist, how they are arranged by default, and where
 //! the user's own arrangement is kept between runs.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -181,6 +182,25 @@ impl Views {
         }
     }
 
+    /// Take `kind` out of the dock. Its view stays, with what it holds, and
+    /// comes back with it when the panel is shown again.
+    pub fn remove_from(&self, kind: PanelKind, area: &mut gpui_kit::base::dock::DockArea, window: &mut Window, cx: &mut Context<gpui_kit::base::dock::DockArea>) {
+        match kind {
+            PanelKind::Functions => area.remove_panel(self.functions.clone(), window, cx),
+            PanelKind::Decompiler => area.remove_panel(self.decompiler.clone(), window, cx),
+            PanelKind::Disassembly => area.remove_panel(self.disassembly.clone(), window, cx),
+            PanelKind::Graph => area.remove_panel(self.graph.clone(), window, cx),
+            PanelKind::Linear => area.remove_panel(self.linear.clone(), window, cx),
+            PanelKind::Xrefs => area.remove_panel(self.xrefs.clone(), window, cx),
+            PanelKind::Triage => area.remove_panel(self.triage.clone(), window, cx),
+            PanelKind::Bookmarks => area.remove_panel(self.bookmarks.clone(), window, cx),
+            PanelKind::Types => area.remove_panel(self.types.clone(), window, cx),
+            PanelKind::Find => area.remove_panel(self.find.clone(), window, cx),
+            PanelKind::Console => area.remove_panel(self.console.clone(), window, cx),
+            PanelKind::Scanner => area.remove_panel(self.scanner.clone(), window, cx),
+        }
+    }
+
     /// The id the dock knows a panel by.
     pub fn panel_id(&self, kind: PanelKind) -> PanelId {
         let entity = match kind {
@@ -211,6 +231,95 @@ pub fn register_panels(cx: &mut App) {
 
 fn tabs(views: &Views, kinds: &[PanelKind], cx: &App) -> DockLayout {
     kinds.iter().fold(DockLayout::tabs(), |tabs, &kind| tabs.panel_view(views.handle(kind), cx))
+}
+
+/// Put another panel where `instead_of` is, in its group, and take
+/// `instead_of` out of the dock (its view, and what it holds, stays).
+#[derive(Clone, PartialEq, serde::Deserialize, Action)]
+#[action(namespace = n0xis, no_json)]
+pub struct ReplacePanel {
+    pub with: SharedString,
+    pub instead_of: SharedString,
+}
+
+/// Switch to a workspace, by its saved name.
+#[derive(Clone, PartialEq, serde::Deserialize, Action)]
+#[action(namespace = n0xis, no_json)]
+pub struct SwitchWorkspace(pub SharedString);
+
+/// A named arrangement of panels. Each keeps its own layout and its own undo
+/// history; the panels themselves are shared, so a view and what it holds is
+/// the same in every workspace that shows it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Workspace {
+    Decompile,
+    Static,
+    Graph,
+    Dynamic,
+}
+
+impl Workspace {
+    pub const ALL: [Workspace; 4] = [Self::Decompile, Self::Static, Self::Graph, Self::Dynamic];
+
+    /// The name saved files and actions know it by.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Decompile => "decompile",
+            Self::Static => "static",
+            Self::Graph => "graph",
+            Self::Dynamic => "dynamic",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|w| w.name() == name)
+    }
+
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::Decompile => "Decompile",
+            Self::Static => "Static",
+            Self::Graph => "Graph",
+            Self::Dynamic => "Dynamic",
+        }
+    }
+
+    /// The arrangement a workspace starts with, and goes back to on Reset Layout.
+    pub fn default_layout(self, views: &Views, cx: &App) -> DockLayout {
+        use PanelKind::*;
+        match self {
+            Self::Decompile => default_layout(views, cx),
+            // The image first: its headers and types beside the code, search
+            // and references below.
+            Self::Static => DockLayout::h_split()
+                .child(tabs(views, &[Functions], cx), Some(px(300.)))
+                .child(
+                    DockLayout::v_split()
+                        .child(
+                            DockLayout::h_split()
+                                .child(tabs(views, &[Decompiler, Linear], cx), None)
+                                .child(tabs(views, &[Triage, Types], cx), Some(px(430.))),
+                            None,
+                        )
+                        .child(
+                            DockLayout::h_split()
+                                .child(tabs(views, &[Disassembly], cx), None)
+                                .child(tabs(views, &[Find, Xrefs, Bookmarks], cx), Some(px(430.))),
+                            Some(px(300.)),
+                        ),
+                    None,
+                ),
+            // One function's graph, with the list to pick it from.
+            Self::Graph => DockLayout::h_split()
+                .child(tabs(views, &[Functions], cx), Some(px(260.)))
+                .child(tabs(views, &[Graph], cx), None),
+            // A running process: the scanner, and the console for anything else.
+            Self::Dynamic => DockLayout::v_split()
+                .child(tabs(views, &[Scanner], cx), None)
+                .child(tabs(views, &[Console], cx), Some(px(240.))),
+        }
+    }
 }
 
 /// Functions on the left; the code views in the middle over the disassembly
@@ -260,6 +369,64 @@ impl SavedLayout {
     }
 }
 
+/// What `ui-layout.json` holds: the layout of each workspace that has one,
+/// and the workspace in use.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct SavedWorkspaces {
+    pub workspaces_version: u32,
+    pub current: Workspace,
+    pub layouts: BTreeMap<Workspace, DockAreaState>,
+}
+
+/// The shape of [`SavedWorkspaces`].
+const WORKSPACES_VERSION: u32 = 1;
+
+impl SavedWorkspaces {
+    pub fn new(current: Workspace, layouts: BTreeMap<Workspace, DockAreaState>) -> Self {
+        Self { workspaces_version: WORKSPACES_VERSION, current, layouts }
+    }
+}
+
+/// Read the saved workspaces. A file from before workspaces (one layout) is
+/// taken as the Decompile workspace's layout rather than set aside; a
+/// workspace whose layout is of another version starts from its default, and
+/// the second value says which.
+pub fn read_workspaces_from(json: Option<&str>) -> Result<(SavedWorkspaces, Option<String>), SavedLayout> {
+    let json = json.ok_or(SavedLayout::Missing)?;
+    if let Ok(mut saved) = serde_json::from_str::<SavedWorkspaces>(json) {
+        if saved.workspaces_version != WORKSPACES_VERSION {
+            return Err(SavedLayout::OtherVersion(Some(saved.workspaces_version as usize)));
+        }
+        let stale: Vec<Workspace> = saved.layouts.iter().filter(|(_, s)| s.version != Some(LAYOUT_VERSION)).map(|(w, _)| *w).collect();
+        for w in &stale {
+            saved.layouts.remove(w);
+        }
+        let note = (!stale.is_empty()).then(|| {
+            let names: Vec<&str> = stale.iter().map(|w| w.title()).collect();
+            format!("The saved layout of {} is from another version; those start from their default.", names.join(", "))
+        });
+        return Ok((saved, note));
+    }
+    // One layout, as saved before there were workspaces.
+    let single = read_saved_from(Some(json))?;
+    Ok((SavedWorkspaces::new(Workspace::Decompile, BTreeMap::from([(Workspace::Decompile, single)])), None))
+}
+
+pub fn read_workspaces() -> Result<(SavedWorkspaces, Option<String>), SavedLayout> {
+    let path = layout_file().ok_or(SavedLayout::Missing)?;
+    match std::fs::read_to_string(&path) {
+        Ok(json) => read_workspaces_from(Some(&json)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(SavedLayout::Missing),
+        Err(e) => Err(SavedLayout::Unreadable(e.to_string())),
+    }
+}
+
+pub fn write_workspaces(saved: &SavedWorkspaces) -> std::io::Result<()> {
+    let path = layout_file().ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "no config directory"))?;
+    let json = serde_json::to_string_pretty(saved).map_err(std::io::Error::other)?;
+    crate::config::write_atomic(&path, &json)
+}
+
 pub fn read_saved_from(json: Option<&str>) -> Result<DockAreaState, SavedLayout> {
     let json = json.ok_or(SavedLayout::Missing)?;
     let state: DockAreaState = serde_json::from_str(json).map_err(|e| SavedLayout::Unreadable(e.to_string()))?;
@@ -269,20 +436,6 @@ pub fn read_saved_from(json: Option<&str>) -> Result<DockAreaState, SavedLayout>
     Ok(state)
 }
 
-pub fn read_saved() -> Result<DockAreaState, SavedLayout> {
-    let path = layout_file().ok_or(SavedLayout::Missing)?;
-    match std::fs::read_to_string(&path) {
-        Ok(json) => read_saved_from(Some(&json)),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(SavedLayout::Missing),
-        Err(e) => Err(SavedLayout::Unreadable(e.to_string())),
-    }
-}
-
-pub fn write(state: &DockAreaState) -> std::io::Result<()> {
-    let path = layout_file().ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "no config directory"))?;
-    let json = serde_json::to_string_pretty(state).map_err(std::io::Error::other)?;
-    crate::config::write_atomic(&path, &json)
-}
 
 /// Layout changes, for undo and redo. Entries are whole layout snapshots;
 /// identical neighbours are never stored, so loading a snapshot (which reports
@@ -341,7 +494,8 @@ impl History {
 #[cfg(test)]
 mod tests {
     // Not `super::*`: that would bring GPUI's `test` attribute over the built-in one.
-    use super::{History, LAYOUT_VERSION, PanelKind, SavedLayout, read_saved_from};
+    use super::{History, LAYOUT_VERSION, PanelKind, SavedLayout, SavedWorkspaces, Workspace, read_saved_from, read_workspaces_from};
+    use std::collections::BTreeMap;
     use gpui_kit::base::dock::{DockAreaState, PanelInfo, PanelState};
 
     /// A layout built from the dock's own state types; `tab` tells them apart.
@@ -401,5 +555,29 @@ mod tests {
         h.record(a.clone()); // a new edit forks history
         assert_eq!(h.redo(), None);
         assert_eq!(h.undo(), Some(b));
+    }
+
+    #[test]
+    fn a_layout_saved_before_workspaces_becomes_the_decompile_workspace() {
+        let single = state(LAYOUT_VERSION, 2);
+        let json = serde_json::to_string(&single).unwrap();
+        let (saved, note) = read_workspaces_from(Some(&json)).unwrap();
+        assert_eq!(saved.current, Workspace::Decompile);
+        assert_eq!(saved.layouts.get(&Workspace::Decompile), Some(&single), "nothing the user arranged is lost");
+        assert_eq!(note, None);
+    }
+
+    #[test]
+    fn workspaces_read_back_and_a_stale_one_starts_from_its_default() {
+        let layouts = BTreeMap::from([(Workspace::Static, state(LAYOUT_VERSION, 1)), (Workspace::Graph, state(LAYOUT_VERSION + 1, 1))]);
+        let json = serde_json::to_string(&SavedWorkspaces::new(Workspace::Static, layouts)).unwrap();
+        let (saved, note) = read_workspaces_from(Some(&json)).unwrap();
+        assert_eq!(saved.current, Workspace::Static);
+        assert!(saved.layouts.contains_key(&Workspace::Static));
+        assert!(!saved.layouts.contains_key(&Workspace::Graph), "a layout of another version is not loaded");
+        assert!(note.unwrap().contains("Graph"));
+        for w in Workspace::ALL {
+            assert_eq!(Workspace::from_name(w.name()), Some(w));
+        }
     }
 }

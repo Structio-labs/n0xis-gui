@@ -12,9 +12,11 @@ use gpui_kit::base::Placement;
 use gpui_kit::base::dock::{DockPlacement, InsertTarget};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::status_bar::StatusBar;
-use gpui_kit::component::dock::{DockArea, DockAreaState, DockEvent, DockSkin};
+use gpui_kit::base::Selectable as _;
+use gpui_kit::component::dock::{AnyDrag, DockArea, DockAreaState, DockEvent, DockSkin};
+use gpui_kit::component::popover::Popover;
 use gpui_kit::component::menu::AppMenuBar;
-use gpui_kit::component::{ActiveTheme as _, TitleBar, WindowExt as _, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme as _, Sizable as _, TitleBar, WindowExt as _, h_flex, v_flex};
 use gpui_kit::*;
 use n0xis_client::{Analysis, AnalysisState, Engine, EngineCommand, EngineStatus, ShowAnnotations, WarmUp};
 
@@ -28,7 +30,7 @@ use crate::functions::{FunctionChanged, FunctionList, FunctionSelected, Function
 use crate::graph::GraphView;
 use crate::linear::LinearView;
 use crate::assets::AppIcon;
-use crate::layout::{self, History, PanelKind, ShowPanel, Views};
+use crate::layout::{self, History, PanelKind, ReplacePanel, SavedWorkspaces, ShowPanel, SwitchWorkspace, Views, Workspace};
 use crate::nav::{Location, NavHistory, Navigate, Point, hex, parse_va};
 use crate::prompt::{self, Prompt};
 use crate::recent::{self, OpenRecent, Recent};
@@ -85,7 +87,12 @@ pub struct Workbench {
     focus_handle: FocusHandle,
     dock_area: Entity<DockArea>,
     _dock_skin: Rc<DockSkin>,
-    history: History,
+    /// The workspace on screen; its layout lives in the dock.
+    workspace: Workspace,
+    /// The layouts of the other workspaces, as they were left.
+    saved_layouts: std::collections::BTreeMap<Workspace, DockAreaState>,
+    /// Each workspace's own layout undo history.
+    histories: std::collections::BTreeMap<Workspace, History>,
     /// Set once a save of the layout has failed, so the user is told once.
     layout_save_failed: bool,
     /// The same for the list of recent targets.
@@ -119,25 +126,41 @@ impl Workbench {
         };
         cx.set_global(views.clone());
         let (dock_area, dock_skin) = DockSkin::dock_area(layout::AREA_ID, Some(layout::LAYOUT_VERSION), window, cx);
-        let restore_note = match layout::read_saved() {
-            Ok(state) => match dock_area.update(cx, |area, cx| area.load(state, window, cx)) {
-                Ok(()) => None,
-                Err(e) => Some(format!("The saved panel layout could not be restored ({e}); using the default.")),
-            },
-            Err(reason) => reason.explain().or(Some(String::new())),
+        // The workspaces as they were left: the current one into the dock, the
+        // others kept for when they are switched to.
+        let (saved, mut notes) = match layout::read_workspaces() {
+            Ok((saved, note)) => (Some(saved), note.into_iter().collect::<Vec<_>>()),
+            Err(reason) => (None, reason.explain().into_iter().collect()),
         };
-        // Anything but a clean restore falls back to the default; only a real
-        // problem (not a first run) is worth a message.
-        if let Some(note) = restore_note {
-            dock_area.update(cx, |area, cx| area.set_center(layout::default_layout(&views, cx), window, cx));
-            if !note.is_empty() {
-                window.defer(cx, move |window, cx| window.push_notification(SharedString::from(note), cx));
-            }
+        let workspace = saved.as_ref().map_or(Workspace::Decompile, |s| s.current);
+        let mut saved_layouts = saved.map(|s| s.layouts).unwrap_or_default();
+        let restored = match saved_layouts.remove(&workspace) {
+            Some(state) => match dock_area.update(cx, |area, cx| area.load(state, window, cx)) {
+                Ok(()) => true,
+                Err(e) => {
+                    notes.push(format!("The saved panel layout could not be restored ({e}); using the default."));
+                    false
+                }
+            },
+            None => false,
+        };
+        if !restored {
+            dock_area.update(cx, |area, cx| area.set_center(workspace.default_layout(&views, cx), window, cx));
         }
-        let history = History::default();
-        let layout_changes = cx.subscribe_in(&dock_area, window, |this, _, event: &DockEvent, window, cx| {
-            if matches!(event, DockEvent::LayoutChanged) {
-                this.layout_changed(window, cx);
+        for note in notes {
+            window.defer(cx, move |window, cx| window.push_notification(SharedString::from(note), cx));
+        }
+        let layout_changes = cx.subscribe_in(&dock_area, window, |this, _, event: &DockEvent, window, cx| match event {
+            DockEvent::LayoutChanged => this.layout_changed(window, cx),
+            // A panel dragged in from the widget palette.
+            DockEvent::DragDrop { item, target } => {
+                if let Some(kind) = item.value().downcast_ref::<PanelKind>() {
+                    let insert = match target.placement() {
+                        None => InsertTarget::Tabs { node: target.node(), ix: None, activate: true },
+                        Some(placement) => InsertTarget::Split { node: target.node(), placement, size: None },
+                    };
+                    this.place_panel(*kind, insert, window, cx);
+                }
             }
         });
         let selection = cx.subscribe_in(&views.functions, window, |this, _, FunctionSelected(function), window, cx| {
@@ -245,7 +268,9 @@ impl Workbench {
             focus_handle: cx.focus_handle(),
             dock_area,
             _dock_skin: dock_skin,
-            history,
+            workspace,
+            saved_layouts,
+            histories: Default::default(),
             layout_save_failed: false,
             recent_save_failed: false,
             next_change_is_load: true,
@@ -892,12 +917,13 @@ impl Workbench {
             cx.background_executor().timer(LAYOUT_SETTLE).await;
             this.update_in(cx, |wb, window, cx| {
                 let state = wb.dock_area.read(cx).dump(cx);
+                let history = wb.histories.entry(wb.workspace).or_default();
                 if std::mem::take(&mut wb.next_change_is_load) {
-                    wb.history.replace_current(state.clone());
+                    history.replace_current(state.clone());
                 } else {
-                    wb.history.record(state.clone());
+                    history.record(state.clone());
                 }
-                if let Err(e) = layout::write(&state)
+                if let Err(e) = wb.save_workspaces(state)
                     && !wb.layout_save_failed
                 {
                     wb.layout_save_failed = true;
@@ -908,30 +934,102 @@ impl Workbench {
         }));
     }
 
-    fn apply_layout(&mut self, state: DockAreaState, window: &mut Window, cx: &mut Context<Self>) {
+    /// Keep every workspace's layout: `current` for the one on screen.
+    fn save_workspaces(&self, current: DockAreaState) -> std::io::Result<()> {
+        let mut layouts = self.saved_layouts.clone();
+        layouts.insert(self.workspace, current);
+        layout::write_workspaces(&SavedWorkspaces::new(self.workspace, layouts))
+    }
+
+    /// Load `state` into the dock; false (and said) when it cannot be.
+    fn apply_layout(&mut self, state: DockAreaState, window: &mut Window, cx: &mut Context<Self>) -> bool {
         match self.dock_area.update(cx, |area, cx| area.load(state, window, cx)) {
-            Ok(()) => self.next_change_is_load = true,
-            Err(e) => window.push_notification(SharedString::from(format!("That layout could not be restored: {e}")), cx),
+            Ok(()) => {
+                self.next_change_is_load = true;
+                true
+            }
+            Err(e) => {
+                window.push_notification(SharedString::from(format!("That layout could not be restored: {e}")), cx);
+                false
+            }
         }
     }
 
-    fn on_undo_layout(&mut self, _: &UndoLayout, window: &mut Window, cx: &mut Context<Self>) {
-        match self.history.undo() {
+    fn on_switch_workspace(&mut self, action: &SwitchWorkspace, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(to) = Workspace::from_name(&action.0) {
+            self.switch_workspace(to, window, cx);
+        }
+    }
+
+    /// Leave the current workspace as it is, and show `to` as it was left.
+    fn switch_workspace(&mut self, to: Workspace, window: &mut Window, cx: &mut Context<Self>) {
+        if to == self.workspace {
+            return;
+        }
+        let leaving = self.dock_area.read(cx).dump(cx);
+        self.saved_layouts.insert(self.workspace, leaving);
+        self.workspace = to;
+        self.dock_shown = true;
+        let restored = match self.saved_layouts.remove(&to) {
             Some(state) => self.apply_layout(state, window, cx),
+            None => false,
+        };
+        if !restored {
+            let views = self.views.clone();
+            self.dock_area.update(cx, |area, cx| area.set_center(to.default_layout(&views, cx), window, cx));
+            self.next_change_is_load = true;
+        }
+        cx.notify();
+    }
+
+    /// Put `kind` where `insert` says, adding it to the dock if it is not there.
+    fn place_panel(&mut self, kind: PanelKind, insert: InsertTarget, window: &mut Window, cx: &mut Context<Self>) {
+        self.dock_shown = true;
+        let (id, handle) = (self.views.panel_id(kind), self.views.handle(kind));
+        self.dock_area.update(cx, |area, cx| {
+            if area.panel(id).is_none() {
+                area.add_panel_view(handle, DockPlacement::Center, None, window, cx);
+            }
+            area.move_panel(id, insert, window, cx);
+        });
+        cx.notify();
+    }
+
+    /// The panel menu's Show instead: the other panel takes this one's place.
+    fn on_replace_panel(&mut self, action: &ReplacePanel, window: &mut Window, cx: &mut Context<Self>) {
+        let (Some(with), Some(instead_of)) = (PanelKind::from_name(&action.with), PanelKind::from_name(&action.instead_of)) else { return };
+        let node = self
+            .dock_area
+            .read(cx)
+            .layout(DockPlacement::Center)
+            .and_then(|tree| tree.find_panel_node(self.views.panel_id(instead_of)));
+        let Some(node) = node else { return };
+        self.place_panel(with, InsertTarget::Tabs { node, ix: None, activate: true }, window, cx);
+        let views = self.views.clone();
+        self.dock_area.update(cx, |area, cx| views.remove_from(instead_of, area, window, cx));
+    }
+
+    fn on_undo_layout(&mut self, _: &UndoLayout, window: &mut Window, cx: &mut Context<Self>) {
+        match self.histories.entry(self.workspace).or_default().undo() {
+            Some(state) => {
+                self.apply_layout(state, window, cx);
+            }
             None => window.push_notification("Nothing to undo in the layout.", cx),
         }
     }
 
     fn on_redo_layout(&mut self, _: &RedoLayout, window: &mut Window, cx: &mut Context<Self>) {
-        match self.history.redo() {
-            Some(state) => self.apply_layout(state, window, cx),
+        match self.histories.entry(self.workspace).or_default().redo() {
+            Some(state) => {
+                self.apply_layout(state, window, cx);
+            }
             None => window.push_notification("Nothing to redo in the layout.", cx),
         }
     }
 
     fn on_reset_layout(&mut self, _: &ResetLayout, window: &mut Window, cx: &mut Context<Self>) {
-        let views = self.views.clone();
-        self.dock_area.update(cx, |area, cx| area.set_center(layout::default_layout(&views, cx), window, cx));
+        let (views, workspace) = (self.views.clone(), self.workspace);
+        self.dock_area.update(cx, |area, cx| area.set_center(workspace.default_layout(&views, cx), window, cx));
     }
 
     fn refresh_menus(&self, cx: &mut Context<Self>) {
@@ -1003,6 +1101,43 @@ impl Workbench {
                 .child(self.menu_bar.clone())
                 .child(div().text_xs().text_color(theme.muted_foreground).truncate().child(target)),
         )
+    }
+
+    /// The workspaces, the widget palette, and layout undo and redo.
+    fn render_workspace_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme();
+        h_flex()
+            .px_2()
+            .py_0p5()
+            .gap_1()
+            .border_b_1()
+            .border_color(theme.border)
+            .children(Workspace::ALL.into_iter().map(|w| {
+                Button::new(SharedString::from(format!("workspace-{}", w.name())))
+                    .xsmall()
+                    .ghost()
+                    .selected(w == self.workspace)
+                    .label(w.title())
+                    .on_click(cx.listener(move |wb, _: &ClickEvent, window, cx| wb.switch_workspace(w, window, cx)))
+            }))
+            .child(div().flex_1())
+            .child(widget_palette())
+            .child(
+                Button::new("layout-undo")
+                    .xsmall()
+                    .ghost()
+                    .icon(AppIcon::LayoutUndo)
+                    .tooltip("Undo layout change (Ctrl+Shift+Z)")
+                    .on_click(cx.listener(|wb, _: &ClickEvent, window, cx| wb.on_undo_layout(&UndoLayout, window, cx))),
+            )
+            .child(
+                Button::new("layout-redo")
+                    .xsmall()
+                    .ghost()
+                    .icon(AppIcon::LayoutRedo)
+                    .tooltip("Redo layout change (Ctrl+Shift+Y)")
+                    .on_click(cx.listener(|wb, _: &ClickEvent, window, cx| wb.on_redo_layout(&RedoLayout, window, cx))),
+            )
     }
 
     fn render_status_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1091,6 +1226,54 @@ impl Workbench {
     }
 }
 
+/// Every panel, to click (it opens where it belongs) or drag into the dock
+/// (it goes where it is dropped: into a group, or beside it at an edge).
+fn widget_palette() -> impl IntoElement {
+    Popover::new("widget-palette")
+        .trigger(Button::new("widget-palette-button").xsmall().ghost().icon(AppIcon::AddWidget).label("Widget"))
+        .content(|_, _, cx| {
+            let popover = cx.entity();
+            let hover = cx.theme().list_hover;
+            v_flex().p_1().gap_0p5().min_w(px(220.)).children(PanelKind::ALL.into_iter().enumerate().map(|(ix, kind)| {
+                let (on_click, on_drag) = (popover.clone(), popover.clone());
+                div()
+                    .id(("widget-palette-item", ix))
+                    .px_2()
+                    .py_1()
+                    .rounded_md()
+                    .cursor_pointer()
+                    .hover(|s| s.bg(hover))
+                    .child(crate::panel::tab_title(kind))
+                    .on_click(move |_, window, cx| {
+                        window.dispatch_action(Box::new(ShowPanel(kind.name().into())), cx);
+                        on_click.update(cx, |state, cx| state.dismiss(window, cx));
+                    })
+                    .on_drag(AnyDrag::new(kind), move |_, _, window, cx| {
+                        // Out of the way, so the dock under it takes the drop.
+                        on_drag.update(cx, |state, cx| state.dismiss(window, cx));
+                        cx.new(|_| PaletteDrag(kind))
+                    })
+            }))
+        })
+}
+
+/// What follows the pointer while a panel is dragged out of the palette.
+struct PaletteDrag(PanelKind);
+
+impl Render for PaletteDrag {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme();
+        div()
+            .px_2()
+            .py_1()
+            .rounded_md()
+            .border_1()
+            .border_color(theme.border)
+            .bg(theme.popover)
+            .child(crate::panel::tab_title(self.0))
+    }
+}
+
 /// Where the analysis is, in a few words.
 fn analysis_text(state: &AnalysisState) -> String {
     match state {
@@ -1149,6 +1332,8 @@ impl Render for Workbench {
             .on_action(cx.listener(Self::on_go_to))
             .on_action(cx.listener(Self::on_go_back))
             .on_action(cx.listener(Self::on_go_forward))
+            .on_action(cx.listener(Self::on_switch_workspace))
+            .on_action(cx.listener(Self::on_replace_panel))
             // The mouse's back and forward buttons walk the same history.
             .on_mouse_down(
                 MouseButton::Navigate(NavigationDirection::Back),
@@ -1161,6 +1346,7 @@ impl Render for Workbench {
             .bg(background)
             .text_color(foreground)
             .child(self.render_title_bar(cx))
+            .children((self.target.is_some() || self.dock_shown).then(|| self.render_workspace_bar(cx)))
             .child(div().flex_1().min_h_0().flex().child(main))
             .child(self.render_status_bar(cx))
     }

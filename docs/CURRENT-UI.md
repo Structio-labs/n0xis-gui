@@ -278,9 +278,14 @@ Engine and shell
 
 Layout
 
-- [ ] Tiling dock: split, replace, tab, cancel-on-self, resize, tab strips on any side
-- [ ] Change-widget menu, close, undo / redo per workspace, saved layouts
-- [ ] Four default workspaces; add-widget palette (click and drag)
+Layout. Done in the native front end (2026-10-05) on GPUI Kit's dock:
+
+- [x] Tiling dock: split, replace, tab, cancel-on-self, resize. Tab strips sit on top only: the
+  dock offers no other side, so that part is not ported.
+- [x] Change-widget menu (a group's ⋯ menu ▸ Show instead), close, undo / redo per workspace,
+  saved layouts (`ui-layout.json`, one layout per workspace; a file from before workspaces
+  becomes the Decompile workspace's layout)
+- [x] Four default workspaces; add-widget palette (click and drag)
 
 Views (engine-backed first). Done in the native front end (`native/`, 2026-10-05); what each
 one shows and how it was checked is in `native/README.md` and the commit messages.
