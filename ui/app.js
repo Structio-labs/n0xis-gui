@@ -300,7 +300,7 @@ const COMMANDS = [
   ['Set decompile style…', 'structured · ssa · goto', '', () => toast('Decompile style')],
   ['Find xrefs to / from', 'Who calls this · what it calls', 'Shift+F12', () => toast('Xrefs')],
   ['Set watchpoint (R / W / X)', 'Break when this address is touched', '', () => setWorkspace('dynamic')],
-  ['Find what accesses this address', 'Cheat-Engine-style hit counter', '', () => setWorkspace('dynamic')],
+  ['Find what accesses this address', 'count the hits on an address', '', () => setWorkspace('dynamic')],
   ['Memory scan…', 'Hunt a value in a live process', '', () => { setWorkspace('dynamic'); if (!isLive()) pickProcess(); }],
   ['Attach to a process', 'Bind a live process to this session', '', () => pickProcess()],
   ['Apply FLIRT signatures', 'Name statically-linked library code', '', () => echo('sig apply --flirt zlib-1.3.1.npat', 'named 118 functions')],
@@ -1199,7 +1199,7 @@ async function loadTypes(box) {
   el.querySelectorAll('.typ-addf').forEach(b => b.addEventListener('click', e => { e.stopPropagation(); addField(b.closest('.typ-srow').dataset.name); }));
 }
 async function addStruct() {
-  const n = await askInput('New struct name', '', 'e.g.  Player');
+  const n = await askInput('New struct name', '', 'e.g.  Session');
   if (n && n.trim()) { await eng(['type', 'struct', '--name', n.trim()]); refreshTypes(); }
 }
 async function addEnum() {
@@ -1302,7 +1302,7 @@ async function pickProcess() {
   let icons = {};
   if (isNative) {
     toast('Enumerating processes…');
-    // prefer the host /proc names (real exe names for Proton/Wine games — the
+    // prefer the host /proc names (real exe names for programs under Wine or Proton — the
     // engine's `process ps` reports 'wine-preloader' for those), and resolve real
     // per-app icons in parallel (freedesktop + Steam appid).
     const [host, ic] = await Promise.all([listProcesses(), processIcons()]);
@@ -1310,7 +1310,7 @@ async function pickProcess() {
     else { const r = await n0x(['process', 'ps']); if (!r?.ok) { toast('process list failed: ' + (r?.error?.message || '?')); return; } procs = (r.data.processes || []).slice(); }
     icons = ic?.data?.icons || {};
   } else {   // web preview — demo list so the flow is exercisable
-    procs = [{ name: 'game.exe', pid: 8124 }, { name: 'chrome.exe', pid: 4410 }, { name: 'explorer.exe', pid: 1200 }, { name: 'discord.exe', pid: 9931 }, { name: 'steam.exe', pid: 5567 }];
+    procs = [{ name: 'app.exe', pid: 8124 }, { name: 'editor.exe', pid: 4410 }, { name: 'shell.exe', pid: 1200 }, { name: 'server.exe', pid: 9931 }, { name: 'worker.exe', pid: 5567 }];
   }
   procs.sort((a, b) => a.name.localeCompare(b.name));
   const items = procs.map(p => ({ label: p.name, sub: 'pid ' + p.pid, value: p, iconUri: icons[p.pid] }));
@@ -1591,8 +1591,8 @@ const WIDGETS = {
     ].map(([n,v,c])=>`<div class="reg"><span class="rn">${n}</span><span class="rv${c?' ch':''}">${v}</span></div>`).join('')}</div>` },
 
   watchpoints: { title: 'Watchpoints & breakpoints', icon: 'watch', body: () => `<div style="overflow:auto;height:100%">
-    <div class="wprow" data-ctx="wprow"><span class="wpico">${svg(ICON.watch,'')}</span><div><div class="mono">7FF6C21A40</div><div style="color:var(--tx2);font-size:.68rem">write · health</div></div><span class="hit">1,204</span></div>
-    <div class="wprow" data-ctx="wprow"><span class="wpico" style="color:var(--acc)">${svg(ICON.watch,'')}</span><div><div class="mono">7FF6C218E0</div><div style="color:var(--tx2);font-size:.68rem">read · ammo</div></div><span class="hit" style="color:var(--acc);background:rgba(63,220,196,.1)">86</span></div>
+    <div class="wprow" data-ctx="wprow"><span class="wpico">${svg(ICON.watch,'')}</span><div><div class="mono">7FF6C21A40</div><div style="color:var(--tx2);font-size:.68rem">write · retries</div></div><span class="hit">1,204</span></div>
+    <div class="wprow" data-ctx="wprow"><span class="wpico" style="color:var(--acc)">${svg(ICON.watch,'')}</span><div><div class="mono">7FF6C218E0</div><div style="color:var(--tx2);font-size:.68rem">read · timeout_ms</div></div><span class="hit" style="color:var(--acc);background:rgba(63,220,196,.1)">86</span></div>
     <div class="wprow" data-ctx="wprow"><span class="wpico" style="color:var(--dgr)">${svg(ICON.bp,'')}</span><div><div class="mono">7FF6C1002A</div><div style="color:var(--tx2);font-size:.68rem">execute · sub_1002A</div></div><span class="hit" style="color:var(--dgr);background:rgba(255,107,122,.1)">hit</span></div></div>` },
 
   scanner: { title: 'Memory scanner', icon: 'scan', body: () => `<div class="wfill scanw">
@@ -1607,13 +1607,13 @@ const WIDGETS = {
     <div class="hx"><span class="hxa">7FF6C21A40</span><span class="hxb"><span class="hb-hi">57 00 00 00</span> 2a 00 00 00 5c 21 c2 f6 ff 7f 00 00</span><span class="hxc">W....*...\\!......</span></div>
     <div class="hx"><span class="hxa">7FF6C21A50</span><span class="hxb">64 00 00 00 00 00 80 3f 00 00 80 3f cd cc 4c 3e</span><span class="hxc">d......?...?..L&gt;</span></div>
     <div class="hx"><span class="hxa">7FF6C21A60</span><span class="hxb">10 27 00 00 e8 03 00 00 01 00 00 00 00 00 00 00</span><span class="hxc">.'..............</span></div>
-    <div class="hx"><span class="hxa">7FF6C21A80</span><span class="hxb">48 65 61 6c 74 68 43 6f 6d 70 6f 6e 65 6e 74 00</span><span class="hxc" style="color:var(--ok)">HealthComponent.</span></div></div>` },
+    <div class="hx"><span class="hxa">7FF6C21A80</span><span class="hxb">43 6f 6e 6e 65 63 74 69 6f 6e 50 6f 6f 6c 00 00</span><span class="hxc" style="color:var(--ok)">ConnectionPool..</span></div></div>` },
 
   watchlist: { title: 'Watchlist', icon: 'watch', body: () => `<div style="overflow:auto;height:100%">${[
-      ['health','87','on'],['max_health','100','on'],['ammo','42',''],['gold','10000','']
+      ['retries','3','on'],['max_retries','5','on'],['timeout_ms','30000',''],['buffer_len','4096','']
     ].map(([n,v,f])=>`<div class="wlrow" data-ctx="wlrow"><span class="frz ${f}"></span><span class="wname">${n}</span><span class="wval">${v}</span></div>`).join('')}</div>` },
 
-  strings: { title: 'Strings', icon: 'strings', body: () => `<div style="overflow:auto;height:100%;padding:6px 0">${['HealthComponent','TakeDamage','crc_table','zlib 1.3.1','deflate','Assertion failed'].map(s=>`<div class="frow"><span class="nm mono selectable">"${s}"</span></div>`).join('')}</div>` },
+  strings: { title: 'Strings', icon: 'strings', body: () => `<div style="overflow:auto;height:100%;padding:6px 0">${['ConnectionPool','ParseHeader','crc_table','zlib 1.3.1','deflate','Assertion failed'].map(s=>`<div class="frow"><span class="nm mono selectable">"${s}"</span></div>`).join('')}</div>` },
 
   notes: { title: 'Notes', icon: 'note', body: () => `<textarea class="selectable" style="width:100%;height:100%;background:transparent;border:none;color:var(--tx0);padding:11px;font:inherit;resize:none;outline:none;box-sizing:border-box" placeholder="Session notes…"></textarea>` },
 

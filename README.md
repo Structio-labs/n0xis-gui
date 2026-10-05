@@ -1,10 +1,10 @@
 # N0xis GUI
 
 The desktop front-end for **N0xis** — the AI-first reverse-engineering CLI. A beginner-friendly
-but pro-capable UI for static *and* dynamic analysis (Cheat-Engine-style), built as a **thin client**
+but pro-capable UI for static *and* dynamic analysis, built as a **thin client**
 over the existing `n0xis` engine.
 
-> Private prototype. The engine lives in its own repo; this repo is only the GUI.
+> Early. The engine lives in its own repo, [Structio-labs/N0xis](https://github.com/Structio-labs/N0xis); this repo is only the GUI.
 
 ## Architecture — thin client over the process seam
 

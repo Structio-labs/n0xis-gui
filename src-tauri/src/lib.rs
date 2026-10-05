@@ -89,8 +89,8 @@ fn initial_target() -> Option<String> {
 }
 
 /// List running processes with USEFUL names. The engine's `process ps` reads a
-/// name that, for Proton/Wine games, is just "wine-preloader"; the kernel's
-/// /proc/<pid>/comm carries the real exe name ("Sam2.exe"). On Linux we read
+/// name that, for programs run under Wine or Proton, is just "wine-preloader"; the
+/// kernel's /proc/<pid>/comm carries the real exe name (for example "app.exe"). On Linux we read
 /// that directly; elsewhere we return empty so the caller falls back to the engine.
 #[tauri::command]
 async fn list_processes() -> Value {
@@ -115,9 +115,9 @@ async fn list_processes() -> Value {
 }
 
 /// Resolve real per-process icons (Linux). Two routes:
-///   • Steam/Proton games: /proc/<pid>/environ carries SteamAppId=<n> → the
-///     freedesktop icon 'steam_icon_<n>' (so a Wine game like Sam2.exe gets its
-///     Steam library icon even though its process name doesn't match a launcher).
+///   • Programs started by Steam (including under Proton): /proc/<pid>/environ
+///     carries SteamAppId=<n> → the freedesktop icon 'steam_icon_<n>' (so a Wine
+///     program gets its library icon even though its process name matches no launcher).
 ///   • Everything else: match /proc/<pid>/comm to a .desktop's Exec/WMClass/Name.
 /// Returns { pid: "data:image/png;base64,…" } only for processes we could resolve.
 #[tauri::command]
