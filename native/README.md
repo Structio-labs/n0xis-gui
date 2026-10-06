@@ -193,8 +193,7 @@ bar opens a menu (open another, close, triage, copy the path). View ▸ Round Gr
 Corners draws the graph's edges with curved bends on the same routes. Settings ▸ Appearance
 has interface scale presets (90 to 125 %); Help ▸ Keyboard Shortcuts opens the keys page.
 
-Every view shows only what the engine returned; an empty or failed view says so. Every
-item of `docs/CURRENT-UI.md` §12 is done, views and interactions; the parts left out on
-purpose are said there, with the reason. Until 2026-10-06 that checklist listed views
-only, and this paragraph claimed the whole of it while right-click menus and tab strips on
-the sides were missing.
+Every view shows only what the engine returned; an empty or failed view says so. Parity
+with the Tauri build is not reached: `docs/CURRENT-UI.md` §12 lists what is done, what is
+left out on purpose, and the open gaps a second audit found on 2026-10-06. An earlier
+version of this paragraph claimed all of it, twice; both claims were wrong.

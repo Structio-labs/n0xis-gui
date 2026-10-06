@@ -358,6 +358,30 @@ menu items only print a message; those are not ported.
   key going to no element, so the shortcuts stopped until something was clicked.
 - Left out on purpose: the graph legend's toggle (the legend is always in the header).
 
+Open gaps. A second audit on 2026-10-06 (reading behaviour, not only handlers) refuted
+"everything real is ported". Not done yet, most visible first:
+
+- [ ] `→ name` after a branch or call into a named function, in Disassembly and Linear.
+- [ ] The user's comments (`; text`) in the Linear listing.
+- [ ] A Types edit redraws the decompiler (new field names show at once).
+- [ ] Refresh in Cross-references, Bookmarks and Types, for edits made outside the GUI.
+- [ ] Several instances of one panel (two graphs, Linear in Asm beside Linear in Pseudo).
+- [ ] Widget palette click splits the largest group, as the Tauri build did.
+- [ ] Console without a target, run beside the session so it never blocks the views.
+- [ ] Process names of Wine programs (the engine lists them as `wine-preloader`), process icons.
+- [ ] Settings: the engine in use (path, version, command count); reset all preferences.
+- [ ] Status bar: image format and machine, zoom; zoom up to 160 %.
+- [ ] Graph: entry and exit blocks marked; zoom shown.
+- [ ] Linear Pseudo follows the decompiler's style; F5 shows the decompiler; Window menu
+  minimize / maximize / close; Go to matches names in any case and takes an address only
+  with `0x`; Back / Forward say when there is nowhere to go; recent targets show when.
+- [ ] A loading indicator that shows only after 180 ms and stays 320 ms, instead of each
+  view flashing its own message.
+- [ ] Discard-on-close says when the engine cannot clear the cache (it fails silently now).
+- [ ] Shortcuts do not fire while typing in a field.
+- [ ] Resizing a group or the window freezes the window on the user's machine (NVIDIA,
+  Wayland). Not reproduced here; the app's own code costs the same optimised or not.
+
 Settings
 
 - [x] Cache location and keep-on-close, auto-analyze, warm-up; cache size / clear (native,
