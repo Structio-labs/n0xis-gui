@@ -41,6 +41,8 @@ const NAME_STRIP: Pixels = px(150.);
 const DRAG_PREVIEW: Size<Pixels> = size(px(140.), px(28.));
 /// The most a tab's name takes on a strip across a group; a longer one is cut.
 const TAB_NAME_WIDTH: Pixels = px(130.);
+/// The hover group of a tab, so its close button shows under the pointer.
+const TAB_GROUP: &str = "dock-tab";
 
 /// Which side of its group a tab strip runs along.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
@@ -424,7 +426,6 @@ impl GroupSkin {
             .flex_none()
             .h(BAR_HEIGHT)
             .pl_1()
-            .pr_1()
             .gap_1()
             .items_center()
             .bg(theme.tokens.tab_bar)
@@ -460,20 +461,27 @@ impl GroupSkin {
                         })
                     }),
             )
-            .child(self.toolbar(group, ix, strip, true, cx))
+            .child(self.service_area(group, ix, strip, cx).h_full())
             .context_menu(move |menu, window, cx| group_menu(menu, &menu_group, ix, false, strip, window, cx))
             .into_any_element()
     }
 
-    /// The group's controls: its menu, and, unless the tabs carry their own,
-    /// a button that closes the panel shown.
-    fn toolbar(&self, group: &TabGroupContext, ix: usize, strip: Strip, close_button: bool, cx: &App) -> impl IntoElement {
+    /// The group's service buttons, its menu and closing the panel shown, in
+    /// an area of their own at the right end of the bar: set off from the
+    /// tabs, never scrolled away with them and never covered by them.
+    fn service_area(&self, group: &TabGroupContext, ix: usize, strip: Strip, cx: &App) -> Div {
+        let theme = cx.theme();
         let id = group.panels()[ix].panel_id(cx);
-        let closable = close_button && group.is_panel_closable(id, cx);
+        let closable = group.is_panel_closable(id, cx);
         let (menu_group, close_group) = (group.clone(), group.clone());
         h_flex()
             .flex_none()
+            .px_1()
             .gap_0p5()
+            .items_center()
+            .bg(theme.tokens.tab_bar)
+            .border_l_1()
+            .border_color(theme.border)
             .occlude()
             .child(
                 Button::new("group-menu")
@@ -481,6 +489,7 @@ impl GroupSkin {
                     .xsmall()
                     .ghost()
                     .tab_stop(false)
+                    .tooltip("Panel menu")
                     .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, window, cx| {
                         group_menu(menu, &menu_group, ix, false, strip, window, cx)
                     }),
@@ -492,7 +501,7 @@ impl GroupSkin {
                         .xsmall()
                         .ghost()
                         .tab_stop(false)
-                        .tooltip("Close")
+                        .tooltip("Close the panel shown")
                         .on_click(move |_, window, cx| {
                             cx.stop_propagation();
                             close_group.close(id, window, cx);
@@ -525,6 +534,7 @@ impl GroupSkin {
                 let closable = strip.names() && group.is_panel_closable(id, cx);
                 let (select, close, pressed) = (group.clone(), group.clone(), self.pressed.clone());
                 Tab::new()
+                    .group(TAB_GROUP)
                     .child(label)
                     .selected(Some(ix) == shown)
                     .on_click(move |_, window, cx| select.select_tab(ix, window, cx))
@@ -535,6 +545,9 @@ impl GroupSkin {
                     })
                     .when(closable, |this| {
                         this.suffix(
+                            // Shown under the pointer only: the service area closes
+                            // the panel shown, and a cross on every tab was noise.
+                            // Its room is kept, so a tab does not widen on hover.
                             Button::new(("close-tab", ix))
                                 .icon(Icon::new(AppIcon::X))
                                 .xsmall()
@@ -542,6 +555,8 @@ impl GroupSkin {
                                 .tab_stop(false)
                                 .ml(-px(8.))
                                 .mr_1()
+                                .invisible()
+                                .group_hover(TAB_GROUP, |style| style.visible())
                                 .on_click(move |_, window, cx| {
                                     cx.stop_propagation();
                                     close.close(id, window, cx);
@@ -576,27 +591,18 @@ impl GroupSkin {
                             .drag_over::<AnyDrag>(|this, _, _, cx| this.bg(cx.theme().tokens.drop_target))
                             .on_drop(move |item: &AnyDrag, window, cx| item_group.drop_item(item.clone(), None, window, cx))
                     }),
-            )
-            .when(toolbar, |this| {
-                let ix = shown.unwrap_or(visible[0]);
-                this.suffix(
-                    h_flex()
-                        .h_full()
-                        .px_1()
-                        .items_center()
-                        .border_l_1()
-                        .border_b_1()
-                        .border_color(cx.theme().border)
-                        .bg(cx.theme().tokens.tab_bar)
-                        // Tabs with names carry their own close buttons.
-                        .child(self.toolbar(group, ix, strip, !strip.names(), cx)),
-                )
-            });
+            );
         let scroll = self.scroll.clone();
-        div()
+        let service = toolbar.then(|| {
+            let ix = shown.unwrap_or(visible[0]);
+            self.service_area(group, ix, strip, cx).border_b_1()
+        });
+        h_flex()
             .id(("group-tabs", node.as_u64()))
             .w_full()
-            .child(bar)
+            .items_stretch()
+            .child(div().flex_1().min_w_0().child(bar))
+            .children(service)
             // The kit's strip scrolls only along its own axis, so an ordinary
             // wheel did nothing over it and tabs past the edge could not be
             // reached. Turned vertically, the wheel moves the strip sideways;
