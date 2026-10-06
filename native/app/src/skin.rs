@@ -337,8 +337,7 @@ impl DockAreaRenderer for Skin {
         Rc::new(GroupSkin {
             kit: self.kit.tab_group_renderer(),
             strips: self.strips.clone(),
-            scroll: ScrollHandle::new(),
-            shown: Cell::new(None),
+            follow: FollowShown::default(),
             pressed: Rc::default(),
             group: RefCell::new(None),
             dragged_from: Rc::default(),
@@ -352,9 +351,8 @@ struct GroupSkin {
     /// GPUI Kit's own, for the parts drawn as it draws them.
     kit: Rc<dyn TabGroupRenderer>,
     strips: Strips,
-    scroll: ScrollHandle,
-    /// The tab shown last frame, so a newly shown one is scrolled into view.
-    shown: Cell<Option<usize>>,
+    /// The strip's scroll, which keeps the tab shown in view.
+    follow: FollowShown,
     /// The tab a right click landed on, taken by the menu it opens; `None`
     /// when it landed beside the tabs.
     pressed: Rc<Cell<Option<usize>>>,
@@ -363,6 +361,41 @@ struct GroupSkin {
     group: RefCell<Option<TabGroupContext>>,
     /// The group the panel being dragged comes from, as the last drag move said.
     dragged_from: Rc<Cell<Option<NodeId>>>,
+}
+
+/// A strip's scroll, keeping the tab shown in view as it changes.
+#[derive(Default)]
+struct FollowShown {
+    scroll: ScrollHandle,
+    /// The tab last brought into view.
+    shown: Cell<Option<usize>>,
+    /// One more frame was asked for, for a strip not laid out yet.
+    asked_for_frame: Cell<bool>,
+}
+
+impl FollowShown {
+    /// Bring the tab `active`, at `at` among the strip's tabs, into view if it
+    /// was not the one shown before.
+    ///
+    /// GPUI applies a scroll asked of a strip before it learns that the strip
+    /// scrolls, so on a strip's first frame the request is spent to no effect:
+    /// a group drawn anew (a layout restored, a change undone) kept its strip
+    /// at the start, and a tab shown past the edge stayed out of sight. Until
+    /// the strip has been laid out the tab is not counted as shown, and one
+    /// more frame is asked for, in which the request holds.
+    fn follow(&self, active: usize, at: Option<usize>, window: &mut Window) {
+        if self.scroll.bounds().size.width <= px(0.) {
+            if !self.asked_for_frame.replace(true) {
+                window.request_animation_frame();
+            }
+            return;
+        }
+        if self.shown.replace(Some(active)) != Some(active)
+            && let Some(at) = at
+        {
+            self.scroll.scroll_to_item(at);
+        }
+    }
 }
 
 /// The tabs a group draws, by their index in the group.
@@ -400,13 +433,9 @@ impl GroupSkin {
 
     /// Bring a newly shown tab into view; the group owns which tab is shown,
     /// so the skin notices the change rather than being told of it.
-    fn follow_shown(&self, group: &TabGroupContext, visible: &[usize]) {
+    fn follow_shown(&self, group: &TabGroupContext, visible: &[usize], window: &mut Window) {
         let active = group.active_ix();
-        if self.shown.replace(Some(active)) != Some(active)
-            && let Some(at) = visible.iter().position(|&ix| ix == active)
-        {
-            self.scroll.scroll_to_item(at);
-        }
+        self.follow.follow(active, visible.iter().position(|&ix| ix == active), window);
     }
 
     /// The row above a group's content: the panel shown, with a marker that
@@ -571,7 +600,7 @@ impl GroupSkin {
         let empty_group = group.clone();
         let node = group.node();
         let bar = TabBar::new("tab-bar")
-            .track_scroll(&self.scroll)
+            .track_scroll(&self.follow.scroll)
             .children(tabs)
             .last_empty_space(
                 div()
@@ -592,7 +621,7 @@ impl GroupSkin {
                             .on_drop(move |item: &AnyDrag, window, cx| item_group.drop_item(item.clone(), None, window, cx))
                     }),
             );
-        let scroll = self.scroll.clone();
+        let scroll = self.follow.scroll.clone();
         let service = toolbar.then(|| {
             let ix = shown.unwrap_or(visible[0]);
             self.service_area(group, ix, strip, cx).border_b_1()
@@ -687,7 +716,7 @@ impl GroupSkin {
             .bg(tab_bar)
             .border_color(border)
             .overflow_y_scroll()
-            .track_scroll(&self.scroll)
+            .track_scroll(&self.follow.scroll)
             .children(tabs)
             .child(
                 div()
@@ -786,7 +815,7 @@ impl TabGroupRenderer for GroupSkin {
             return self.kit.render_tab_bar(group, window, cx);
         }
         let shown = visible(group, cx);
-        self.follow_shown(group, &shown);
+        self.follow_shown(group, &shown, window);
         let strip = self.strip(group);
         match shown.as_slice() {
             [] => Empty.into_any_element(),
@@ -1084,5 +1113,59 @@ mod tests {
         // A strip written without labels takes the default.
         let short: SavedStrip = serde_json::from_str(r#"{"panels":["hex"],"side":"bottom"}"#).unwrap();
         assert_eq!(short.strip, Strip { side: Side::Bottom, labels: Labels::Auto });
+    }
+}
+
+/// A strip drawn in a headless window, frame by frame.
+#[cfg(test)]
+mod following {
+    use std::rc::Rc;
+
+    use gpui_kit::component::Selectable as _;
+    use gpui_kit::component::tab::{Tab, TabBar};
+    use gpui_kit::test::TestWindowExt as _;
+    use gpui_kit::{
+        AppContext as _, Bounds, Context, IntoElement, ParentElement as _, Render, Styled as _, TestAppContext, Window, WindowBounds, WindowOptions,
+        div, point, px, size,
+    };
+
+    use super::FollowShown;
+
+    const TABS: usize = 8;
+
+    /// A strip too narrow for its tabs, the last of them shown.
+    struct Strip(Rc<FollowShown>);
+
+    impl Render for Strip {
+        fn render(&mut self, window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            self.0.follow(TABS - 1, Some(TABS - 1), window);
+            div().w(px(240.)).child(
+                TabBar::new("tabs")
+                    .track_scroll(&self.0.scroll)
+                    .children((0..TABS).map(|ix| Tab::new().child(format!("Panel number {ix}")).selected(ix == TABS - 1))),
+            )
+        }
+    }
+
+    /// As a group drawn anew after a layout is restored: its first frames.
+    #[gpui_kit::test]
+    fn a_strip_drawn_anew_brings_its_shown_tab_into_view(cx: &mut TestAppContext) {
+        let follow = Rc::new(FollowShown::default());
+        let window = cx.update(|cx| {
+            gpui_kit::init(cx);
+            let bounds = Bounds { origin: point(px(0.), px(0.)), size: size(px(640.), px(120.)) };
+            let options = WindowOptions { window_bounds: Some(WindowBounds::Windowed(bounds)), ..Default::default() };
+            let follow = follow.clone();
+            gpui_kit::open_window(options, cx, move |_, cx| cx.new(|_| Strip(follow))).expect("a test window").0
+        });
+        for _ in 0..2 {
+            cx.update_window(window, |_, window, cx| window.render_frame(cx)).expect("the window is open");
+        }
+        let scroll = &follow.scroll;
+        let strip = scroll.bounds();
+        let last = scroll.bounds_for_item(TABS - 1).expect("the last tab was laid out");
+        assert!(last.right() > strip.right(), "the premise: the tab shown starts past the edge");
+        assert!(scroll.offset().x < px(0.), "the strip did not scroll");
+        assert!(last.right() + scroll.offset().x <= strip.right() + px(0.5), "the tab shown is still past the edge");
     }
 }
