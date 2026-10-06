@@ -39,6 +39,8 @@ const ICON_STRIP: Pixels = px(32.);
 const NAME_STRIP: Pixels = px(150.);
 /// What follows the pointer while a tab is dragged.
 const DRAG_PREVIEW: Size<Pixels> = size(px(140.), px(28.));
+/// The most a tab's name takes on a strip across a group; a longer one is cut.
+const TAB_NAME_WIDTH: Pixels = px(130.);
 
 /// Which side of its group a tab strip runs along.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
@@ -458,15 +460,16 @@ impl GroupSkin {
                         })
                     }),
             )
-            .child(self.toolbar(group, ix, strip, cx))
+            .child(self.toolbar(group, ix, strip, true, cx))
             .context_menu(move |menu, window, cx| group_menu(menu, &menu_group, ix, false, strip, window, cx))
             .into_any_element()
     }
 
-    /// The group's controls: its menu, and closing the panel shown.
-    fn toolbar(&self, group: &TabGroupContext, ix: usize, strip: Strip, cx: &App) -> impl IntoElement {
+    /// The group's controls: its menu, and, unless the tabs carry their own,
+    /// a button that closes the panel shown.
+    fn toolbar(&self, group: &TabGroupContext, ix: usize, strip: Strip, close_button: bool, cx: &App) -> impl IntoElement {
         let id = group.panels()[ix].panel_id(cx);
-        let closable = group.is_panel_closable(id, cx);
+        let closable = close_button && group.is_panel_closable(id, cx);
         let (menu_group, close_group) = (group.clone(), group.clone());
         h_flex()
             .flex_none()
@@ -509,7 +512,12 @@ impl GroupSkin {
                 let panel = &group.panels()[ix];
                 let (title, icon, kind) = identity(panel, cx);
                 let label = if strip.names() {
-                    h_flex().gap_1p5().items_center().child(Icon::new(icon).small()).child(title.clone()).into_any_element()
+                    h_flex()
+                        .gap_1p5()
+                        .items_center()
+                        .child(Icon::new(icon).small())
+                        .child(div().max_w(TAB_NAME_WIDTH).truncate().child(title.clone()))
+                        .into_any_element()
                 } else {
                     Icon::new(icon).small().into_any_element()
                 };
@@ -580,13 +588,30 @@ impl GroupSkin {
                         .border_b_1()
                         .border_color(cx.theme().border)
                         .bg(cx.theme().tokens.tab_bar)
-                        .child(self.toolbar(group, ix, strip, cx)),
+                        // Tabs with names carry their own close buttons.
+                        .child(self.toolbar(group, ix, strip, !strip.names(), cx)),
                 )
             });
+        let scroll = self.scroll.clone();
         div()
             .id(("group-tabs", node.as_u64()))
             .w_full()
             .child(bar)
+            // The kit's strip scrolls only along its own axis, so an ordinary
+            // wheel did nothing over it and tabs past the edge could not be
+            // reached. Turned vertically, the wheel moves the strip sideways;
+            // a sideways turn (or Shift) is the kit's to handle, and is left to it.
+            .on_scroll_wheel(move |event, window, _| {
+                let delta = event.delta.pixel_delta(window.line_height());
+                if !delta.x.is_zero() || delta.y.is_zero() {
+                    return;
+                }
+                let mut offset = scroll.offset();
+                let furthest = scroll.max_offset().x;
+                offset.x = (offset.x + delta.y).clamp(-furthest, px(0.));
+                scroll.set_offset(offset);
+                window.refresh();
+            })
             .context_menu(move |menu, window, cx| {
                 // Set by the tab the press landed on, if any; taken, so a press
                 // beside the tabs next time finds none.
@@ -932,6 +957,20 @@ fn group_menu(
         menu = menu.separator().submenu_with_icon(Some(Icon::new(AppIcon::AddWidget)), "Show Instead", window, cx, move |menu, _, _| {
             show_instead(menu, kind)
         });
+    }
+    // Every tab of the group, the one shown marked: a strip too narrow for
+    // its tabs hides some of them, and this reaches them all.
+    let tabs = visible(group, cx);
+    if tabs.len() > 1 {
+        let on_screen = displayed(group, cx);
+        menu = menu.separator().label("Tabs in This Group");
+        for tab in tabs {
+            let (tab_title, tab_icon, _) = identity(&group.panels()[tab], cx);
+            let select = group.clone();
+            // The one shown gets the check mark where the others have their icon.
+            let item = PopupMenuItem::new(tab_title).on_click(move |_, window, cx| select.select_tab(tab, window, cx));
+            menu = menu.item(if on_screen == Some(tab) { item.checked(true) } else { item.icon(Icon::new(tab_icon)) });
+        }
     }
     let menu = menu.separator().label("Tabs Along");
     let menu = Side::ALL.into_iter().fold(menu, |menu, side| {
