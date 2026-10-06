@@ -15,3 +15,7 @@ gpui-kit.workspace = true
 n0xis-client.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+
+[dev-dependencies]
+# Headless windows, for tests that press keys the way a person does.
+gpui-kit = { workspace = true, features = ["test-support"] }

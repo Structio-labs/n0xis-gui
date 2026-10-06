@@ -26,6 +26,12 @@ use crate::{Rename, SetType};
 /// The key context of the view, for bindings that must win over the editor's.
 pub const KEY_CONTEXT: &str = "Decompiler";
 
+/// The editor the code is shown in. It has no search box: a field inside the
+/// code would take the commands' keys, which the code itself does (`keymap`).
+pub fn code_editor(window: &mut Window, cx: &mut Context<EditorState>) -> EditorState {
+    EditorState::new(window, cx).language("c").line_number(true).soft_wrap(false).searchable(false)
+}
+
 /// What the user wants done to a variable they pointed at.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum VariableIntent {
@@ -80,7 +86,7 @@ pub struct DecompilerView {
 
 impl DecompilerView {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let editor = cx.new(|cx| EditorState::new(window, cx).language("c").line_number(true).soft_wrap(false));
+        let editor = cx.new(|cx| code_editor(window, cx));
         let caret = cx.observe(&editor, |view, _, cx| {
             view.at_caret = match view.pointed(cx) {
                 Pointed::Variable(variable) => Some(variable),

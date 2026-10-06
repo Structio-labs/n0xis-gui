@@ -27,9 +27,15 @@ use crate::{
 const FILE_NAME: &str = "keybindings.json";
 const VERSION: u32 = 1;
 
-/// The read-only decompiler is a text field, and a text field takes Ctrl+Z
-/// for itself; the edit history is bound there too.
-const DECOMPILER_INPUT: &str = "Decompiler > Input";
+/// Where every command is bound. A key typed into a text field stays there:
+/// the field's own keys (its undo, its move by word) and the keys it has no
+/// use for alike. The kit's text fields all have the key context `Input`.
+/// The decompiler's code is a text field too, but one the user reads rather
+/// than types into, so the commands work there, and win over its own keys.
+/// That needs the decompiler's editor to hold no field of its own (no search
+/// box): a field inside it would be `Decompiler > Input` too. The tests below
+/// fail if either name stops matching the kit's or `decompiler::KEY_CONTEXT`.
+const CONTEXTS: [&str; 2] = ["!Input", "Decompiler > Input"];
 
 /// A command the user can bind.
 pub struct Command {
@@ -41,25 +47,19 @@ pub struct Command {
     pub defaults: &'static [&'static str],
     /// The action the command runs, for the command palette.
     pub action: fn() -> Box<dyn Action>,
-    /// Every context the command is bound in. `None` is everywhere.
-    contexts: &'static [Option<&'static str>],
-    /// The command's bindings for a keystroke, in the given contexts.
-    bind: fn(&str, Option<&'static str>) -> KeyBinding,
+    /// The command's binding for a keystroke, in a context.
+    bind: fn(&str, &str) -> KeyBinding,
 }
 
 macro_rules! command {
     ($id:literal, $label:literal, $group:literal, [$($key:literal),*], $action:expr) => {
-        command!($id, $label, $group, [$($key),*], $action, [None])
-    };
-    ($id:literal, $label:literal, $group:literal, [$($key:literal),*], $action:expr, [$($ctx:expr),*]) => {
         Command {
             id: $id,
             label: $label,
             group: $group,
             defaults: &[$($key),*],
             action: || Box::new($action),
-            contexts: &[$($ctx),*],
-            bind: |key, context| KeyBinding::new(key, $action, context),
+            bind: |key, context| KeyBinding::new(key, $action, Some(context)),
         }
     };
 }
@@ -70,8 +70,8 @@ pub static COMMANDS: &[Command] = &[
     command!("scan_process", "Scan a running process…", "File", [], ScanProcess),
     command!("settings", "Settings…", "File", ["ctrl-,"], OpenSettings),
     command!("quit", "Quit", "File", ["ctrl-q"], Quit),
-    command!("undo_edit", "Undo edit", "Edit", ["ctrl-z"], UndoEdit, [None, Some(DECOMPILER_INPUT)]),
-    command!("redo_edit", "Redo edit", "Edit", ["ctrl-y"], RedoEdit, [None, Some(DECOMPILER_INPUT)]),
+    command!("undo_edit", "Undo edit", "Edit", ["ctrl-z"], UndoEdit),
+    command!("redo_edit", "Redo edit", "Edit", ["ctrl-y"], RedoEdit),
     command!("rename", "Rename…", "Edit", ["f2"], Rename),
     command!("comment", "Comment…", "Edit", ["ctrl-/"], Comment),
     command!("set_type", "Set type…", "Edit", [], SetType),
@@ -198,7 +198,7 @@ impl Keymap {
                     refused.push(format!("{key} (for {})", command.label));
                     continue;
                 }
-                bindings.extend(command.contexts.iter().map(|&context| (command.bind)(&key, context)));
+                bindings.extend(CONTEXTS.iter().map(|context| (command.bind)(&key, context)));
             }
         }
         (bindings, refused)
@@ -246,7 +246,7 @@ fn apply_changes(cx: &mut App, before: &[(&'static Command, Vec<String>)]) {
     for (command, old) in before {
         let now = cx.global::<Keymap>().keys(command);
         for key in old.iter().filter(|k| !now.contains(k)) {
-            bindings.extend(command.contexts.iter().map(|&context| KeyBinding::new(key, NoAction, context)));
+            bindings.extend(CONTEXTS.iter().map(|context| KeyBinding::new(key, NoAction, Some(context))));
         }
     }
     let (now, _) = cx.global::<Keymap>().bindings();
@@ -338,5 +338,146 @@ mod tests {
         assert_eq!(pretty("alt-left"), "Alt+Left");
         assert_eq!(pretty("ctrl-/"), "Ctrl+/");
         assert_eq!(pretty("shift-escape"), "Shift+Escape");
+    }
+}
+
+/// Keys pressed in a headless window, the way a person presses them.
+#[cfg(test)]
+mod typing {
+    use gpui_kit::component::input::{Editor, EditorState, Input, InputState};
+    use gpui_kit::test::TestWindowExt as _;
+    use gpui_kit::{
+        AnyWindowHandle, AppContext as _, BorrowAppContext as _, Bounds, Context, Entity, FocusHandle, Focusable as _, InteractiveElement as _,
+        IntoElement, ParentElement as _, Render, Styled as _, TestAppContext, Window, WindowBounds, WindowOptions, div, point, px, size,
+    };
+
+    use super::{COMMANDS, Command, Keymap, apply_changes, install};
+    use crate::{FindInImage, GoBack, Rename, ToggleBookmark, UndoEdit};
+
+    /// A key a text field has no use for, and keys a field binds for itself:
+    /// its undo, its move by word, its search.
+    const KEYS: [&str; 5] = ["ctrl-d", "f2", "ctrl-z", "alt-left", "ctrl-f"];
+
+    fn command(id: &str) -> &'static Command {
+        COMMANDS.iter().find(|c| c.id == id).expect("a command of the table")
+    }
+
+    /// The command a key runs by default.
+    fn command_of(key: &str) -> &'static str {
+        COMMANDS.iter().find(|c| c.defaults.contains(&key)).expect("a default key").id
+    }
+
+    /// A text field, the decompiler's code, and something else that takes
+    /// focus; it notes each command that reaches it.
+    struct Keys {
+        field: Entity<InputState>,
+        code: Entity<EditorState>,
+        list: FocusHandle,
+        ran: Vec<&'static str>,
+    }
+
+    impl Render for Keys {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .size_full()
+                .on_action(cx.listener(|keys, _: &ToggleBookmark, _, _| keys.ran.push("toggle_bookmark")))
+                .on_action(cx.listener(|keys, _: &Rename, _, _| keys.ran.push("rename")))
+                .on_action(cx.listener(|keys, _: &UndoEdit, _, _| keys.ran.push("undo_edit")))
+                .on_action(cx.listener(|keys, _: &GoBack, _, _| keys.ran.push("go_back")))
+                .on_action(cx.listener(|keys, _: &FindInImage, _, _| keys.ran.push("find")))
+                .child(Input::new(&self.field))
+                .child(div().key_context(crate::decompiler::KEY_CONTEXT).h(px(120.)).child(Editor::new(&self.code).readonly(true)))
+                .child(div().track_focus(&self.list).h(px(40.)).child("a list"))
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    enum Place {
+        Field,
+        Code,
+        List,
+    }
+
+    fn open(keymap: Keymap, cx: &mut TestAppContext) -> (AnyWindowHandle, Entity<Keys>) {
+        cx.update(|cx| {
+            // In the order the app starts: the kit's own keys, then the commands'.
+            gpui_kit::init(cx);
+            cx.set_global(keymap);
+            install(cx);
+            let bounds = Bounds { origin: point(px(0.), px(0.)), size: size(px(800.), px(600.)) };
+            let options = WindowOptions { window_bounds: Some(WindowBounds::Windowed(bounds)), ..Default::default() };
+            gpui_kit::open_window(options, cx, |window, cx| {
+                cx.new(|cx| Keys {
+                    field: cx.new(|cx| InputState::new(window, cx)),
+                    code: cx.new(|cx| crate::decompiler::code_editor(window, cx).default_value("int f(void) {\n    return 0;\n}")),
+                    list: cx.focus_handle(),
+                    ran: Vec::new(),
+                })
+            })
+            .expect("a test window")
+        })
+    }
+
+    /// Type `text` with `place` focused, then press `keys`; answers the
+    /// commands that ran.
+    fn press(place: Place, text: &str, keys: &[&str], window: AnyWindowHandle, view: &Entity<Keys>, cx: &mut TestAppContext) -> Vec<&'static str> {
+        cx.update_window(window, |_, window, cx| {
+            view.update(cx, |keys, cx| {
+                keys.ran.clear();
+                match place {
+                    Place::Field => keys.field.update(cx, |field, cx| field.focus(window, cx)),
+                    Place::Code => keys.code.update(cx, |code, cx| code.focus(window, cx)),
+                    Place::List => keys.list.focus(window, cx),
+                }
+            });
+            window.input(text, cx);
+            for key in keys {
+                window.press(key, cx);
+            }
+        })
+        .expect("the window is open");
+        cx.run_until_parked();
+        view.read_with(cx, |keys, _| keys.ran.clone())
+    }
+
+    #[gpui_kit::test]
+    fn a_key_pressed_in_a_text_field_stays_there(cx: &mut TestAppContext) {
+        let (window, view) = open(Keymap::default(), cx);
+        let commands: Vec<&str> = KEYS.iter().map(|key| command_of(key)).collect();
+        assert_eq!(press(Place::List, "", &KEYS, window, &view, cx), commands, "outside a field each key runs its command");
+        assert_eq!(press(Place::Code, "", &KEYS, window, &view, cx), commands, "the decompiler's code is read, not typed into");
+        assert_eq!(press(Place::Field, "abc", &KEYS, window, &view, cx), Vec::<&str>::new(), "no command runs from a field");
+        let typed = view.read_with(cx, |keys, cx| keys.field.read(cx).value());
+        assert_ne!(typed, "abc", "Ctrl+Z undid the typing, in the field");
+    }
+
+    /// A key moved in Settings ▸ Keys is bound again, after the kit's own
+    /// keys; it must still stay in a field.
+    #[gpui_kit::test]
+    fn a_key_moved_in_settings_stays_in_a_text_field_too(cx: &mut TestAppContext) {
+        let (window, view) = open(Keymap::default(), cx);
+        cx.update(|cx| {
+            let before: Vec<_> = COMMANDS.iter().map(|c| (c, cx.global::<Keymap>().keys(c))).collect();
+            // Ctrl+E is the field's own key for the end of the line.
+            cx.update_global::<Keymap, _>(|map, _| map.assign(command("rename"), vec!["ctrl-e".into()]));
+            apply_changes(cx, &before);
+        });
+        assert_eq!(press(Place::List, "", &["ctrl-e", "f2"], window, &view, cx), ["rename"], "the new key runs it and the old one no longer does");
+        assert_eq!(press(Place::Code, "", &["ctrl-e"], window, &view, cx), ["rename"]);
+        assert_eq!(press(Place::Field, "abc", &["ctrl-e", "f2"], window, &view, cx), Vec::<&str>::new());
+    }
+
+    /// With Find on another key from the start, Ctrl+F reaches the
+    /// decompiler's editor itself; it must open no search box there.
+    #[gpui_kit::test]
+    fn the_decompilers_code_holds_no_field_of_its_own(cx: &mut TestAppContext) {
+        let mut keymap = Keymap::default();
+        keymap.assign(command("find"), vec!["ctrl-shift-f".into()]);
+        let (window, view) = open(keymap, cx);
+        press(Place::Code, "", &["ctrl-f"], window, &view, cx);
+        let on_code = cx
+            .update_window(window, |_, window, cx| view.read(cx).code.read(cx).focus_handle(cx).is_focused(window))
+            .expect("the window is open");
+        assert!(on_code, "Ctrl+F opened a field in the code, and the commands' keys would fire from it");
     }
 }
