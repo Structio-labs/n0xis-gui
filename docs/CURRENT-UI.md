@@ -354,6 +354,14 @@ menu items only print a message; those are not ported.
   presets (90, 100, 110 and 125 %) beside the font size.
 - [x] A workspace with no panel says so and offers one, or the default layout. The dock keeps
   the last panel of a workspace, so this shows only for a layout saved empty.
+- [x] Found 2026-10-07 while reproducing a tab that went missing after a Ctrl-drop, a
+  replace and an undo, and fixed: a group drawn anew (a layout restored, a change undone)
+  kept its strip at the start, so a shown tab past the edge stayed out of sight while the
+  layout was right. GPUI spends a scroll asked on a strip's first frame before it learns that
+  the strip scrolls. Five drop-replace-undo runs in Xvfb now match their before-shots pixel
+  for pixel (one differed before); `skin::following` fails without the fix.
+- [x] The Variables panel said 0.3.3 and earlier list no variables; a build from the source
+  says 0.3.3 and lists them. It now names the engine in use by the version it gives (2026-10-07).
 - [x] Found while checking these, and fixed: closing the panel that held the caret left every
   key going to no element, so the shortcuts stopped until something was clicked.
 - Left out on purpose: the graph legend's toggle (the legend is always in the header).
@@ -368,7 +376,12 @@ Open gaps. A second audit on 2026-10-06 (reading behaviour, not only handlers) r
 - [ ] Several instances of one panel (two graphs, Linear in Asm beside Linear in Pseudo).
 - [ ] Widget palette click splits the largest group, as the Tauri build did.
 - [ ] Console without a target, run beside the session so it never blocks the views.
-- [ ] Process names of Wine programs (the engine lists them as `wine-preloader`), process icons.
+- [x] Process names of Wine programs (2026-10-07, in the engine: every Wine program's
+  `/proc/<pid>/exe` is the loader, so `process ps` named them all `wine-preloader`; it now
+  takes the program's name from its command line. The GUI shows it once the engine in use is
+  newer than the 0.3.3 release; checked live under Wine 10 by
+  `crates/n0xis-sources/tests/wine_process_names.rs`).
+- [ ] Process icons.
 - [ ] Settings: the engine in use (path, version, command count); reset all preferences.
 - [ ] Status bar: image format and machine, zoom; zoom up to 160 %.
 - [ ] Graph: entry and exit blocks marked; zoom shown.
@@ -377,8 +390,15 @@ Open gaps. A second audit on 2026-10-06 (reading behaviour, not only handlers) r
   with `0x`; Back / Forward say when there is nowhere to go; recent targets show when.
 - [ ] A loading indicator that shows only after 180 ms and stays 320 ms, instead of each
   view flashing its own message.
-- [ ] Discard-on-close says when the engine cannot clear the cache (it fails silently now).
-- [ ] Shortcuts do not fire while typing in a field.
+- [x] Discard-on-close says when the engine cannot clear the cache (2026-10-07; it failed
+  silently, and does with every release up to 0.3.3, which has no `project cache`). Closing
+  or opening another target says so at once; quitting has no window left, so it is said when
+  the app next starts (checked in Xvfb with the installed 0.3.0).
+- [x] Shortcuts do not fire while typing in a field (2026-10-07). They did, all of them,
+  and a field's own keys lost too: Ctrl+Z in a field undid the last annotation in the
+  project, Alt+← went back, Ctrl+F opened Find. Commands are now bound outside text fields;
+  the decompiler's code, a field that is read rather than typed into, keeps them. Held by
+  headless tests that press the keys (`keymap::typing`), each failing without the fix.
 - [ ] Resizing a group or the window freezes the window on the user's machine (NVIDIA,
   Wayland). Not reproduced here; the app's own code costs the same optimised or not.
 
