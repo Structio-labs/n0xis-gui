@@ -18,7 +18,7 @@ use gpui_kit::component::menu::{AppMenuBar, ContextMenuExt as _, DropdownMenu as
 use gpui_kit::component::Icon;
 use gpui_kit::component::{ActiveTheme as _, Sizable as _, TitleBar, WindowExt as _, h_flex, v_flex};
 use gpui_kit::*;
-use n0xis_client::{Analysis, AnalysisState, Constants, Engine, EngineCommand, EngineStatus, IdentifyConstants, ShowAnnotations, WarmUp};
+use n0xis_client::{Analysis, AnalysisState, CacheUsage, Constants, Engine, EngineCommand, EngineStatus, IdentifyConstants, ShowAnnotations, WarmUp};
 
 use crate::appearance::{self, ResetZoom, SelectTheme, ToggleRoundedEdges, ZoomIn, ZoomOut};
 use crate::bookmarks::BookmarksView;
@@ -35,6 +35,7 @@ use crate::linear::LinearView;
 use crate::assets::AppIcon;
 use crate::layout::{self, Arrangement, History, PanelKind, ReplacePanel, SavedWorkspaces, ShowPanel, SwitchWorkspace, Views, Workspace};
 use crate::nav::{Location, NavHistory, Navigate, Point, hex, parse_va};
+use crate::next_start;
 use crate::prompt::{self, Prompt};
 use crate::recent::{self, OpenRecent, Recent};
 use crate::scanner::ScannerView;
@@ -219,9 +220,12 @@ impl Workbench {
         let list_edits = cx.subscribe_in(&views.variables, window, |this, _, event: &EditVariable, window, cx| {
             this.edit_variable(event, window, cx);
         });
-        // Quitting closes the target like opening another does.
+        // Quitting closes the target like opening another does. No window is
+        // left to say a failure in, so it is said at the next start.
         let quitting = cx.on_app_quit(|wb, cx| {
-            wb.close_target(cx);
+            if let Some(failure) = wb.close_target(cx) {
+                next_start::keep(&format!("When N0xis last quit, {failure}"));
+            }
             async {}
         });
         // Every view that can send the user somewhere says so the same way.
@@ -372,7 +376,9 @@ impl Workbench {
         if project.is_some() {
             self.open_error = None;
         }
-        self.close_target(cx);
+        if let Some(failure) = self.close_target(cx) {
+            window.push_notification(SharedString::from(capitalized(&failure)), cx);
+        }
         let engine_program = command.program().to_path_buf();
         // The analysis writes into the same project the session reads.
         let analysis = cx.global::<Prefs>().analyze_on_open.then(|| start_analysis(&command, &path, project.as_deref(), cx));
@@ -413,13 +419,27 @@ impl Workbench {
 
     /// Leave the open target: its analysis stops, and its caches are cleared
     /// if the settings say not to keep them. The user's work is never touched.
-    fn close_target(&mut self, cx: &App) {
-        let Some(target) = self.target.take() else { return };
+    /// Answers why the caches were not cleared, when they were meant to be, as
+    /// the end of a sentence.
+    ///
+    /// The clear runs here, before anything else: a target opened next may
+    /// keep its caches in the same project, and must not lose them to it.
+    fn close_target(&mut self, cx: &App) -> Option<String> {
+        let target = self.target.take()?;
         drop(target.analysis);
-        if !cx.global::<Prefs>().keep_cache_on_close
-            && let Some(project) = &target.project
-        {
-            let _ = target.command.run(&["project".into(), "cache".into(), "--clear".into()], Some(project));
+        if cx.global::<Prefs>().keep_cache_on_close {
+            return None;
+        }
+        let project = target.project.as_ref()?;
+        let name = target.path.file_name().map_or_else(|| target.path.display().to_string(), |n| n.to_string_lossy().into_owned());
+        match target.command.run_request(&CacheUsage { clear: true }, Some(project)) {
+            Ok(report) if report.failures.is_empty() => None,
+            Ok(report) => Some(format!(
+                "{} file(s) of the caches of {name} could not be removed: {}",
+                report.failures.len(),
+                report.failures.join("; ")
+            )),
+            Err(e) => Some(format!("the caches of {name} were not cleared: {e}")),
         }
     }
 
@@ -1286,7 +1306,9 @@ impl Workbench {
         if self.target.is_none() {
             return;
         }
-        self.close_target(cx);
+        if let Some(failure) = self.close_target(cx) {
+            window.push_notification(SharedString::from(capitalized(&failure)), cx);
+        }
         self.engine_status = None;
         self.analysis_state = None;
         self.location = None;
@@ -1731,6 +1753,12 @@ fn start_analysis(command: &EngineCommand, path: &std::path::Path, project: Opti
 
 fn first_line(s: &str) -> &str {
     s.lines().find(|l| !l.trim().is_empty()).unwrap_or(s)
+}
+
+/// The end of a sentence made a sentence of its own.
+fn capitalized(s: &str) -> String {
+    let mut chars = s.chars();
+    chars.next().map_or_else(String::new, |first| first.to_uppercase().chain(chars).collect())
 }
 
 impl Render for Workbench {

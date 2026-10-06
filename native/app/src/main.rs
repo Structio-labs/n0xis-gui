@@ -22,6 +22,7 @@ mod layout;
 mod linear;
 mod menus;
 mod nav;
+mod next_start;
 mod palette;
 mod panel;
 mod prefs;
@@ -102,6 +103,7 @@ fn main() {
         cx.set_global(keys);
         startup_notes.extend(keys_problem);
         startup_notes.extend(keymap::install(cx));
+        startup_notes.extend(next_start::take());
         cx.on_action(|_: &Quit, cx: &mut App| cx.quit());
         // One window: closing it ends the app instead of leaving a headless process.
         cx.on_window_closed(|cx, _| {
