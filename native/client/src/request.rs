@@ -121,9 +121,13 @@ pub struct Decompiled {
     #[serde(default)]
     pub quality: Option<f64>,
     /// Every variable `pseudo` shows. `None` from an engine that does not list
-    /// them (0.3.3 and earlier), which is not the same as a function with none.
+    /// them (no release up to 0.3.3 does; the list came after it), which is not
+    /// the same as a function with none.
     #[serde(default)]
     pub variables: Option<Vec<Variable>>,
+    /// The version the answering engine gave for itself.
+    #[serde(skip)]
+    pub engine_version: Option<String>,
 }
 
 /// A variable of a decompiled function, as the engine lists it.
@@ -170,7 +174,9 @@ impl Request for Decompile {
     }
 
     fn parse(envelope: Envelope) -> Result<Decompiled, ClientError> {
-        Ok(envelope.into_parts::<Decompiled>(schema::DECOMP_PSEUDO)?.0)
+        let (mut decompiled, meta) = envelope.into_parts::<Decompiled>(schema::DECOMP_PSEUDO)?;
+        decompiled.engine_version = meta.tool_version;
+        Ok(decompiled)
     }
 }
 
@@ -257,8 +263,11 @@ mod tests {
         assert_eq!(vars[0], Variable { name: "input".into(), key: "rcx".into(), kind: VariableKind::Param });
         assert!(vars[1].kind.takes_a_type() && !vars[2].kind.takes_a_type());
         assert_eq!(vars[3].kind, VariableKind::Other);
-        let old = env(r#"{"ok":true,"data":{"pseudo":["f() {","}"]},"meta":{"schema":"n0x.decomp.pseudo.v1"}}"#);
-        assert_eq!(Decompile::parse(old).unwrap().variables, None);
+        let old = env(r#"{"ok":true,"data":{"pseudo":["f() {","}"]},"meta":{"schema":"n0x.decomp.pseudo.v1","tool_version":"0.3.0"}}"#);
+        let old = Decompile::parse(old).unwrap();
+        assert_eq!(old.variables, None);
+        // The panel names the engine by the version it gives.
+        assert_eq!(old.engine_version.as_deref(), Some("0.3.0"));
     }
 
     #[test]

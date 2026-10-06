@@ -104,10 +104,11 @@ impl Render for VariablesView {
         let title = decompiler.function().map_or("Variables".to_string(), |f| format!("Variables · {}", f.name));
         let style = decompiler.style().as_str();
         let state = (decompiler.function().is_some(), decompiler.is_ready(), decompiler.variables().map(<[Variable]>::to_vec));
+        let unlisted = unlisted(decompiler.engine_version());
         let body = match state {
             (false, _, _) => message("Select a function to see its variables.", false, cx).into_any_element(),
             (true, false, _) => message("Waiting for the decompiler…", false, cx).into_any_element(),
-            (true, true, None) => message("This engine does not list a function's variables (0.3.3 and earlier do not).", false, cx).into_any_element(),
+            (true, true, None) => message(unlisted, false, cx).into_any_element(),
             (true, true, Some(vars)) if vars.is_empty() => message("The decompiler shows no variables in this function.", false, cx).into_any_element(),
             (true, true, Some(vars)) => uniform_list(
                 "variables",
@@ -129,3 +130,26 @@ impl Render for VariablesView {
 }
 
 dock_panel!(VariablesView, PanelKind::Variables);
+
+/// What the panel says when the engine's answer has no variable list: which
+/// engine that is, by the version it gives for itself, and which engines send
+/// one. No release up to 0.3.3 does; the list came right after that release,
+/// so a build from the source can say 0.3.3 and send it.
+fn unlisted(version: Option<&str>) -> String {
+    let engine = version.map_or_else(|| "The engine in use".to_string(), |v| format!("The engine in use, n0xis {v},"));
+    format!("{engine} does not list a function's variables. Engines newer than the 0.3.3 release do.")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::unlisted;
+
+    #[test]
+    fn the_panel_names_the_engine_that_lists_no_variables() {
+        assert_eq!(
+            unlisted(Some("0.3.0")),
+            "The engine in use, n0xis 0.3.0, does not list a function's variables. Engines newer than the 0.3.3 release do."
+        );
+        assert_eq!(unlisted(None), "The engine in use does not list a function's variables. Engines newer than the 0.3.3 release do.");
+    }
+}

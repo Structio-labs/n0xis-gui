@@ -74,6 +74,8 @@ pub struct DecompilerView {
     /// The engine's list of the shown function's variables; `None` when the
     /// engine does not send one.
     variables: Option<Vec<Variable>>,
+    /// The version the engine gave for itself in its last answer.
+    engine_version: Option<String>,
     style: DecompStyle,
     state: ViewState,
     /// The variable under the caret, kept as the caret moves. The right-click
@@ -98,6 +100,7 @@ impl DecompilerView {
             editor,
             function: None,
             variables: None,
+            engine_version: None,
             style: DecompStyle::default(),
             state: ViewState::Empty,
             at_caret: None,
@@ -111,6 +114,7 @@ impl DecompilerView {
         self.engine = engine;
         self.function = None;
         self.variables = None;
+        self.engine_version = None;
         self.state = ViewState::Empty;
         self._request = None;
         cx.notify();
@@ -146,6 +150,11 @@ impl DecompilerView {
             ViewState::Ready { .. } => self.variables.as_deref(),
             _ => None,
         }
+    }
+
+    /// The version the engine gave for itself when it last answered.
+    pub fn engine_version(&self) -> Option<&str> {
+        self.engine_version.as_deref()
     }
 
     /// Whether a decompilation is shown (not loading, not failed, not empty).
@@ -186,6 +195,7 @@ impl DecompilerView {
                         let text = decompiled.pseudo.join("\n");
                         view.editor.update(cx, |editor, cx| editor.set_value(text, window, cx));
                         view.variables = decompiled.variables;
+                        view.engine_version = decompiled.engine_version;
                         view.state = ViewState::Ready { quality: decompiled.quality };
                     }
                     // A newer request replaced this one; its answer is on the way.
